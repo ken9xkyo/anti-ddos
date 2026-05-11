@@ -1,0 +1,10 @@
+bin/
+*.o
+*.swp
+.vscode/
+.idea/
+vendor/
+pkg/loader/bpf_bpfel.go
+pkg/loader/bpf_bpfel.o
+pkg/loader/bpf_bpfeb.go
+pkg/loader/bpf_bpfeb.o

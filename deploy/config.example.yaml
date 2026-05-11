@@ -1,0 +1,35 @@
+# antiddosd - example configuration
+# Inline bump-in-the-wire, 100 Gbps E810 (ice driver), 32-core host.
+
+xdp_mode: native            # native | skb | hw
+ingress_ifaces: ["eth0"]
+egress_iface:  "eth1"
+
+api_addr:     "127.0.0.1:8080"
+metrics_addr: "127.0.0.1:9090"
+pin_path:     "/sys/fs/bpf/antiddos"
+
+features:
+  drop_fragments: true
+  drop_reflection: true
+  syncookie: false          # requires kernel support for bpf_tcp_gen_syncookie
+  conntrack: true
+  rate_limit: true
+  redirect: true
+
+rate:
+  syn_pps:     2000
+  udp_pps:     5000
+  icmp_pps:    200
+  global_pps:  20000
+  burst:       500
+
+sample_every: 1024          # emit 1/N events to the ringbuf
+
+whitelist:
+  - 10.0.0.0/8              # internal management
+  - 192.0.2.0/24            # trusted peers
+  - 2001:db8::/32
+
+blocklist:
+  - 198.51.100.0/24         # known bad
