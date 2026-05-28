@@ -1,0 +1,163 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16.9-alpine3.22}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-anti_ddos}
+      POSTGRES_USER: ${POSTGRES_USER:-anti_ddos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-lab-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - anti-ddos-mgmt
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  control-api:
+    image: ${CONTROL_API_IMAGE:-anti-ddos/control-api:local}
+    build:
+      context: .
+      dockerfile: deploy/docker/control-api.Dockerfile
+      args:
+        GO_IMAGE: ${GO_IMAGE:-golang:1.22.12-bookworm}
+        RUNTIME_IMAGE: ${CONTROL_RUNTIME_IMAGE:-debian:bookworm-slim}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ANTI_DDOS_CONTROL_ADDR: 0.0.0.0:8080
+      ANTI_DDOS_DB_DSN: postgres://${POSTGRES_USER:-anti_ddos}:${POSTGRES_PASSWORD:-change-me-postgres-lab-only}@postgres:5432/${POSTGRES_DB:-anti_ddos}?sslmode=disable
+      ANTI_DDOS_SESSION_TTL: ${ANTI_DDOS_SESSION_TTL:-12h}
+      ANTI_DDOS_XDP_OBJECT: /run/anti-ddos/xdp_data_plane.bpf.o
+      ANTI_DDOS_AGENT_SHARED_TOKEN: ${ANTI_DDOS_AGENT_SHARED_TOKEN:-change-me-agent-shared-token}
+      ANTI_DDOS_PROMETHEUS_URL: http://prometheus:9090
+      ANTI_DDOS_AGENT_STALE_AFTER: ${ANTI_DDOS_AGENT_STALE_AFTER:-30s}
+      ANTI_DDOS_EVENT_SAMPLE_DENOM: ${ANTI_DDOS_EVENT_SAMPLE_DENOM:-1}
+    ports:
+      - "127.0.0.1:${CONTROL_API_PORT:-8080}:8080"
+    networks:
+      - anti-ddos-mgmt
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.2}
+    restart: unless-stopped
+    depends_on:
+      control-api:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./deploy/prometheus/compose-prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/anti-ddos-recording-rules.yml:/etc/prometheus/rules/anti-ddos-recording-rules.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - anti-ddos-mgmt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:12.4.3-security-02}
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-grafana-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/anti-ddos-p1-dashboard.json:/var/lib/grafana/dashboards/anti-ddos-p1-dashboard.json:ro
+    networks:
+      - anti-ddos-mgmt
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
+  admin-dashboard:
+    image: ${ADMIN_DASHBOARD_IMAGE:-anti-ddos/admin-dashboard:local}
+    build:
+      context: .
+      dockerfile: deploy/docker/admin-dashboard.Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22.22.1-alpine3.22}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.30.1-alpine3.23}
+    restart: unless-stopped
+    depends_on:
+      control-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ADMIN_DASHBOARD_PORT:-8088}:8080"
+    networks:
+      - anti-ddos-mgmt
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:uid=101,gid=101
+      - /var/run:uid=101,gid=101
+      - /tmp:uid=101,gid=101
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+networks:
+  anti-ddos-mgmt:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
