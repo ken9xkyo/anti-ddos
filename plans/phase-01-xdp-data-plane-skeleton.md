@@ -1,62 +1,61 @@
 # Phase 01 - XDP Data Plane Skeleton
 
-## Muc tieu
+## Mục tiêu
 
-Xay dung chuong trinh XDP toi thieu nhung verifier-safe: parse Ethernet/IPv4/TCP/UDP/ICMP, khai bao map contracts, dem pass/drop/redirect, xu ly malformed/fragment theo policy va load duoc bang libbpf. Phase nay tao packet path nen tang cho blacklist, service allowlist, DEVMAP redirect va rate limit.
+Xây dựng chương trình XDP tối thiểu nhưng verifier-safe: parse Ethernet/IPv4/TCP/UDP/ICMP, khai báo map contracts, đếm pass/drop/redirect, xử lý malformed/fragment theo policy và load được bằng libbpf. Phase này tạo packet path nền tảng cho blacklist, service allowlist, DEVMAP redirect và rate limit.
 
-## Pham vi
+## Phạm vi
 
-- Viet XDP C/libbpf object voi `SEC("xdp") xdp_entry`.
-- Dinh nghia shared structs: `packet_meta`, action, reason, runtime config, LPM key, service key/value, rule/rate/counter/event records.
-- Khai bao maps dung LLD: whitelist/blacklist LPM, service allowlist A/B, `tx_devmap`, rate state, rule config, per-CPU counters, ringbuf, runtime config.
-- Parser support IPv4 trong MVP; IPv6 chi reserve type/schema, chua enforce.
-- Chua implement Agent full lifecycle; load/verifier test co the dung harness/toy loader.
+- Viết XDP C/libbpf object với `SEC("xdp") xdp_entry`.
+- Định nghĩa shared structs: `packet_meta`, action, reason, runtime config, LPM key, service key/value, rule/rate/counter/event records.
+- Khai báo maps đúng LLD: whitelist/blacklist LPM, service allowlist A/B, `tx_devmap`, rate state, rule config, per-CPU counters, ringbuf, runtime config.
+- Parser support IPv4 trong MVP; IPv6 chỉ reserve type/schema, chưa enforce.
+- Chưa triển khai Agent full lifecycle; load/verifier test có thể dùng harness/toy loader.
 
-## Cong viec
+## Công việc
 
-| ID | Cong viec | Muc dich | Ket qua ban giao | Phu thuoc |
+| ID | Công việc | Mục đích | Kết quả bàn giao | Phụ thuộc |
 |---|---|---|---|---|
-| P01-T01 | Tao source layout cho data plane | Tach ro kernel eBPF code va shared headers | Thu muc data plane, shared headers, build target XDP object | Phase 00 |
-| P01-T02 | Dinh nghia enum action/reason/protocol | Dam bao counters/events thong nhat voi API sau nay | Header co `ACTION_*`, `REASON_*`, `L4_*` theo LLD | P01-T01 |
-| P01-T03 | Dinh nghia `packet_meta` zero-initialized | Tranh verifier loi uninitialized stack | Struct compact co src/dst, ports, proto, flags, action, reason | P01-T02 |
-| P01-T04 | Khai bao maps voi max entries mac dinh | Co contract kernel/userspace ro rang | Map definitions cho runtime, LPM, service, `tx_devmap`, rules, rate, counters, events | P01-T02 |
-| P01-T05 | Implement Ethernet va IPv4 parser bounds-check | Doc header an toan truoc `data_end` | Function parse L2/L3 tra ok/malformed/fragment | P01-T03 |
-| P01-T06 | Implement TCP/UDP/ICMP parser bounds-check | Lay dst port, src port, SYN flags an toan | Function parse L4, handle fragments/unknown protocol | P01-T05 |
-| P01-T07 | Implement malformed va fragment default drop | Fail-closed khi khong du header match service | Logic `REASON_MALFORMED`, `REASON_FRAGMENT`, counter va `XDP_DROP` | P01-T06 |
-| P01-T08 | Implement counter update per-CPU | Giam contention tren hot path | Helper count packets/bytes theo reason/action/proto/service/rule | P01-T04 |
-| P01-T09 | Implement sampled ringbuf event stub | Dat nen cho sampled security events | `maybe_sample` co ringbuf reserve/submit va dropped-event counter | P01-T08 |
-| P01-T10 | Add safe runtime-config missing behavior | Tranh chay voi policy khong hop le | Thieu `runtime_config` thi count `REASON_MAP_ERROR` va `XDP_DROP` | P01-T08 |
-| P01-T11 | Build va verifier log gate | Bat loi verifier som | Build command, verbose verifier output, xlated dump neu can | P01-T10 |
-| P01-T12 | Packet unit tests bang fixture | Chong regression parser | Tests malformed Ethernet/IP, TCP/UDP/ICMP, fragments, unknown protocol | P01-T11 |
+| P01-T01 | Tạo source layout cho data plane | Tách rõ kernel eBPF code và shared headers | Thư mục data plane, shared headers, build target XDP object | Phase 00 |
+| P01-T02 | Định nghĩa enum action/reason/protocol | Đảm bảo counters/events thống nhất với API sau này | Header có `ACTION_*`, `REASON_*`, `L4_*` theo LLD | P01-T01 |
+| P01-T03 | Định nghĩa `packet_meta` zero-initialized | Tránh verifier lỗi uninitialized stack | Struct compact có src/dst, ports, proto, flags, action, reason | P01-T02 |
+| P01-T04 | Khai báo maps với max entries mặc định | Có contract kernel/userspace rõ ràng | Map definitions cho runtime, LPM, service, `tx_devmap`, rules, rate, counters, events | P01-T02 |
+| P01-T05 | Triển khai Ethernet và IPv4 parser bounds-check | Đọc header an toàn trước `data_end` | Function parse L2/L3 trả ok/malformed/fragment | P01-T03 |
+| P01-T06 | Triển khai TCP/UDP/ICMP parser bounds-check | Lấy dst port, src port, SYN flags an toàn | Function parse L4, handle fragments/unknown protocol | P01-T05 |
+| P01-T07 | Triển khai malformed và fragment default drop | Fail-closed khi không đủ header match service | Logic `REASON_MALFORMED`, `REASON_FRAGMENT`, counter và `XDP_DROP` | P01-T06 |
+| P01-T08 | Triển khai counter update per-CPU | Giảm contention trên hot path | Helper count packets/bytes theo reason/action/proto/service/rule | P01-T04 |
+| P01-T09 | Triển khai sampled ringbuf event stub | Đặt nền cho sampled security events | `maybe_sample` có ringbuf reserve/submit và dropped-event counter | P01-T08 |
+| P01-T10 | Thêm safe runtime-config missing behavior | Tránh chạy với policy không hợp lệ | Thiếu `runtime_config` thì count `REASON_MAP_ERROR` và `XDP_DROP` | P01-T08 |
+| P01-T11 | Thiết lập build và verifier log gate | Bắt lỗi verifier sớm | Lệnh build, verbose verifier output, xlated dump nếu cần | P01-T10 |
+| P01-T12 | Packet unit tests bằng fixture | Chống regression parser | Tests malformed Ethernet/IP, TCP/UDP/ICMP, fragments, unknown protocol | P01-T11 |
 
-## Tieu chi chap nhan
+## Tiêu chí chấp nhận
 
-- XDP object build duoc bang clang target BPF va load duoc trong lab.
-- Moi packet pointer access deu co bounds check truoc khi doc.
-- Tat ca stack structs duoc zero-init; khong co verifier loi uninitialized stack.
-- Neu `runtime_config` thieu, XDP fail-closed bang `XDP_DROP` voi counter `REASON_MAP_ERROR`.
-- Malformed va fragment packet bi drop mac dinh va tang counter rieng.
-- Ringbuf failure chi tang dropped-event counter, khong thay doi packet decision.
+- XDP object build được bằng clang target BPF và load được trong lab.
+- Mọi packet pointer access đều có bounds check trước khi đọc.
+- Tất cả stack structs được zero-init; không có verifier lỗi uninitialized stack.
+- Nếu `runtime_config` thiếu, XDP fail-closed bằng `XDP_DROP` với counter `REASON_MAP_ERROR`.
+- Malformed và fragment packet bị drop mặc định và tăng counter riêng.
+- Ringbuf failure chỉ tăng dropped-event counter, không thay đổi packet decision.
 
-## Kiem chung
+## Kiểm chứng
 
-- Build XDP object voi debug symbols va BTF.
-- Load object voi verbose verifier log; khong co `invalid mem access`, `R0 !read_ok`, `unreachable insn`.
-- Replay fixture malformed va valid packets qua XDP test harness hoac network namespace.
-- Inspect maps bang `bpftool map` de xac nhan type va max entries dung contract.
-- Inspect program bang `bpftool prog dump xlated` neu can de xac nhan khong co loop khong bounded.
+- Biên dịch XDP object với debug symbols và BTF.
+- Load object với verbose verifier log; không có `invalid mem access`, `R0 !read_ok`, `unreachable insn`.
+- Chạy lại fixture malformed và valid packets qua XDP test harness hoặc network namespace.
+- Kiểm tra maps bằng `bpftool map` để xác nhận type và max entries đúng contract.
+- Kiểm tra program bằng `bpftool prog dump xlated` nếu cần để xác nhận không có loop không bounded.
 
-## Truy vet PRD
+## Truy vết PRD
 
-- PRD-002: tao counters va ringbuf lam nguon metrics/events.
+- PRD-002: tạo counters và ringbuf làm nguồn metrics/events.
 - PRD-003: XDP/eBPF packet filtering, malformed handling, verifier-safe data plane.
-- PRD-007: dat nen `service_allowlist` va `tx_devmap` maps cho forwarding policy.
-- PRD-010: fail-safe khi runtime config/policy khong hop le.
+- PRD-007: đặt nền `service_allowlist` và `tx_devmap` maps cho forwarding policy.
+- PRD-010: fail-safe khi runtime config/policy không hợp lệ.
 
-## Ghi chu va rui ro
+## Ghi chú và rủi ro
 
-- Khong dua logic phuc tap vao XDP skeleton neu lam tang rui ro verifier; rate limit va feed policy nam o phase sau.
-- LPM trie va per-CPU maps can uoc luong memory truoc khi load capacity lon.
-- Fragment handling giu ro: MVP drop default, khong reassembly.
-- Top-source exact accounting khong nam trong XDP hot path; dung sampled events va counters de tranh cardinality/memory cao.
-
+- Không đưa logic phức tạp vào XDP skeleton nếu làm tăng rủi ro verifier; rate limit và feed policy nằm ở phase sau.
+- LPM trie và per-CPU maps cần ước lượng memory trước khi load capacity lớn.
+- Fragment handling giữ rõ: MVP drop default, không reassembly.
+- Top-source exact accounting không nằm trong XDP hot path; dùng sampled events và counters để tránh cardinality/memory cao.

@@ -1,61 +1,60 @@
-# Phase 00 - Nen tang lab va readiness
+# Phase 00 - Nền tảng lab và readiness
 
-## Muc tieu
+## Mục tiêu
 
-Tao nen tang de cac phase sau co the thuc thi an toan: chot topology mang, thong so NIC/kernel, backend/service can bao ve, toolchain eBPF/libbpf/Go, PostgreSQL, Prometheus va benchmark matrix. Phase nay khong implement packet filtering, nhung tao du dieu kien de build, load, redirect va verify.
+Tạo nền tảng để các phase sau có thể thực thi an toàn: chốt topology mạng, thông số NIC/kernel, backend/service cần bảo vệ, toolchain eBPF/libbpf/Go, PostgreSQL, Prometheus và benchmark matrix. Phase này không triển khai packet filtering, nhưng tạo đủ điều kiện để biên dịch, load, redirect và kiểm chứng.
 
-## Pham vi
+## Phạm vi
 
-- Thu thap thong tin WAN/LAN interface, route, backend CIDR, allowed ports, output interface, link speed, RSS/queue, NIC driver va kernel Ubuntu 24.04.
-- Chuan bi lab/dev host co `clang/llvm`, `libbpf`, `bpftool`, BTF/vmlinux.h, Go toolchain, PostgreSQL, Prometheus va dashboard toolchain.
-- Chot convention source tree cho data plane, agent, control API, dashboard, deploy/config.
-- Tao benchmark input cho drop path, service miss, blacklist hit, UDP flood, SYN flood, ICMP flood, neighbor unresolved va DEVMAP redirect path.
-- Chua tao code runtime; phase nay chi tao dieu kien va dau vao kiem chung.
+- Thu thập thông tin WAN/LAN interface, route, backend CIDR, allowed ports, output interface, link speed, RSS/queue, NIC driver và kernel Ubuntu 24.04.
+- Chuẩn bị lab/dev host có `clang/llvm`, `libbpf`, `bpftool`, BTF/vmlinux.h, Go toolchain, PostgreSQL, Prometheus và dashboard toolchain.
+- Chốt quy ước source tree cho data plane, agent, control API, dashboard, deploy/config.
+- Tạo benchmark input cho drop path, service miss, blacklist hit, UDP flood, SYN flood, ICMP flood, neighbor unresolved và DEVMAP redirect path.
+- Chưa tạo code runtime; phase này chỉ tạo điều kiện và đầu vào kiểm chứng.
 
-## Cong viec
+## Công việc
 
-| ID | Cong viec | Muc dich | Ket qua ban giao | Phu thuoc |
+| ID | Công việc | Mục đích | Kết quả bàn giao | Phụ thuộc |
 |---|---|---|---|---|
-| P00-T01 | Lap danh sach protected backend services | Biet chinh xac traffic nao duoc redirect | Bang backend IP/CIDR, protocol, port, owner, criticality, output interface | Khong |
-| P00-T02 | Ghi nhan topology WAN/LAN va return path | Dam bao gateway khong lam sai duong di goi tin | So do WAN/LAN, upstream, backend subnet, asymmetric return path neu co | P00-T01 |
-| P00-T03 | Kiem tra route, ARP/neighbor va MAC target | Chuan bi cho L2 rewrite va DEVMAP redirect | Bang route, next-hop/backend MAC, neighbor state, output ifindex du kien | P00-T02 |
-| P00-T04 | Kiem tra NIC, driver, RSS, queue va link speed | Xac dinh dieu kien benchmark 10 Gbps va report 40 Gbps | Inventory NIC, driver, queue count, offload, MTU, link speed | P00-T02 |
-| P00-T05 | Kiem tra kernel/BTF tren Ubuntu 24.04 | Dam bao CO-RE/libbpf co du du lieu can thiet | Ket qua `uname`, `/sys/kernel/btf/vmlinux`, kernel config lien quan | Khong |
-| P00-T06 | Chuan bi eBPF build toolchain | Co the build va verifier-test XDP object | Package/tool versions cho `clang`, `llvm`, `bpftool`, `libbpf`, `vmlinux.h` | P00-T05 |
-| P00-T07 | Chuan bi userspace/runtime toolchain | San sang cho Agent, API va dashboard | Go version, PostgreSQL, Prometheus, Node/React toolchain neu dung | Khong |
-| P00-T08 | Dinh nghia environment config toi thieu | Tranh hard-code interface, ports va secrets | Mau config cho WAN/LAN, API URL, DB DSN, metrics port, secret refs | P00-T01 |
-| P00-T09 | Lap traffic benchmark matrix | Test du drop path va DEVMAP redirect path | Matrix traffic hop le, malformed, blacklist, service miss, flood, redirect failure | P00-T04 |
-| P00-T10 | Xac dinh secret handling baseline | Tranh lo Telegram token va feed API key tu dau | Quy uoc secret ref/encrypted column/redaction cho log/audit/API | P00-T07 |
-| P00-T11 | Chot Definition of Done cho MVP | Lam ro dieu kien ket thuc phase va release | Checklist build, verifier, integration, benchmark, UAT, runbook | P00-T09 |
+| P00-T01 | Lập danh sách protected backend services | Biết chính xác traffic nào được redirect | Bảng backend IP/CIDR, protocol, port, owner, criticality, output interface | Không |
+| P00-T02 | Ghi nhận topology WAN/LAN và return path | Đảm bảo gateway không làm sai đường đi gói tin | Sơ đồ WAN/LAN, upstream, backend subnet, asymmetric return path nếu có | P00-T01 |
+| P00-T03 | Kiểm tra route, ARP/neighbor và MAC target | Chuẩn bị cho L2 rewrite và DEVMAP redirect | Bảng route, next-hop/backend MAC, neighbor state, output ifindex dự kiến | P00-T02 |
+| P00-T04 | Kiểm tra NIC, driver, RSS, queue và link speed | Xác định điều kiện benchmark 10 Gbps và report 40 Gbps | Inventory NIC, driver, queue count, offload, MTU, link speed | P00-T02 |
+| P00-T05 | Kiểm tra kernel/BTF trên Ubuntu 24.04 | Đảm bảo CO-RE/libbpf có đủ dữ liệu cần thiết | Kết quả `uname`, `/sys/kernel/btf/vmlinux`, kernel config liên quan | Không |
+| P00-T06 | Chuẩn bị eBPF build toolchain | Có thể build và verifier-test XDP object | Package/tool versions cho `clang`, `llvm`, `bpftool`, `libbpf`, `vmlinux.h` | P00-T05 |
+| P00-T07 | Chuẩn bị userspace/runtime toolchain | Sẵn sàng cho Agent, API và dashboard | Go version, PostgreSQL, Prometheus, Node/React toolchain nếu dùng | Không |
+| P00-T08 | Định nghĩa environment config tối thiểu | Tránh hard-code interface, ports và secrets | Mẫu config cho WAN/LAN, API URL, DB DSN, metrics port, secret refs | P00-T01 |
+| P00-T09 | Lập traffic benchmark matrix | Kiểm thử đủ drop path và DEVMAP redirect path | Matrix traffic hợp lệ, malformed, blacklist, service miss, flood, redirect failure | P00-T04 |
+| P00-T10 | Xác định secret handling baseline | Tránh lộ Telegram token và feed API key từ đầu | Quy ước secret ref/encrypted column/redaction cho log/audit/API | P00-T07 |
+| P00-T11 | Chốt Definition of Done cho MVP | Làm rõ điều kiện kết thúc phase và release | Checklist build, verifier, integration, benchmark, UAT, runbook | P00-T09 |
 
-## Tieu chi chap nhan
+## Tiêu chí chấp nhận
 
-- Co inventory day du cho backend service, WAN/LAN route, neighbor/MAC, NIC, driver, RSS/queue, kernel va BTF.
-- Co toolchain build eBPF va Go userspace tren Ubuntu 24.04.
-- Co benchmark matrix gom drop-only, service allowlist miss, rate limit, blacklist va full DEVMAP redirect path.
-- Co config convention cho interface, route/neighbor, policy sync, database, metrics va secrets.
-- Cac rui ro hieu nang ban dau duoc ghi ro: native XDP support, generic fallback, queue/RSS, link saturation.
+- Có inventory đầy đủ cho backend service, WAN/LAN route, neighbor/MAC, NIC, driver, RSS/queue, kernel và BTF.
+- Có toolchain build eBPF và Go userspace trên Ubuntu 24.04.
+- Có benchmark matrix gồm drop-only, service allowlist miss, rate limit, blacklist và full DEVMAP redirect path.
+- Có config convention cho interface, route/neighbor, policy sync, database, metrics và secrets.
+- Các rủi ro hiệu năng ban đầu được ghi rõ: native XDP support, generic fallback, queue/RSS, link saturation.
 
-## Kiem chung
+## Kiểm chứng
 
-- Chay check toolchain: `clang --version`, `bpftool version`, `go version`, `psql --version`, `prometheus --version` neu co san.
-- Kiem tra BTF: `/sys/kernel/btf/vmlinux` ton tai tren host muc tieu.
-- Kiem tra NIC/driver/RSS bang `ethtool -i`, `ethtool -l`, `ip link`, `nproc`.
-- Kiem tra route/neighbor bang `ip route`, `ip neigh`, MAC backend/next-hop va ifindex output.
-- Review bang backend service voi Network/SRE de xac nhan allowed ports va return path.
+- Chạy check toolchain: `clang --version`, `bpftool version`, `go version`, `psql --version`, `prometheus --version` nếu có sẵn.
+- Kiểm tra BTF: `/sys/kernel/btf/vmlinux` tồn tại trên host mục tiêu.
+- Kiểm tra NIC/driver/RSS bằng `ethtool -i`, `ethtool -l`, `ip link`, `nproc`.
+- Kiểm tra route/neighbor bằng `ip route`, `ip neigh`, MAC backend/next-hop và ifindex output.
+- Review bảng backend service với Network/SRE để xác nhận allowed ports và return path.
 
-## Truy vet PRD
+## Truy vết PRD
 
-- PRD-002: chuan bi metrics/dashboard inputs.
-- PRD-003: chuan bi kernel capability cho XDP/eBPF.
-- PRD-007: chot route topology, output interface, neighbor/MAC va service allowlist input.
-- PRD-010: chuan bi last-valid snapshot va fail-safe requirement.
-- PRD-011: thu thap link/topology input cho ISP escalation.
+- PRD-002: chuẩn bị metrics/dashboard inputs.
+- PRD-003: chuẩn bị kernel capability cho XDP/eBPF.
+- PRD-007: chốt route topology, output interface, neighbor/MAC và service allowlist input.
+- PRD-010: chuẩn bị last-valid snapshot và fail-safe requirement.
+- PRD-011: thu thập link/topology input cho ISP escalation.
 
-## Ghi chu va rui ro
+## Ghi chú và rủi ro
 
-- Muc tieu 10 Gbps chi duoc xac nhan sau benchmark tren NIC/kernel/queue thuc te.
-- Neu NIC khong ho tro native XDP, MVP co the functional-test bang generic fallback nhung phai canh bao hieu nang.
-- Neu neighbor/MAC khong resolve on dinh, Phase 04 se fail-closed va can root-cause topology truoc khi UAT.
-- Secrets phai duoc thiet ke tu dau de tranh audit/log lam lo token.
-
+- Mục tiêu 10 Gbps chỉ được xác nhận sau benchmark trên NIC/kernel/queue thực tế.
+- Nếu NIC không hỗ trợ native XDP, MVP có thể kiểm thử chức năng bằng generic fallback nhưng phải cảnh báo hiệu năng.
+- Nếu neighbor/MAC không resolve ổn định, Phase 04 sẽ fail-closed và cần root-cause topology trước khi UAT.
+- Secrets phải được thiết kế từ đầu để tránh audit/log làm lộ token.

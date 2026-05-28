@@ -1,65 +1,64 @@
-# Phase 06 - Observability va Dashboard
+# Phase 06 - Observability và Dashboard
 
-## Muc tieu
+## Mục tiêu
 
-Xay dung observability va dashboard van hanh cho P1: Prometheus scrape Agent/Control API, event ingestion cho sampled packet/rule events, dashboard realtime cho traffic/drop/redirect/rules/services/agents va Grafana dashboard toi thieu.
+Xây dựng khả năng quan sát và dashboard vận hành cho P1: Prometheus scrape Agent/Control API, event ingestion cho sampled packet/rule events, dashboard realtime cho traffic/drop/redirect/rules/services/agents và Grafana dashboard tối thiểu.
 
-## Pham vi
+## Phạm vi
 
-- Prometheus scrape Agent va Control API.
-- Metric labels bounded, khong dung raw source IP/CIDR trong high-cardinality labels.
-- Event ingestion tu Agent vao Control API/PostgreSQL cho sampled packet/rule/redirect events.
-- React dashboard tap trung van hanh, khong landing page marketing.
+- Prometheus scrape Agent và Control API.
+- Metric labels bounded, không dùng raw source IP/CIDR trong high-cardinality labels.
+- Event ingestion từ Agent vào Control API/PostgreSQL cho sampled packet/rule/redirect events.
+- React dashboard tập trung vận hành, không landing page marketing.
 - Grafana dashboards cho bps/pps/cps, drop/redirect, map utilization, neighbor health, alerts.
 
-## Cong viec
+## Công việc
 
-| ID | Cong viec | Muc dich | Ket qua ban giao | Phu thuoc |
+| ID | Công việc | Mục đích | Kết quả bàn giao | Phụ thuộc |
 |---|---|---|---|---|
-| P06-T01 | Chot metric catalog `anti_ddos_*` | Thong nhat labels va naming | Metric definitions cho agent, XDP, traffic, maps, feed, alerts, redirect | Phase 02 |
-| P06-T02 | Add Control API metrics | Quan sat API, snapshot, DB, alerts | `/metrics` cho API request, snapshot versions, apply status, DB health | Phase 05 |
-| P06-T03 | Implement event ingestion endpoint | Luu sampled packet/rule events | API receive events, validate, write `security_events` | Phase 05 |
-| P06-T04 | Implement event query APIs | Dashboard tra cuu IP/subnet/service | APIs filter by time, service, src IP, action, reason, rule | P06-T03 |
-| P06-T05 | Build overview dashboard view | Operator thay tinh trang ngay | Realtime bps/pps/cps, drops, redirects, attack status, top ports | P06-T04 |
-| P06-T06 | Build rules/mitigation view | Van hanh active rule va TTL | Rule table, action, mode, counters, TTL, evidence, rollback entrypoint | P06-T04 |
-| P06-T07 | Build whitelist/blacklist views | Quan ly reputation va conflicts | Search CIDR, state, source, expiry, audit link, conflict display | P06-T04 |
-| P06-T08 | Build service/forwarding view | Theo doi backend allowlist va DEVMAP path | Service counters, not_allowed_service, redirect errors, neighbor status, output interface | P06-T04 |
-| P06-T09 | Build Agent health/map view | Phat hien stale va map gan day | XDP mode, policy version, map utilization, attach errors, devmap support | P06-T01 |
-| P06-T10 | Create Grafana dashboards | Co dashboard Prometheus san dung | JSON dashboard bps/pps/drops/redirect/maps/neighbor/alerts | P06-T01 |
-| P06-T11 | Add dashboard RBAC behavior | Viewer read-only tren UI | UI hides/blocks mutation for Viewer, shows audit/result for mutations | Phase 05 |
-| P06-T12 | Add dashboard freshness indicators | Biet du lieu co stale hay khong | Last update timestamp, stale markers, apply pending/failed/applied state | P06-T05 |
+| P06-T01 | Chốt metric catalog `anti_ddos_*` | Thống nhất labels và naming | Metric definitions cho agent, XDP, traffic, maps, feed, alerts, redirect | Phase 02 |
+| P06-T02 | Thêm Control API metrics | Quan sát API, snapshot, DB, alerts | `/metrics` cho API request, snapshot versions, apply status, DB health | Phase 05 |
+| P06-T03 | Triển khai event ingestion endpoint | Lưu sampled packet/rule events | API receive events, validate, write `security_events` | Phase 05 |
+| P06-T04 | Triển khai event query APIs | Dashboard tra cứu IP/subnet/service | APIs filter by time, service, src IP, action, reason, rule | P06-T03 |
+| P06-T05 | Xây dựng overview dashboard view | Operator thấy tình trạng ngay | Realtime bps/pps/cps, drops, redirects, attack status, top ports | P06-T04 |
+| P06-T06 | Xây dựng rules/mitigation view | Vận hành active rule và TTL | Rule table, action, mode, counters, TTL, evidence, rollback entrypoint | P06-T04 |
+| P06-T07 | Xây dựng whitelist/blacklist views | Quản lý reputation và conflicts | Search CIDR, state, source, expiry, audit link, conflict display | P06-T04 |
+| P06-T08 | Xây dựng service/forwarding view | Theo dõi backend allowlist và DEVMAP path | Service counters, not_allowed_service, redirect errors, neighbor status, output interface | P06-T04 |
+| P06-T09 | Xây dựng Agent health/map view | Phát hiện stale và map gần đầy | XDP mode, policy version, map utilization, attach errors, devmap support | P06-T01 |
+| P06-T10 | Tạo Grafana dashboards | Có dashboard Prometheus sẵn dùng | JSON dashboard bps/pps/drops/redirect/maps/neighbor/alerts | P06-T01 |
+| P06-T11 | Thêm dashboard RBAC behavior | Viewer read-only trên UI | UI ẩn/chặn mutation cho Viewer, hiển thị audit/result cho mutations | Phase 05 |
+| P06-T12 | Thêm dashboard freshness indicators | Biết dữ liệu có stale hay không | Last update timestamp, stale markers, apply pending/failed/applied state | P06-T05 |
 
-## Tieu chi chap nhan
+## Tiêu chí chấp nhận
 
-- Prometheus scrape duoc Agent va Control API metrics.
-- Dashboard overview refresh du lieu chinh trong muc tieu <= 3 giay khi backend/API cho phep.
-- Operator xem duoc XDP mode, policy version, map utilization, route/neighbor health va active rules.
-- IP/subnet investigation hien event history, counters, reputation/whitelist/blacklist state.
-- Viewer khong thay hoac khong thuc hien duoc mutation actions.
-- Grafana co dashboard toi thieu cho traffic, decisions, redirect/neighbor health, map utilization va alerts.
+- Prometheus scrape được Agent và Control API metrics.
+- Dashboard overview refresh dữ liệu chính trong mục tiêu <= 3 giây khi backend/API cho phép.
+- Operator xem được XDP mode, policy version, map utilization, route/neighbor health và active rules.
+- IP/subnet investigation hiện event history, counters, reputation/whitelist/blacklist state.
+- Viewer không thấy hoặc không thực hiện được mutation actions.
+- Grafana có dashboard tối thiểu cho traffic, decisions, redirect/neighbor health, map utilization và alerts.
 
-## Kiem chung
+## Kiểm chứng
 
-- Prometheus target health xanh cho Agent va API.
-- Metric label audit xac nhan khong co `src_ip`, CIDR raw, alert text, username trong high-cardinality labels.
+- Prometheus target health xanh cho Agent và API.
+- Metric label audit xác nhận không có `src_ip`, CIDR raw, alert text, username trong high-cardinality labels.
 - UI integration tests cho Admin/Operator/Viewer.
-- Insert sampled events fixture va search tren dashboard.
-- Generate not-allowed-service, redirect error va attach error metrics, xac nhan hien tren dashboard/Grafana.
+- Nạp fixture sampled events và search trên dashboard.
+- Sinh metrics not-allowed-service, redirect error và attach error, xác nhận hiện trên dashboard/Grafana.
 
-## Truy vet PRD
+## Truy vết PRD
 
-- PRD-001: hien baseline/anomaly inputs va low-confidence status cho Phase 07.
+- PRD-001: hiện baseline/anomaly inputs và low-confidence status cho Phase 07.
 - PRD-002: realtime monitoring, Prometheus/Grafana.
-- PRD-006: whitelist UI va conflict display.
+- PRD-006: whitelist UI và conflict display.
 - PRD-007: backend service allowlist, forwarding counters, neighbor health.
-- PRD-008: alert visibility va delivery status nen tang cho Phase 09.
-- PRD-009: Viewer read-only va audit visibility.
-- PRD-010: stale policy va apply status visibility.
+- PRD-008: alert visibility và delivery status nền tảng cho Phase 09.
+- PRD-009: Viewer read-only và audit visibility.
+- PRD-010: stale policy và apply status visibility.
 
-## Ghi chu va rui ro
+## Ghi chú và rủi ro
 
-- UI uu tien thong tin van hanh day du, khong tao landing/marketing page.
-- Dung PostgreSQL events cho top source va investigation de tranh Prometheus cardinality cao.
-- Dashboard data freshness phu thuoc scrape interval, API polling/websocket va aggregation path.
-- Mutations tren UI phai yeu cau reason khi policy/audit can.
-
+- UI ưu tiên thông tin vận hành đầy đủ, không tạo landing/marketing page.
+- Dùng PostgreSQL events cho top source và investigation để tránh Prometheus cardinality cao.
+- Dashboard data freshness phụ thuộc scrape interval, API polling/websocket và aggregation path.
+- Mutations trên UI phải yêu cầu reason khi policy/audit cần.

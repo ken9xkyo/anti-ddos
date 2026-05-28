@@ -1,68 +1,68 @@
-# Phase 04 - DEVMAP Forwarding va Service Allowlist
+# Phase 04 - DEVMAP Forwarding và Service Allowlist
 
-## Muc tieu
+## Mục tiêu
 
-Dam bao gateway chi redirect traffic sach toi backend/service da khai bao bang L2 MAC rewrite va `XDP_REDIRECT` qua `BPF_MAP_TYPE_DEVMAP`. Packet ngoai allowlist hoac redirect target loi phai fail-closed bang `XDP_DROP`, tang counter ro reason va tao du input cho dashboard/alert.
+Đảm bảo gateway chỉ redirect traffic sạch tới backend/service đã khai báo bằng L2 MAC rewrite và `XDP_REDIRECT` qua `BPF_MAP_TYPE_DEVMAP`. Packet ngoài allowlist hoặc redirect target lỗi phải fail-closed bằng `XDP_DROP`, tăng counter rõ reason và tạo đủ input cho dashboard/alert.
 
-## Pham vi
+## Phạm vi
 
-- Implement `service_allowlist` lookup trong XDP theo dst IPv4, protocol va dst port.
-- Agent resolve output ifindex va next-hop/backend MAC tu routing/ARP/neighbor table truoc khi publish policy.
-- Agent populate `tx_devmap` va `service_allowlist` tu snapshot da validate.
-- XDP rewrite Ethernet source/destination MAC va goi `bpf_redirect_map(&tx_devmap, service.devmap_key, XDP_DROP)`.
-- Backend return path co the asymmetric; MVP khong NAT/DNAT va khong proxy.
-- Control API CRUD service implement day du o Phase 05; phase nay dung config/mock snapshot de verify data path.
+- Triển khai `service_allowlist` lookup trong XDP theo dst IPv4, protocol và dst port.
+- Agent phân giải output ifindex và next-hop/backend MAC từ routing/ARP/neighbor table trước khi publish policy.
+- Agent populate `tx_devmap` và `service_allowlist` từ snapshot đã validate.
+- XDP rewrite Ethernet source/destination MAC và gọi `bpf_redirect_map(&tx_devmap, service.devmap_key, XDP_DROP)`.
+- Backend return path có thể asymmetric; MVP không NAT/DNAT và không proxy.
+- Control API CRUD service triển khai đầy đủ ở Phase 05; phase này dùng config/mock snapshot để kiểm chứng data path.
 
-## Cong viec
+## Công việc
 
-| ID | Cong viec | Muc dich | Ket qua ban giao | Phu thuoc |
+| ID | Công việc | Mục đích | Kết quả bàn giao | Phụ thuộc |
 |---|---|---|---|---|
-| P04-T01 | Dinh nghia final `service_key` va `service_value` | Dong bo XDP map voi snapshot/API | Key dst_v4/proto/dst_port; value service_id, policy_id, action, output_ifindex, devmap_key, neighbor_status, dst_mac, src_mac | Phase 03 |
-| P04-T02 | Implement Agent route/neighbor resolver | Biet redirect packet ra interface nao va MAC nao | Resolver doc route, ifindex, interface MAC, ARP/neighbor MAC, status resolved/unresolved | P04-T01 |
-| P04-T03 | Validate output interface va neighbor state | Khong publish policy redirect sai path | Validation error cho interface missing/down, MAC missing, neighbor unresolved | P04-T02 |
-| P04-T04 | Populate `tx_devmap` | Tao target output interface cho `XDP_REDIRECT` | Agent update `BPF_MAP_TYPE_DEVMAP` theo devmap_key/output_ifindex | P04-T03 |
-| P04-T05 | Populate `service_allowlist` active/inactive slot | Dua service registry thanh hot-path policy | Map entries co dst/proto/port va resolved redirect metadata | P04-T04 |
-| P04-T06 | Implement service lookup trong XDP | Chan traffic ngoai allowlist som | Logic lookup active service slot sau parse/source checks | P04-T05 |
-| P04-T07 | Implement `REASON_NOT_ALLOWED_SERVICE` | Visibility cho service miss | Counter/drop/event cho packet khong match service allowlist | P04-T06 |
-| P04-T08 | Implement neighbor unresolved fail-closed drop | Khong redirect khi MAC/neighbor khong tin cay | XDP drop `REASON_NEIGHBOR_UNRESOLVED`, counter va sampled event | P04-T06 |
-| P04-T09 | Implement Ethernet source/destination MAC rewrite | Chuan bi packet cho backend-facing NIC | Helper rewrite `eth->h_dest` bang backend/next-hop MAC va `eth->h_source` bang output interface MAC | P04-T08 |
-| P04-T10 | Implement DEVMAP redirect return path | Chuyen traffic sach toi backend | XDP return `bpf_redirect_map(&tx_devmap, service.devmap_key, XDP_DROP)` | P04-T09 |
-| P04-T11 | Implement redirect/error counters | Quan sat duoc success/failure forwarding | Counters `redirected`, `redirect_error`, `neighbor_unresolved`, `not_allowed_service` theo service/proto/interface | P04-T10 |
-| P04-T12 | Expose redirect va neighbor metrics | Dashboard/Prometheus thay forwarding state | Metrics `anti_ddos_redirected_packets_total`, `anti_ddos_redirect_errors_total`, `anti_ddos_neighbor_resolution_status` | P04-T11 |
-| P04-T13 | Test non-allowlisted traffic | Xac nhan khong forward nham | Packet toi port/proto/dst khong cho phep bi drop/count | P04-T12 |
-| P04-T14 | Test end-to-end VETH/namespace DEVMAP forwarding | Xac nhan redirect path hoat dong that | Client namespace -> WAN veth -> XDP -> DEVMAP -> backend namespace | P04-T10 |
-| P04-T15 | Document redirect failure behavior | Van hanh biet khi nao can canh bao/rollback | Runbook ngan cho output interface down, DEVMAP missing, neighbor unresolved, return path sai | P04-T12 |
+| P04-T01 | Định nghĩa final `service_key` và `service_value` | Đồng bộ XDP map với snapshot/API | Key dst_v4/proto/dst_port; value service_id, policy_id, action, output_ifindex, devmap_key, neighbor_status, dst_mac, src_mac | Phase 03 |
+| P04-T02 | Triển khai Agent route/neighbor resolver | Biết redirect packet ra interface nào và MAC nào | Resolver đọc route, ifindex, interface MAC, ARP/neighbor MAC, status resolved/unresolved | P04-T01 |
+| P04-T03 | Kiểm tra output interface và neighbor state | Không publish policy redirect sai path | Lỗi validation cho interface missing/down, MAC missing, neighbor unresolved | P04-T02 |
+| P04-T04 | Populate `tx_devmap` | Tạo target output interface cho `XDP_REDIRECT` | Agent update `BPF_MAP_TYPE_DEVMAP` theo devmap_key/output_ifindex | P04-T03 |
+| P04-T05 | Populate `service_allowlist` active/inactive slot | Đưa service registry thành hot-path policy | Map entries có dst/proto/port và resolved redirect metadata | P04-T04 |
+| P04-T06 | Triển khai service lookup trong XDP | Chặn traffic ngoài allowlist sớm | Logic lookup active service slot sau parse/source checks | P04-T05 |
+| P04-T07 | Triển khai `REASON_NOT_ALLOWED_SERVICE` | Visibility cho service miss | Counter/drop/event cho packet không match service allowlist | P04-T06 |
+| P04-T08 | Triển khai neighbor unresolved fail-closed drop | Không redirect khi MAC/neighbor không tin cậy | XDP drop `REASON_NEIGHBOR_UNRESOLVED`, counter và sampled event | P04-T06 |
+| P04-T09 | Triển khai Ethernet source/destination MAC rewrite | Chuẩn bị packet cho backend-facing NIC | Helper rewrite `eth->h_dest` bằng backend/next-hop MAC và `eth->h_source` bằng output interface MAC | P04-T08 |
+| P04-T10 | Triển khai DEVMAP redirect return path | Chuyển traffic sạch tới backend | XDP return `bpf_redirect_map(&tx_devmap, service.devmap_key, XDP_DROP)` | P04-T09 |
+| P04-T11 | Triển khai redirect/error counters | Quan sát được success/failure forwarding | Counters `redirected`, `redirect_error`, `neighbor_unresolved`, `not_allowed_service` theo service/proto/interface | P04-T10 |
+| P04-T12 | Công bố redirect và neighbor metrics | Dashboard/Prometheus thấy forwarding state | Metrics `anti_ddos_redirected_packets_total`, `anti_ddos_redirect_errors_total`, `anti_ddos_neighbor_resolution_status` | P04-T11 |
+| P04-T13 | Kiểm thử traffic không thuộc allowlist | Xác nhận không forward nhầm | Packet tới port/proto/dst không cho phép bị drop/count | P04-T12 |
+| P04-T14 | Kiểm thử end-to-end VETH/namespace DEVMAP forwarding | Xác nhận redirect path hoạt động thật | Client namespace -> WAN veth -> XDP -> DEVMAP -> backend namespace | P04-T10 |
+| P04-T15 | Viết tài liệu redirect failure behavior | Vận hành biết khi nào cần cảnh báo/rollback | Runbook ngắn cho output interface down, DEVMAP missing, neighbor unresolved, return path sai | P04-T12 |
 
-## Tieu chi chap nhan
+## Tiêu chí chấp nhận
 
-- Packet toi backend IP/protocol/port da khai bao duoc L2 rewrite va return `XDP_REDIRECT` qua `tx_devmap`.
-- Packet khong match service allowlist bi `XDP_DROP` voi reason `not_allowed_service`.
-- Neighbor unresolved, output interface loi hoac DEVMAP target loi fail-closed bang drop voi counter/metric rieng.
-- `service_allowlist` va `tx_devmap` cap nhat qua snapshot khong can restart Agent hay XDP program.
-- Prometheus scrape duoc redirect success, redirect error, neighbor unresolved va neighbor resolution status.
-- E2E namespace/VETH test chung minh backend chi nhan traffic allowlisted.
+- Packet tới backend IP/protocol/port đã khai báo được L2 rewrite và return `XDP_REDIRECT` qua `tx_devmap`.
+- Packet không match service allowlist bị `XDP_DROP` với reason `not_allowed_service`.
+- Neighbor unresolved, output interface lỗi hoặc DEVMAP target lỗi fail-closed bằng drop với counter/metric riêng.
+- `service_allowlist` và `tx_devmap` cập nhật qua snapshot không cần restart Agent hay XDP program.
+- Prometheus scrape được redirect success, redirect error, neighbor unresolved và neighbor resolution status.
+- E2E namespace/VETH test chứng minh backend chỉ nhận traffic allowlisted.
 
-## Kiem chung
+## Kiểm chứng
 
-- Packet fixture cho allowed TCP/UDP/ICMP service tra `XDP_REDIRECT` va khong di theo diagnostic/fallback return path.
-- Negative tests cho port khong cho phep, protocol khong cho phep va dst IP khong thuoc service.
-- Test unresolved neighbor: policy bi reject hoac packet bi drop `REASON_NEIGHBOR_UNRESOLVED` theo mode da thiet ke.
-- Test missing DEVMAP entry: `bpf_redirect_map(..., XDP_DROP)` fail-closed va tang redirect error metrics.
-- Network namespace/VETH integration test xac nhan backend chi thay traffic da allowlist va MAC headers duoc rewrite dung.
-- Prometheus scrape redirect/neighbor metrics va dashboard Phase 06 co du input hien thi.
+- Packet fixture cho allowed TCP/UDP/ICMP service trả `XDP_REDIRECT` và không đi theo diagnostic/fallback return path.
+- Negative tests cho port không cho phép, protocol không cho phép và dst IP không thuộc service.
+- Kiểm thử unresolved neighbor: policy bị reject hoặc packet bị drop `REASON_NEIGHBOR_UNRESOLVED` theo mode đã thiết kế.
+- Kiểm thử missing DEVMAP entry: `bpf_redirect_map(..., XDP_DROP)` fail-closed và tăng redirect error metrics.
+- Network namespace/VETH integration test xác nhận backend chỉ thấy traffic đã allowlist và MAC headers được rewrite đúng.
+- Prometheus scrape redirect/neighbor metrics và dashboard Phase 06 có đủ input hiển thị.
 
-## Truy vet PRD
+## Truy vết PRD
 
-- PRD-002: forwarding status, redirect counters va neighbor health tren metrics/dashboard.
-- PRD-003: packet sach match allowlist duoc rewrite L2 va `XDP_REDIRECT`; target loi drop fail-closed.
-- PRD-007: dashboard protected backend service registry sinh `service_allowlist` va `tx_devmap`.
-- PRD-008: redirect/neighbor failure la input cho Telegram alerting.
-- PRD-010: apply loi giu policy snapshot gan nhat.
-- PRD-011: route/link/neighbor evidence phuc vu ISP escalation khi can.
+- PRD-002: forwarding status, redirect counters và neighbor health trên metrics/dashboard.
+- PRD-003: packet sạch match allowlist được rewrite L2 và `XDP_REDIRECT`; target lỗi drop fail-closed.
+- PRD-007: dashboard protected backend service registry sinh `service_allowlist` và `tx_devmap`.
+- PRD-008: redirect/neighbor failure là input cho Telegram alerting.
+- PRD-010: apply lỗi giữ policy snapshot gần nhất.
+- PRD-011: route/link/neighbor evidence phục vụ ISP escalation khi cần.
 
-## Ghi chu va rui ro
+## Ghi chú và rủi ro
 
-- MVP giu nguyen IP, khong NAT/DNAT; moi thay doi sang kernel routing/proxy la ngoai scope phase nay.
-- Diagnostic/fallback return path chi duoc bat bang policy rieng, khong phai success path P1.
-- Backend return path asymmetric lam troubleshooting phuc tap hon; runbook phai ghi ro.
-- Neighbor/MAC sai co the redirect nham hoac drop traffic hop le; validation va alert phai uu tien fail-closed.
+- MVP giữ nguyên IP, không NAT/DNAT; mọi thay đổi sang kernel routing/proxy là ngoài scope phase này.
+- Diagnostic/fallback return path chỉ được bật bằng policy riêng, không phải success path P1.
+- Backend return path asymmetric làm troubleshooting phức tạp hơn; runbook phải ghi rõ.
+- Neighbor/MAC sai có thể redirect nhầm hoặc drop traffic hợp lệ; validation và alert phải ưu tiên fail-closed.
