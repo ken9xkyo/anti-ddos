@@ -26,6 +26,11 @@ const (
 	neighborUnresolved = 0
 	neighborResolved   = 1
 
+	rateDimSource        = 0
+	rateDimSubnet        = 1
+	rateDimService       = 2
+	rateDimSourceService = 3
+
 	maxEventSampleDenom = 1000000
 )
 
@@ -82,6 +87,7 @@ type RuleValue struct {
 	Action          uint32
 	Mode            uint32
 	ServiceID       uint32
+	Dimension       uint32
 	ThresholdPPS    uint32
 	ThresholdBPS    uint32
 	ThresholdCPS    uint32
@@ -89,6 +95,7 @@ type RuleValue struct {
 	BurstBytes      uint32
 	SampleDenom     uint32
 	Pad             uint32
+	TailPad         uint32
 	ExpiresAtUnixNS uint64
 }
 
@@ -98,7 +105,8 @@ type CounterKey struct {
 	ServiceID uint32
 	Proto     uint8
 	Action    uint8
-	Pad       uint16
+	TCPSyn    uint8
+	Pad       uint8
 }
 
 type CounterValue struct {

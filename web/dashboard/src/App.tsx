@@ -14,14 +14,15 @@ import {
   Router,
   Search,
   Server,
-  Shield
+  Shield,
+  TrendingUp
 } from 'lucide-react';
 import { ApiClient } from './api';
-import type { Agent, DashboardData, Rule, SecurityEvent, Service, User } from './types';
+import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, Rule, SecurityEvent, Service, User } from './types';
 import './styles.css';
 
 const api = new ApiClient();
-const tabs = ['overview', 'rules', 'reputation', 'services', 'agents', 'events'] as const;
+const tabs = ['overview', 'anomalies', 'rules', 'reputation', 'services', 'agents', 'events'] as const;
 export type Tab = (typeof tabs)[number];
 
 export default function App() {
@@ -185,6 +186,7 @@ export function DashboardShell({
       {error ? <div className="banner error"><AlertTriangle size={16} />{error}</div> : null}
       {!data ? <div className="empty-state">Loading dashboard data</div> : null}
       {data && activeTab === 'overview' ? <OverviewView data={data} canMutate={canMutate} /> : null}
+      {data && activeTab === 'anomalies' ? <AnomaliesView anomalies={data.anomalies} baselines={data.baselines} /> : null}
       {data && activeTab === 'rules' ? <RulesView rules={data.rules} canMutate={canMutate} /> : null}
       {data && activeTab === 'reputation' ? <ReputationView events={data.events} canMutate={canMutate} /> : null}
       {data && activeTab === 'services' ? <ServicesView services={data.services} canMutate={canMutate} /> : null}
@@ -201,6 +203,7 @@ function OverviewView({ data, canMutate }: { data: DashboardData; canMutate: boo
       <MetricPanel icon={<Activity size={18} />} label="Bits/s" value={numberValue(data.overview.traffic.bps)} />
       <MetricPanel icon={<Router size={18} />} label="Connections/s" value={numberValue(data.overview.traffic.cps)} />
       <MetricPanel icon={<Server size={18} />} label="Agents" value={`${data.overview.agents.total - data.overview.agents.stale}/${data.overview.agents.total}`} tone={data.overview.agents.stale ? 'warn' : 'ok'} />
+      <MetricPanel icon={<TrendingUp size={18} />} label="Anomaly score" value={numberValue(data.anomalies[0]?.score ?? 0)} tone={data.anomalies[0]?.auto_enforced ? 'warn' : undefined} />
       <div className="wide-panel">
         <PanelHeader icon={<Database size={18} />} title="Prometheus" action={canMutate ? 'Open Grafana' : undefined} />
         <div className="status-row">
@@ -210,6 +213,45 @@ function OverviewView({ data, canMutate }: { data: DashboardData; canMutate: boo
       </div>
       <TopList title="Top source /24" items={data.overview.security_events.top_sources} />
       <TopList title="Top ports" items={data.overview.security_events.top_ports} />
+      <TopList title="Recent signals" items={(data.anomalies[0]?.signals ?? []).map((signal) => ({ key: signal, count: Math.round(data.anomalies[0]?.score ?? 0) }))} />
+    </section>
+  );
+}
+
+function AnomaliesView({ anomalies, baselines }: { anomalies: AnomalyEvaluation[]; baselines: BaselineProfile[] }) {
+  return (
+    <section className="stacked-view">
+      <TablePanel icon={<TrendingUp size={18} />} title="Anomalies / Auto-Enforce">
+        <thead><tr><th>Service</th><th>Score</th><th>Confidence</th><th>Signals</th><th>Action</th><th>TTL</th><th>Source</th><th>Status</th></tr></thead>
+        <tbody>{anomalies.map((item) => (
+          <tr key={item.id}>
+            <td>{item.service_name || item.service_ebpf_id || 'service'}</td>
+            <td>{numberValue(item.score)}</td>
+            <td>{percentValue(item.confidence)}</td>
+            <td><SignalList signals={item.signals ?? []} /></td>
+            <td>{item.recommended_action}</td>
+            <td>{item.proposed_ttl_seconds ?? 0}s</td>
+            <td>{item.source || 'n/a'}</td>
+            <td><StatusPill state={item.auto_enforced || item.status === 'blocked_whitelist' ? 'warn' : item.status === 'observe_only' ? 'off' : 'ok'} text={item.status} /></td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
+      <TablePanel icon={<Database size={18} />} title="Baselines">
+        <thead><tr><th>Service</th><th>Interface</th><th>Protocol</th><th>Window</th><th>PPS</th><th>BPS</th><th>CPS</th><th>Confidence</th><th>Status</th></tr></thead>
+        <tbody>{baselines.map((item) => (
+          <tr key={item.id}>
+            <td>{item.service_name || item.service_ebpf_id || 'service'}</td>
+            <td>{item.interface}</td>
+            <td>{item.protocol}{item.port ? `/${item.port}` : ''}</td>
+            <td>{item.window}</td>
+            <td>{numberValue(item.expected_pps)}</td>
+            <td>{numberValue(item.expected_bps)}</td>
+            <td>{numberValue(item.expected_cps)}</td>
+            <td>{percentValue(item.confidence)}</td>
+            <td><StatusPill state={item.approved && item.history_hours >= 24 ? 'ok' : 'warn'} text={item.approved && item.history_hours >= 24 ? 'approved' : 'low confidence'} /></td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
     </section>
   );
 }
@@ -217,14 +259,16 @@ function OverviewView({ data, canMutate }: { data: DashboardData; canMutate: boo
 function RulesView({ rules, canMutate }: { rules: Rule[]; canMutate: boolean }) {
   return (
     <TablePanel icon={<ListChecks size={18} />} title="Rules" action={canMutate ? 'Add rule' : undefined}>
-      <thead><tr><th>Name</th><th>Action</th><th>Mode</th><th>TTL</th><th>Owner</th><th>State</th></tr></thead>
+      <thead><tr><th>Name</th><th>Action</th><th>Mode</th><th>Dimension</th><th>Thresholds</th><th>TTL</th><th>Confidence</th><th>State</th></tr></thead>
       <tbody>{rules.map((rule) => (
         <tr key={rule.id}>
           <td>{rule.name}</td>
           <td>{rule.action}</td>
           <td>{rule.mode}</td>
+          <td>{rule.dimension ?? 'source_service'}</td>
+          <td>{rule.threshold_pps ?? 0} pps · {rule.threshold_bps ?? 0} bps · {rule.threshold_cps ?? 0} cps</td>
           <td>{rule.ttl_remaining_seconds ?? rule.ttl_seconds ?? 0}s</td>
-          <td>{rule.owner}</td>
+          <td>{percentValue(rule.confidence ?? 0)}</td>
           <td><StatusPill state={rule.enabled ? 'ok' : 'off'} text={rule.enabled ? 'enabled' : 'disabled'} /></td>
         </tr>
       ))}</tbody>
@@ -342,12 +386,23 @@ function StatusPill({ state, text }: { state: 'ok' | 'warn' | 'off'; text: strin
   return <span className={`status-pill ${state}`}>{text}</span>;
 }
 
+function SignalList({ signals }: { signals: string[] }) {
+  if (signals.length === 0) {
+    return <span className="muted">none</span>;
+  }
+  return <div className="signal-list">{signals.slice(0, 4).map((signal) => <span key={signal}>{signal}</span>)}</div>;
+}
+
 function tabLabel(tab: Tab) {
   return tab.charAt(0).toUpperCase() + tab.slice(1);
 }
 
 function numberValue(value: number) {
   return Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value || 0);
+}
+
+function percentValue(value: number) {
+  return `${Math.round((value || 0) * 100)}%`;
 }
 
 function formatTime(value: string) {

@@ -463,12 +463,15 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	}
 	defer tx.Rollback(ctx)
 	var rule Rule
+	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
+	}
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
     id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
-    burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+    dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
-          threshold_bps, threshold_cps, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
+          threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`,
 		id,
 		serviceID,
@@ -480,6 +483,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 		input.ThresholdPPS,
 		input.ThresholdBPS,
 		input.ThresholdCPS,
+		normalizeRuleDimension(input.Dimension),
 		input.BurstPackets,
 		input.BurstBytes,
 		input.SampleDenom,
@@ -504,7 +508,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 
 func (s *Store) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
-          threshold_bps, threshold_cps, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
+          threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at
 FROM rules ORDER BY priority, created_at DESC`)
 	if err != nil {
@@ -536,6 +540,7 @@ func scanRule(row rowScanner, rule *Rule) error {
 		&rule.ThresholdPPS,
 		&rule.ThresholdBPS,
 		&rule.ThresholdCPS,
+		&rule.Dimension,
 		&rule.BurstPackets,
 		&rule.BurstBytes,
 		&rule.SampleDenom,
@@ -834,6 +839,18 @@ func normalizeRuleAction(value string) string {
 	return value
 }
 
+func normalizeRuleDimension(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "source_service":
+		return "source_service"
+	case "src", "source_ip":
+		return "source"
+	default:
+		return value
+	}
+}
+
 func normalizeBlacklistAction(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
@@ -990,6 +1007,11 @@ func validateRuleInput(input RuleInput) error {
 	if input.SampleDenom > 1000000 {
 		errs = append(errs, errors.New("sample_denom exceeds max 1000000"))
 	}
+	switch normalizeRuleDimension(input.Dimension) {
+	case "source", "service", "source_service":
+	default:
+		errs = append(errs, errors.New("dimension must be source, service or source_service"))
+	}
 	if strings.TrimSpace(input.Owner) == "" {
 		errs = append(errs, errors.New("owner is required"))
 	}
@@ -1086,4 +1108,15 @@ func ruleModeNumber(mode string) uint32 {
 		return 1
 	}
 	return 0
+}
+
+func ruleDimensionNumber(dimension string) uint32 {
+	switch normalizeRuleDimension(dimension) {
+	case "source":
+		return 0
+	case "service":
+		return 2
+	default:
+		return 3
+	}
 }

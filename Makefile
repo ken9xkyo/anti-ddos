@@ -21,6 +21,7 @@ PHASE4_REPORT := $(REPORT_DIR)/phase-04-devmap-forwarding-service-allowlist.md
 PHASE4_POLICYGEN := $(BUILD_DIR)/phase4-policygen
 PHASE5_REPORT := $(REPORT_DIR)/phase-05-control-plane-core.md
 PHASE6_REPORT := $(REPORT_DIR)/phase-06-observability-dashboard.md
+PHASE7_REPORT := $(REPORT_DIR)/phase-07-rate-limit-baseline-auto-enforce.md
 
 BPF_CFLAGS := -g -O2 -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	-I$(BPF_BUILD_DIR) -Iinclude
@@ -28,7 +29,7 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
-.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify clean
+.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify clean
 
 phase1-build: $(BPF_OBJ)
 
@@ -138,6 +139,30 @@ phase6-verify: phase6-test phase6-postgres-test phase6-ui-test
 	@printf -- '- PostgreSQL integration test ran phase 06 migrations, ingested sampled events, queried events/summary/dashboard and audited metrics label safety.\n' >> $(PHASE6_REPORT)
 	@printf -- '- React/Vite dashboard tests verified Viewer read-only behavior, Operator actions, freshness indicators and event investigation rendering; production build succeeded.\n' >> $(PHASE6_REPORT)
 	@printf -- '- Grafana dashboard and Prometheus scrape example were added under `deploy/`.\n' >> $(PHASE6_REPORT)
+
+phase7-test: phase1-test
+	go test ./...
+
+phase7-postgres-test:
+	scripts/lab/phase7-postgres-test.sh
+
+phase7-veth-test: phase4-veth-test
+
+phase7-ui-test:
+	npm --prefix web/dashboard test -- --run
+	npm --prefix web/dashboard run build
+
+phase7-verify: phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test
+	@mkdir -p $(REPORT_DIR)
+	@printf '# Phase 07 Verification Report\n\n' > $(PHASE7_REPORT)
+	@printf 'Date: %s\n\n' "$$(date -u +%F)" >> $(PHASE7_REPORT)
+	@printf 'Command: `make phase7-verify`\n\n' >> $(PHASE7_REPORT)
+	@printf 'Result: PASS\n\n' >> $(PHASE7_REPORT)
+	@printf -- '- XDP packet fixtures covered rate-limit under/over threshold, refill, byte bucket, SYN CPS bucket, observe mode, drop rule and whitelist bypass.\n' >> $(PHASE7_REPORT)
+	@printf -- '- Go tests covered policy snapshot rule selection, rule dimension contract, baseline/anomaly APIs, low-confidence observe-only behavior, whitelist conflict gate, auto-enforce TTL rule creation, rollback and TTL expiry.\n' >> $(PHASE7_REPORT)
+	@printf -- '- PostgreSQL integration test ran phase 07 migrations, baseline approve/recalibrate, anomaly evaluation and auto-enforce lifecycle against a temporary database.\n' >> $(PHASE7_REPORT)
+	@printf -- '- VETH lab forwarding baseline remained valid through `phase7-veth-test`; no real NIC attach was performed.\n' >> $(PHASE7_REPORT)
+	@printf -- '- React/Vite dashboard tests verified anomaly score, active auto-rule, TTL, baseline confidence and viewer read-only behavior; production build succeeded.\n' >> $(PHASE7_REPORT)
 
 $(VMLINUX):
 	@mkdir -p $(BPF_BUILD_DIR)

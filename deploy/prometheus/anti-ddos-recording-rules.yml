@@ -1,0 +1,32 @@
+groups:
+  - name: anti-ddos.phase07.rates
+    interval: 15s
+    rules:
+      - record: anti_ddos:service_pps:rate1m
+        expr: sum by (service_id, proto) (rate(anti_ddos_xdp_packets_total[1m]))
+      - record: anti_ddos:service_pps:rate5m
+        expr: sum by (service_id, proto) (rate(anti_ddos_xdp_packets_total[5m]))
+      - record: anti_ddos:service_bps:rate1m
+        expr: sum by (service_id, proto) (rate(anti_ddos_xdp_bytes_total[1m])) * 8
+      - record: anti_ddos:service_bps:rate5m
+        expr: sum by (service_id, proto) (rate(anti_ddos_xdp_bytes_total[5m])) * 8
+      - record: anti_ddos:service_syn_cps:rate1m
+        expr: sum by (service_id) (rate(anti_ddos_xdp_packets_total{proto="6",tcp_syn="1"}[1m]))
+      - record: anti_ddos:service_syn_cps:rate5m
+        expr: sum by (service_id) (rate(anti_ddos_xdp_packets_total{proto="6",tcp_syn="1"}[5m]))
+      - record: anti_ddos:service_drop_ratio:rate5m
+        expr: |
+          sum by (service_id) (rate(anti_ddos_xdp_packets_total{action="1"}[5m]))
+          /
+          clamp_min(sum by (service_id) (rate(anti_ddos_xdp_packets_total[5m])), 1)
+      - record: anti_ddos:service_protocol_mix:rate5m
+        expr: |
+          sum by (service_id, proto) (rate(anti_ddos_xdp_packets_total[5m]))
+          /
+          clamp_min(sum by (service_id) (rate(anti_ddos_xdp_packets_total[5m])), 1)
+      - record: anti_ddos:service_pps:peak5m
+        expr: max_over_time(anti_ddos:service_pps:rate1m[5m])
+      - record: anti_ddos:service_bps:peak5m
+        expr: max_over_time(anti_ddos:service_bps:rate1m[5m])
+      - record: anti_ddos:service_syn_cps:peak5m
+        expr: max_over_time(anti_ddos:service_syn_cps:rate1m[5m])

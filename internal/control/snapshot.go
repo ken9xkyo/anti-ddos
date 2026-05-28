@@ -278,7 +278,11 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 		},
 	}
 
-	services, err := s.snapshotServices(ctx, q)
+	rules, err := snapshotRules(ctx, q)
+	if err != nil {
+		return agent.PolicySnapshot{}, err
+	}
+	services, err := s.snapshotServices(ctx, q, rules)
 	if err != nil {
 		return agent.PolicySnapshot{}, err
 	}
@@ -290,10 +294,6 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 	if err != nil {
 		return agent.PolicySnapshot{}, err
 	}
-	rules, err := snapshotRules(ctx, q)
-	if err != nil {
-		return agent.PolicySnapshot{}, err
-	}
 	snapshot.Services = services
 	snapshot.WhitelistV4 = whitelist
 	snapshot.BlacklistV4 = blacklist
@@ -301,7 +301,7 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 	return snapshot, nil
 }
 
-func (s *Store) snapshotServices(ctx context.Context, q dbQuerier) ([]agent.PolicyService, error) {
+func (s *Store) snapshotServices(ctx context.Context, q dbQuerier, rules []agent.PolicyRule) ([]agent.PolicyService, error) {
 	fromPolicies, err := s.snapshotServicesFromForwardingPolicies(ctx, q)
 	if err != nil {
 		return nil, err
@@ -320,6 +320,7 @@ func (s *Store) snapshotServices(ctx context.Context, q dbQuerier) ([]agent.Poli
 		}
 		return out[i].DstPort < out[j].DstPort
 	})
+	assignDefaultRules(out, rules)
 	return out, nil
 }
 
@@ -501,7 +502,7 @@ ORDER BY b.ebpf_id`)
 }
 
 func snapshotRules(ctx context.Context, q dbQuerier) ([]agent.PolicyRule, error) {
-	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.priority, r.action, r.mode, r.threshold_pps,
+	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.priority, r.action, r.mode, r.dimension, r.threshold_pps,
        r.threshold_bps, r.threshold_cps, r.burst_packets, r.burst_bytes, r.sample_denom, r.expires_at
 FROM rules r
 LEFT JOIN backend_services bs ON bs.id = r.service_id
@@ -514,20 +515,51 @@ ORDER BY r.priority, r.ebpf_id`)
 	var out []agent.PolicyRule
 	for rows.Next() {
 		var rule agent.PolicyRule
-		var action, mode string
+		var action, mode, dimension string
 		var expires *time.Time
-		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.Priority, &action, &mode, &rule.ThresholdPPS,
+		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.Priority, &action, &mode, &dimension, &rule.ThresholdPPS,
 			&rule.ThresholdBPS, &rule.ThresholdCPS, &rule.BurstPackets, &rule.BurstBytes, &rule.SampleDenom, &expires); err != nil {
 			return nil, err
 		}
 		rule.Action = ruleActionNumber(action)
 		rule.Mode = ruleModeNumber(mode)
+		rule.Dimension = ruleDimensionNumber(dimension)
 		if expires != nil {
 			rule.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
 		out = append(out, rule)
 	}
 	return out, rows.Err()
+}
+
+func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule) {
+	var global *agent.PolicyRule
+	serviceRules := map[uint32]agent.PolicyRule{}
+	for _, rule := range rules {
+		if rule.RuleID == 0 {
+			continue
+		}
+		if rule.ServiceID == 0 {
+			if global == nil || rule.Priority < global.Priority ||
+				(rule.Priority == global.Priority && rule.RuleID < global.RuleID) {
+				candidate := rule
+				global = &candidate
+			}
+			continue
+		}
+		current, ok := serviceRules[rule.ServiceID]
+		if !ok || rule.Priority < current.Priority ||
+			(rule.Priority == current.Priority && rule.RuleID < current.RuleID) {
+			serviceRules[rule.ServiceID] = rule
+		}
+	}
+	for i := range services {
+		if rule, ok := serviceRules[services[i].ServiceID]; ok {
+			services[i].DefaultRuleID = rule.RuleID
+		} else if global != nil {
+			services[i].DefaultRuleID = global.RuleID
+		}
+	}
 }
 
 func policyContentFingerprint(snapshot agent.PolicySnapshot) (string, error) {

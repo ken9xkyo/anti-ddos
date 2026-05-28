@@ -283,6 +283,64 @@ CREATE INDEX security_events_src_prefix24_time_idx ON security_events(src_prefix
 CREATE INDEX security_events_dst_port_time_idx ON security_events(dst_port, event_time DESC);
 `,
 	},
+	{
+		Version: 3,
+		Name:    "phase07_baseline_anomaly_auto_enforce",
+		SQL: `
+ALTER TABLE rules
+    ADD COLUMN IF NOT EXISTS dimension text NOT NULL DEFAULT 'source_service'
+        CHECK (dimension IN ('source', 'service', 'source_service'));
+
+CREATE TABLE baseline_profiles (
+    id uuid PRIMARY KEY,
+    service_id uuid NOT NULL REFERENCES backend_services(id) ON DELETE CASCADE,
+    interface_name text NOT NULL,
+    protocol text NOT NULL CHECK (protocol IN ('tcp', 'udp', 'icmp', 'all')),
+    port integer NOT NULL DEFAULT 0,
+    time_window text NOT NULL DEFAULT '5m',
+    expected_pps double precision NOT NULL DEFAULT 0,
+    expected_bps double precision NOT NULL DEFAULT 0,
+    expected_cps double precision NOT NULL DEFAULT 0,
+    history_hours integer NOT NULL DEFAULT 0,
+    confidence numeric NOT NULL DEFAULT 0,
+    approved boolean NOT NULL DEFAULT false,
+    status text NOT NULL DEFAULT 'draft',
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+    approved_by uuid REFERENCES app_users(id) ON DELETE SET NULL,
+    approved_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (service_id, interface_name, protocol, port, time_window)
+);
+CREATE INDEX baseline_profiles_service_idx ON baseline_profiles(service_id, approved, time_window);
+
+CREATE TABLE anomaly_evaluations (
+    id uuid PRIMARY KEY,
+    service_id uuid REFERENCES backend_services(id) ON DELETE SET NULL,
+    baseline_id uuid REFERENCES baseline_profiles(id) ON DELETE SET NULL,
+    evaluated_at timestamptz NOT NULL DEFAULT now(),
+    time_window text NOT NULL DEFAULT '5m',
+    pps double precision NOT NULL DEFAULT 0,
+    bps double precision NOT NULL DEFAULT 0,
+    cps double precision NOT NULL DEFAULT 0,
+    drop_ratio double precision NOT NULL DEFAULT 0,
+    score numeric NOT NULL DEFAULT 0,
+    confidence numeric NOT NULL DEFAULT 0,
+    signals text[] NOT NULL DEFAULT '{}',
+    recommendation text NOT NULL DEFAULT 'observe',
+    recommended_action text NOT NULL DEFAULT 'rate_limit',
+    proposed_ttl_seconds integer NOT NULL DEFAULT 0,
+    proposed_rule_id uuid REFERENCES rules(id) ON DELETE SET NULL,
+    auto_enforced boolean NOT NULL DEFAULT false,
+    status text NOT NULL DEFAULT 'recorded',
+    reason text NOT NULL DEFAULT '',
+    source text NOT NULL DEFAULT '',
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX anomaly_evaluations_time_idx ON anomaly_evaluations(evaluated_at DESC);
+CREATE INDEX anomaly_evaluations_service_time_idx ON anomaly_evaluations(service_id, evaluated_at DESC);
+`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

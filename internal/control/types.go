@@ -162,6 +162,7 @@ type RuleInput struct {
 	ThresholdPPS uint32          `json:"threshold_pps,omitempty"`
 	ThresholdBPS uint32          `json:"threshold_bps,omitempty"`
 	ThresholdCPS uint32          `json:"threshold_cps,omitempty"`
+	Dimension    string          `json:"dimension,omitempty"`
 	BurstPackets uint32          `json:"burst_packets,omitempty"`
 	BurstBytes   uint32          `json:"burst_bytes,omitempty"`
 	SampleDenom  uint32          `json:"sample_denom,omitempty"`
@@ -185,6 +186,7 @@ type Rule struct {
 	ThresholdPPS uint32          `json:"threshold_pps,omitempty"`
 	ThresholdBPS uint32          `json:"threshold_bps,omitempty"`
 	ThresholdCPS uint32          `json:"threshold_cps,omitempty"`
+	Dimension    string          `json:"dimension,omitempty"`
 	BurstPackets uint32          `json:"burst_packets,omitempty"`
 	BurstBytes   uint32          `json:"burst_bytes,omitempty"`
 	SampleDenom  uint32          `json:"sample_denom,omitempty"`
@@ -385,6 +387,69 @@ type SecurityEventTop struct {
 	Count   uint64 `json:"count"`
 	Packets uint64 `json:"packets,omitempty"`
 	Bytes   uint64 `json:"bytes,omitempty"`
+}
+
+type BaselineProfileInput struct {
+	Reason       string          `json:"reason"`
+	ServiceID    string          `json:"service_id"`
+	Interface    string          `json:"interface"`
+	Protocol     string          `json:"protocol"`
+	Port         uint16          `json:"port,omitempty"`
+	Window       string          `json:"window"`
+	ExpectedPPS  float64         `json:"expected_pps"`
+	ExpectedBPS  float64         `json:"expected_bps"`
+	ExpectedCPS  float64         `json:"expected_cps"`
+	HistoryHours uint32          `json:"history_hours"`
+	Confidence   float64         `json:"confidence"`
+	Evidence     json.RawMessage `json:"evidence,omitempty"`
+}
+
+type BaselineProfile struct {
+	ID            string          `json:"id"`
+	ServiceID     string          `json:"service_id"`
+	ServiceEBPFID uint32          `json:"service_ebpf_id,omitempty"`
+	ServiceName   string          `json:"service_name,omitempty"`
+	Interface     string          `json:"interface"`
+	Protocol      string          `json:"protocol"`
+	Port          uint16          `json:"port,omitempty"`
+	Window        string          `json:"window"`
+	ExpectedPPS   float64         `json:"expected_pps"`
+	ExpectedBPS   float64         `json:"expected_bps"`
+	ExpectedCPS   float64         `json:"expected_cps"`
+	HistoryHours  uint32          `json:"history_hours"`
+	Confidence    float64         `json:"confidence"`
+	Approved      bool            `json:"approved"`
+	Status        string          `json:"status"`
+	Evidence      json.RawMessage `json:"evidence,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	ApprovedAt    *time.Time      `json:"approved_at,omitempty"`
+}
+
+type AnomalyEvaluation struct {
+	ID                 string          `json:"id"`
+	ServiceID          string          `json:"service_id,omitempty"`
+	ServiceEBPFID      uint32          `json:"service_ebpf_id,omitempty"`
+	ServiceName        string          `json:"service_name,omitempty"`
+	BaselineID         string          `json:"baseline_id,omitempty"`
+	EvaluatedAt        time.Time       `json:"evaluated_at"`
+	Window             string          `json:"window"`
+	PPS                float64         `json:"pps"`
+	BPS                float64         `json:"bps"`
+	CPS                float64         `json:"cps"`
+	DropRatio          float64         `json:"drop_ratio"`
+	Score              float64         `json:"score"`
+	Confidence         float64         `json:"confidence"`
+	Signals            []string        `json:"signals,omitempty"`
+	Recommendation     string          `json:"recommendation"`
+	RecommendedAction  string          `json:"recommended_action"`
+	ProposedTTLSeconds uint32          `json:"proposed_ttl_seconds,omitempty"`
+	ProposedRuleID     string          `json:"proposed_rule_id,omitempty"`
+	AutoEnforced       bool            `json:"auto_enforced"`
+	Status             string          `json:"status"`
+	Reason             string          `json:"reason,omitempty"`
+	Source             string          `json:"source,omitempty"`
+	Evidence           json.RawMessage `json:"evidence,omitempty"`
 }
 
 type DashboardOverview struct {

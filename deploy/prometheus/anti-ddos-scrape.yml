@@ -2,6 +2,9 @@ global:
   scrape_interval: 5s
   evaluation_interval: 15s
 
+rule_files:
+  - anti-ddos-recording-rules.yml
+
 scrape_configs:
   - job_name: anti-ddos-control
     metrics_path: /metrics

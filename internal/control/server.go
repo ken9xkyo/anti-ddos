@@ -69,6 +69,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/security-events", s.handleSecurityEvents)
 	s.mux.HandleFunc("/v1/security-events/summary", s.handleSecurityEventSummary)
 	s.mux.HandleFunc("/v1/security-events/investigate", s.handleSecurityEventInvestigate)
+	s.mux.HandleFunc("/v1/baselines", s.handleBaselines)
+	s.mux.HandleFunc("/v1/baselines/", s.handleBaselineByID)
+	s.mux.HandleFunc("/v1/anomalies", s.handleAnomalies)
+	s.mux.HandleFunc("/v1/anomalies/evaluate", s.handleAnomalyEvaluate)
 	s.mux.HandleFunc("/v1/dashboard/overview", s.handleDashboardOverview)
 	s.mux.HandleFunc("/v1/dashboard/agents", s.handleDashboardAgents)
 	s.mux.HandleFunc("/v1/dashboard/services", s.handleDashboardServices)
@@ -600,6 +604,12 @@ func routeName(r *http.Request) string {
 		return "/v1/audit"
 	case strings.HasPrefix(path, "/v1/security-events"):
 		return "/v1/security-events"
+	case path == "/v1/baselines":
+		return "/v1/baselines"
+	case strings.HasPrefix(path, "/v1/baselines/"):
+		return "/v1/baselines/{id}"
+	case strings.HasPrefix(path, "/v1/anomalies"):
+		return "/v1/anomalies"
 	case strings.HasPrefix(path, "/v1/dashboard"):
 		return "/v1/dashboard"
 	case path == "/v1/agents/register":

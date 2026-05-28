@@ -83,13 +83,58 @@ export interface Rule {
   threshold_pps?: number;
   threshold_bps?: number;
   threshold_cps?: number;
+  dimension?: string;
   ttl_seconds?: number;
   expires_at?: string;
   confidence?: number;
+  evidence?: Record<string, unknown>;
   enabled: boolean;
   owner: string;
   ttl_remaining_seconds?: number;
   counters?: Record<string, number>;
+}
+
+export interface BaselineProfile {
+  id: string;
+  service_id: string;
+  service_ebpf_id?: number;
+  service_name?: string;
+  interface: string;
+  protocol: string;
+  port?: number;
+  window: string;
+  expected_pps: number;
+  expected_bps: number;
+  expected_cps: number;
+  history_hours: number;
+  confidence: number;
+  approved: boolean;
+  status: string;
+}
+
+export interface AnomalyEvaluation {
+  id: string;
+  service_id?: string;
+  service_ebpf_id?: number;
+  service_name?: string;
+  baseline_id?: string;
+  evaluated_at: string;
+  window: string;
+  pps: number;
+  bps: number;
+  cps: number;
+  drop_ratio: number;
+  score: number;
+  confidence: number;
+  signals?: string[];
+  recommendation: string;
+  recommended_action: string;
+  proposed_ttl_seconds?: number;
+  proposed_rule_id?: string;
+  auto_enforced: boolean;
+  status: string;
+  reason?: string;
+  source?: string;
 }
 
 export interface Agent {
@@ -130,4 +175,6 @@ export interface DashboardData {
   services: Service[];
   rules: Rule[];
   events: SecurityEvent[];
+  baselines: BaselineProfile[];
+  anomalies: AnomalyEvaluation[];
 }

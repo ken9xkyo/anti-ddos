@@ -170,6 +170,16 @@ input {
   padding: 16px;
 }
 
+.stacked-view {
+  display: grid;
+  gap: 14px;
+  padding: 18px 24px 28px;
+}
+
+.stacked-view .table-panel {
+  margin: 0;
+}
+
 .metric-panel {
   min-height: 112px;
   padding: 16px;
@@ -310,6 +320,21 @@ td {
   gap: 8px;
 }
 
+.signal-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.signal-list span {
+  min-height: 24px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: #334155;
+  background: #edf2f7;
+  white-space: nowrap;
+}
+
 .cidr-chip {
   color: #1d4ed8;
   background: #dbeafe;
@@ -412,5 +437,10 @@ td {
   .table-panel {
     margin-left: 16px;
     margin-right: 16px;
+  }
+
+  .stacked-view {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }

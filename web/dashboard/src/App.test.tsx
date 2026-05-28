@@ -54,6 +54,11 @@ const data: DashboardData = {
     action: 'drop',
     mode: 'enforce',
     priority: 10,
+    dimension: 'source_service',
+    threshold_pps: 1000,
+    threshold_bps: 1000000,
+    threshold_cps: 100,
+    confidence: 0.95,
     ttl_seconds: 900,
     ttl_remaining_seconds: 540,
     enabled: true,
@@ -70,6 +75,46 @@ const data: DashboardData = {
     action: 1,
     reason: 4,
     sample_rate: 10
+  }],
+  baselines: [{
+    id: 'b1',
+    service_id: 's1',
+    service_ebpf_id: 1,
+    service_name: 'api-https',
+    interface: 'wan0',
+    protocol: 'tcp',
+    port: 443,
+    window: '5m',
+    expected_pps: 1000,
+    expected_bps: 1000000,
+    expected_cps: 100,
+    history_hours: 24,
+    confidence: 0.95,
+    approved: true,
+    status: 'approved'
+  }],
+  anomalies: [{
+    id: 'a1',
+    service_id: 's1',
+    service_ebpf_id: 1,
+    service_name: 'api-https',
+    baseline_id: 'b1',
+    evaluated_at: new Date().toISOString(),
+    window: '5m',
+    pps: 300000,
+    bps: 3000000000,
+    cps: 30000,
+    drop_ratio: 0.1,
+    score: 95,
+    confidence: 0.95,
+    signals: ['pps_spike', 'bps_spike', 'syn_spike'],
+    recommendation: 'auto_enforce',
+    recommended_action: 'rate_limit',
+    proposed_ttl_seconds: 900,
+    proposed_rule_id: 'r1',
+    auto_enforced: true,
+    status: 'auto_enforced',
+    source: '198.51.100.10'
   }]
 };
 
@@ -105,6 +150,13 @@ describe('DashboardShell', () => {
   it('shows operator mutation entrypoints', () => {
     renderShell({ ...baseUser, role: 'operator', username: 'operator' }, 'rules');
     expect(screen.getByRole('button', { name: /add rule/i })).toBeInTheDocument();
+  });
+
+  it('renders anomaly and baseline visibility', () => {
+    renderShell(baseUser, 'anomalies');
+    expect(screen.getByText('auto_enforced')).toBeInTheDocument();
+    expect(screen.getByText('pps_spike')).toBeInTheDocument();
+    expect(screen.getByText('approved')).toBeInTheDocument();
   });
 
   it('renders event investigation table', () => {

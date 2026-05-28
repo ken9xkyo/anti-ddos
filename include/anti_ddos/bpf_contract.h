@@ -130,12 +130,15 @@ struct rule_value {
 	__u32 action;
 	__u32 mode;
 	__u32 service_id;
+	__u32 dimension;
 	__u32 threshold_pps;
 	__u32 threshold_bps;
 	__u32 threshold_cps;
 	__u32 burst_packets;
 	__u32 burst_bytes;
 	__u32 sample_denom;
+	__u32 pad;
+	__u32 tail_pad;
 	__u64 expires_at_unix_ns;
 };
 
@@ -152,6 +155,7 @@ struct rate_value {
 	__u64 last_refill_ns;
 	__u64 tokens_packets;
 	__u64 tokens_bytes;
+	__u64 tokens_syn;
 	__u64 syn_seen;
 	__u64 packets_seen;
 	__u64 bytes_seen;
@@ -163,7 +167,8 @@ struct counter_key {
 	__u32 service_id;
 	__u8 proto;
 	__u8 action;
-	__u16 pad;
+	__u8 tcp_syn;
+	__u8 pad;
 };
 
 struct counter_value {

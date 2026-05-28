@@ -74,6 +74,7 @@ type PolicyRule struct {
 	Action          uint32 `json:"action"`
 	Mode            uint32 `json:"mode"`
 	ServiceID       uint32 `json:"service_id,omitempty"`
+	Dimension       uint32 `json:"dimension,omitempty"`
 	ThresholdPPS    uint32 `json:"threshold_pps,omitempty"`
 	ThresholdBPS    uint32 `json:"threshold_bps,omitempty"`
 	ThresholdCPS    uint32 `json:"threshold_cps,omitempty"`
@@ -515,6 +516,7 @@ func ruleMapEntry(rule PolicyRule) (uint32, RuleValue) {
 		Action:          rule.Action,
 		Mode:            rule.Mode,
 		ServiceID:       rule.ServiceID,
+		Dimension:       rule.Dimension,
 		ThresholdPPS:    rule.ThresholdPPS,
 		ThresholdBPS:    rule.ThresholdBPS,
 		ThresholdCPS:    rule.ThresholdCPS,

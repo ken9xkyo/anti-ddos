@@ -71,7 +71,13 @@ func runServe(cfg control.Config, logger *slog.Logger) error {
 		return err
 	}
 	store := control.NewStore(pool, cfg, logger)
-	server := control.NewHTTPServer(store, cfg, logger)
+	handler := control.NewServer(store, cfg, logger)
+	handler.StartBackgroundSchedulers(ctx)
+	server := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-Current work: Phase 06 - Observability Dashboard completed; Phase 07 - Rate Limit Baseline Auto-Enforce is next.
+Current work: Phase 07 - Rate Limit Baseline Auto-Enforce completed; Phase 08 - Threat Feed Sync is next.
 
 ## Decisions
 
@@ -25,6 +25,11 @@ Current work: Phase 06 - Observability Dashboard completed; Phase 07 - Rate Limi
 - Phase 06 dashboard timeseries flow goes through Control API Prometheus proxy/status using `ANTI_DDOS_PROMETHEUS_URL`; when unset, UI reports Prometheus as unconfigured rather than failing.
 - Phase 06 sampled security events are best-effort from Agent ringbuf to Control API; raw source IP/CIDR stays in PostgreSQL `security_events`, not Prometheus labels.
 - Phase 06 verification keeps real NIC XDP attach disabled and uses PostgreSQL Docker container plus UI unit/build gates.
+- Phase 07 XDP applies at most one selected rule per service: highest-priority enabled, unexpired service-specific rule first, otherwise the highest-priority global rule.
+- Phase 07 rate limiting uses token buckets keyed by configured rule dimension (`source`, `service`, or `source_service`), defaults manual and auto rules to `source_service`, and counts CPS from TCP SYN packets without ACK only.
+- Phase 07 auto-enforce is conservative by default: minimum confidence `0.90`, minimum score `85`, at least two evidence signals, default action `rate_limit`, TTL `15m` clamped to `5m..60m`, and low-confidence baselines are observe-only.
+- Phase 07 scheduler runs in-process with `control-api serve`; anomaly evaluation ticks every `10s`, TTL expiry ticks every `30s`, and missing Prometheus configuration is reported/skipped cleanly.
+- Phase 07 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and temporary VETH namespaces only.
 
 ## Phase Progress
 
@@ -37,6 +42,7 @@ Current work: Phase 06 - Observability Dashboard completed; Phase 07 - Rate Limi
 | 04 - DEVMAP Forwarding and Service Allowlist | Done | `make phase4-verify` PASS on 2026-05-28; report `reports/phase-04-devmap-forwarding-service-allowlist.md`; packet fixtures and VETH namespace test verified allowlisted DEVMAP redirect with MAC rewrite and fail-closed service miss. |
 | 05 - Control Plane Core | Done | `make phase5-verify` PASS on 2026-05-28; report `reports/phase-05-control-plane-core.md`; Control API/Admin CLI, PostgreSQL migrations, local auth/RBAC, audit, policy CRUD, snapshot builder, rollback and Agent register/heartbeat/fetch/ack were verified. |
 | 06 - Observability Dashboard | Done | `make phase6-verify` PASS on 2026-05-28; report `reports/phase-06-observability-dashboard.md`; Control/Agent metrics, sampled event ingestion/query, Prometheus-backed dashboard APIs, React/Vite dashboard, Grafana JSON and scrape config were verified. |
+| 07 - Rate Limit Baseline Auto-Enforce | Done | `make phase7-verify` PASS on 2026-05-28; report `reports/phase-07-rate-limit-baseline-auto-enforce.md`; XDP token buckets, rule selection, SYN CPS counters, baseline/anomaly APIs, conservative auto-enforce, TTL expiry, rollback, VETH lab and dashboard visibility were verified. |
 
 ## Current Host Facts
 
@@ -61,7 +67,7 @@ Current work: Phase 06 - Observability Dashboard completed; Phase 07 - Rate Limi
 
 ## Next Actions
 
-- Start Phase 07 Rate Limit Baseline Auto-Enforce using Phase 06 Prometheus queries, sampled events and dashboard rule visibility.
+- Start Phase 08 Threat Feed Sync using Phase 07 rule/audit foundations and Phase 06 sampled-event/dashboard visibility.
 - Network/SRE confirms production protected backend service inventory and final WAN/LAN/output interface roles before real service policy rollout.
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
 - Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.

@@ -11,7 +11,7 @@
 | 04 - DEVMAP Forwarding and Service Allowlist | Done | L2 rewrite, DEVMAP redirect, route/neighbor resolution, fail-closed forwarding | Phase 01, 02, 03 |
 | 05 - Control Plane Core | Done | API, PostgreSQL, RBAC, audit, protected service registry, rollback | Phase 03, 04 |
 | 06 - Observability Dashboard | Done | Prometheus, sampled events, realtime dashboard, Grafana | Phase 02, 05 |
-| 07 - Rate Limit Baseline Auto-Enforce | Planned | Baselines, anomaly scoring, token bucket rules, TTL auto-enforce | Phase 03, 05, 06 |
+| 07 - Rate Limit Baseline Auto-Enforce | Done | Baselines, anomaly scoring, token bucket rules, TTL auto-enforce | Phase 03, 05, 06 |
 | 08 - Threat Feed Sync | Planned | Spamhaus, Team Cymru, AbuseIPDB, internal feed sync and aggregation | Phase 05, 06 |
 | 09 - Telegram ISP Runbook | Planned | Telegram alert delivery, dedupe/retry, manual ISP escalation evidence | Phase 05, 06, 07, 08 |
 | 10 - Hardening Benchmark UAT | Planned | Hardening, retention, benchmark report, UAT, runbooks, final acceptance | All prior phases |

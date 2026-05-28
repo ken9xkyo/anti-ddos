@@ -4,7 +4,7 @@ Phase 06 standardizes `anti_ddos_*` metrics for Prometheus scrape targets.
 
 ## Label Policy
 
-- Allowed high-use labels: `method`, `route`, `status`, `mode`, `action`, `reason`, `proto`, `protocol`, `service_id`, `rule_id`, `map`, `output_interface`, `xdp_mode`.
+- Allowed high-use labels: `method`, `route`, `status`, `mode`, `action`, `reason`, `proto`, `protocol`, `service_id`, `rule_id`, `tcp_syn`, `map`, `output_interface`, `xdp_mode`.
 - Do not use raw source IPs, raw CIDRs, usernames, alert text, API tokens, passwords, or free-form error text as metric labels.
 - Source investigation uses PostgreSQL `security_events`, not Prometheus labels.
 
@@ -15,8 +15,8 @@ Phase 06 standardizes `anti_ddos_*` metrics for Prometheus scrape targets.
 | `anti_ddos_agent_up` | gauge | none | Agent process readiness. |
 | `anti_ddos_xdp_mode` | gauge | `mode` | Active XDP mode. |
 | `anti_ddos_xdp_attach_errors_total` | counter | `mode` | Attach failure count by attempted mode. |
-| `anti_ddos_xdp_packets_total` | gauge | `reason`, `action`, `proto`, `service_id`, `rule_id` | Cumulative eBPF packet counters. |
-| `anti_ddos_xdp_bytes_total` | gauge | `reason`, `action`, `proto`, `service_id`, `rule_id` | Cumulative eBPF byte counters. |
+| `anti_ddos_xdp_packets_total` | gauge | `reason`, `action`, `proto`, `service_id`, `rule_id`, `tcp_syn` | Cumulative eBPF packet counters. |
+| `anti_ddos_xdp_bytes_total` | gauge | `reason`, `action`, `proto`, `service_id`, `rule_id`, `tcp_syn` | Cumulative eBPF byte counters. |
 | `anti_ddos_ebpf_map_entries` | gauge | `map` | Current eBPF map entries. |
 | `anti_ddos_ebpf_map_capacity` | gauge | `map` | eBPF map capacity. |
 | `anti_ddos_ebpf_map_utilization_ratio` | gauge | `map` | eBPF map utilization ratio. |
@@ -46,3 +46,14 @@ Phase 06 standardizes `anti_ddos_*` metrics for Prometheus scrape targets.
 | `anti_ddos_control_security_events_ingested_total` | counter | `action`, `reason`, `protocol` | Accepted sampled security events. |
 | `anti_ddos_control_security_events_rejected_total` | counter | `reason` | Rejected sampled event batches. |
 | `anti_ddos_control_prometheus_queries_total` | counter | `result` | Dashboard Prometheus proxy queries. |
+
+## Phase 07 Recording Rules
+
+| Recording rule | Labels | Purpose |
+|---|---|---|
+| `anti_ddos:service_pps:rate1m` / `rate5m` | `service_id`, `proto` | Packet-rate input for baseline/anomaly evaluation. |
+| `anti_ddos:service_bps:rate1m` / `rate5m` | `service_id`, `proto` | Bit-rate input for baseline/anomaly evaluation. |
+| `anti_ddos:service_syn_cps:rate1m` / `rate5m` | `service_id` | SYN-based CPS approximation. |
+| `anti_ddos:service_drop_ratio:rate5m` | `service_id` | Drop pressure signal by protected service. |
+| `anti_ddos:service_protocol_mix:rate5m` | `service_id`, `proto` | Protocol mix shift signal. |
+| `anti_ddos:service_pps:peak5m`, `anti_ddos:service_bps:peak5m`, `anti_ddos:service_syn_cps:peak5m` | service labels | Short-window peak baseline inputs. |

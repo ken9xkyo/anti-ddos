@@ -49,11 +49,11 @@ func NewMetrics() (*Metrics, error) {
 	m.xdpPackets = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "anti_ddos_xdp_packets_total",
 		Help: "Cumulative XDP packets from eBPF counters.",
-	}, []string{"reason", "action", "proto", "service_id", "rule_id"})
+	}, []string{"reason", "action", "proto", "service_id", "rule_id", "tcp_syn"})
 	m.xdpBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "anti_ddos_xdp_bytes_total",
 		Help: "Cumulative XDP bytes from eBPF counters.",
-	}, []string{"reason", "action", "proto", "service_id", "rule_id"})
+	}, []string{"reason", "action", "proto", "service_id", "rule_id", "tcp_syn"})
 	m.mapEntries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "anti_ddos_ebpf_map_entries",
 		Help: "Current eBPF map entry count.",
@@ -285,5 +285,6 @@ func counterLabels(key CounterKey) []string {
 		fmt.Sprint(key.Proto),
 		fmt.Sprint(key.ServiceID),
 		fmt.Sprint(key.RuleID),
+		fmt.Sprint(key.TCPSyn),
 	}
 }

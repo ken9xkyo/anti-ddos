@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -30,6 +31,7 @@ struct test_env {
 	int whitelist_v4_a_fd;
 	int blacklist_v4_a_fd;
 	int service_allowlist_a_fd;
+	int rule_config_a_fd;
 	int tx_devmap_fd;
 	int drop_counters_fd;
 	int nr_cpus;
@@ -145,6 +147,7 @@ static int open_env(const char *obj_path, struct test_env *env)
 	env->whitelist_v4_a_fd = -1;
 	env->blacklist_v4_a_fd = -1;
 	env->service_allowlist_a_fd = -1;
+	env->rule_config_a_fd = -1;
 	env->tx_devmap_fd = -1;
 	env->drop_counters_fd = -1;
 	env->nr_cpus = libbpf_num_possible_cpus();
@@ -183,12 +186,14 @@ static int open_env(const char *obj_path, struct test_env *env)
 	env->whitelist_v4_a_fd = map_fd_by_name(env->obj, "whitelist_v4_a");
 	env->blacklist_v4_a_fd = map_fd_by_name(env->obj, "blacklist_v4_a");
 	env->service_allowlist_a_fd = map_fd_by_name(env->obj, "service_allowlist_a");
+	env->rule_config_a_fd = map_fd_by_name(env->obj, "rule_config_a");
 	env->tx_devmap_fd = map_fd_by_name(env->obj, "tx_devmap");
 	env->drop_counters_fd = map_fd_by_name(env->obj, "drop_counters");
 
 	if (env->prog_fd < 0 || env->runtime_config_fd < 0 ||
 	    env->whitelist_v4_a_fd < 0 || env->blacklist_v4_a_fd < 0 ||
-	    env->service_allowlist_a_fd < 0 || env->tx_devmap_fd < 0 ||
+	    env->service_allowlist_a_fd < 0 || env->rule_config_a_fd < 0 ||
+	    env->tx_devmap_fd < 0 ||
 	    env->drop_counters_fd < 0)
 		return -1;
 
@@ -244,10 +249,11 @@ static int upsert_cidr_policy(int map_fd, const char *ip, uint32_t entry_id,
 	return 0;
 }
 
-static int upsert_service(int map_fd, const char *dst_ip, uint8_t proto,
-			  uint16_t dst_port, uint32_t service_id,
-			  uint32_t action, uint32_t devmap_key,
-			  uint32_t neighbor_status)
+static int upsert_service_with_rule(int map_fd, const char *dst_ip, uint8_t proto,
+				    uint16_t dst_port, uint32_t service_id,
+				    uint32_t action, uint32_t devmap_key,
+				    uint32_t neighbor_status,
+				    uint32_t default_rule_id)
 {
 	const uint8_t dst_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
 	const uint8_t src_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
@@ -261,7 +267,7 @@ static int upsert_service(int map_fd, const char *dst_ip, uint8_t proto,
 		.forwarding_policy_id = service_id + 100,
 		.action = action,
 		.priority = 100,
-		.default_rule_id = 0,
+		.default_rule_id = default_rule_id,
 		.output_ifindex = 1,
 		.devmap_key = devmap_key,
 		.neighbor_status = neighbor_status,
@@ -272,6 +278,43 @@ static int upsert_service(int map_fd, const char *dst_ip, uint8_t proto,
 
 	if (bpf_map_update_elem(map_fd, &key, &value, BPF_ANY) != 0) {
 		fprintf(stderr, "failed to update service %u: %s\n", service_id,
+			strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+
+static int upsert_service(int map_fd, const char *dst_ip, uint8_t proto,
+			  uint16_t dst_port, uint32_t service_id,
+			  uint32_t action, uint32_t devmap_key,
+			  uint32_t neighbor_status)
+{
+	return upsert_service_with_rule(map_fd, dst_ip, proto, dst_port, service_id,
+					action, devmap_key, neighbor_status, 0);
+}
+
+static int upsert_rule(int map_fd, uint32_t rule_id, uint32_t action, uint32_t mode,
+		       uint32_t service_id, uint32_t dimension, uint32_t threshold_pps,
+		       uint32_t threshold_bps, uint32_t threshold_cps,
+		       uint32_t burst_packets, uint32_t burst_bytes)
+{
+	struct rule_value value = {
+		.rule_id = rule_id,
+		.priority = 10,
+		.action = action,
+		.mode = mode,
+		.service_id = service_id,
+		.dimension = dimension,
+		.threshold_pps = threshold_pps,
+		.threshold_bps = threshold_bps,
+		.threshold_cps = threshold_cps,
+		.burst_packets = burst_packets,
+		.burst_bytes = burst_bytes,
+	};
+
+	if (bpf_map_update_elem(map_fd, &rule_id, &value, BPF_ANY) != 0) {
+		fprintf(stderr, "failed to update rule %u: %s\n", rule_id,
 			strerror(errno));
 		return -1;
 	}
@@ -662,10 +705,30 @@ static struct counter_key key_for(uint32_t reason, uint8_t action, uint8_t proto
 		.service_id = 0,
 		.proto = proto,
 		.action = action,
+		.tcp_syn = proto == L4_TCP ? 1 : 0,
 		.pad = 0,
 	};
 
 	return key;
+}
+
+static int expect_counter_delta(struct test_env *env, const char *name,
+				const struct counter_key *counter_key,
+				uint64_t before, uint64_t delta)
+{
+	uint64_t after = read_counter(env, counter_key);
+
+	if (after != before + delta) {
+		fprintf(stderr,
+			"%s: expected counter delta %llu, got before=%llu after=%llu\n",
+			name, (unsigned long long)delta, (unsigned long long)before,
+			(unsigned long long)after);
+		dump_counters(env);
+		return -1;
+	}
+
+	printf("PASS %s\n", name);
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -715,6 +778,127 @@ int main(int argc, char **argv)
 	key.service_id = 10;
 	if (expect_rewrite(&env, "allowed tcp service redirects with mac rewrite",
 			   &pkt, XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_rule(env.rule_config_a_fd, 100, ACTION_RATE_LIMIT, 1, 14,
+			RATE_DIM_SOURCE_SERVICE, 1, 0, 0, 1, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9090, 14, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 100) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9090);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 14;
+	key.rule_id = 100;
+	if (expect_rewrite(&env, "rate limit under pps redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9090);
+	key = key_for(REASON_RATE_LIMIT, ACTION_DROP, L4_TCP);
+	key.service_id = 14;
+	key.rule_id = 100;
+	if (expect_decision(&env, "rate limit over pps drops", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+	sleep(1);
+	pkt = make_tcp_syn_port(9090);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 14;
+	key.rule_id = 100;
+	if (expect_rewrite(&env, "rate limit refills after elapsed time", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_rule(env.rule_config_a_fd, 101, ACTION_RATE_LIMIT, 0, 15,
+			RATE_DIM_SOURCE_SERVICE, 1, 0, 0, 1, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9091, 15, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 101) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9091);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 15;
+	key.rule_id = 101;
+	if (expect_rewrite(&env, "observe rate limit under threshold redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9091);
+	key = key_for(REASON_RATE_LIMIT, ACTION_OBSERVE, L4_TCP);
+	key.service_id = 15;
+	key.rule_id = 101;
+	{
+		uint64_t before = read_counter(&env, &key);
+		struct counter_key redirect_key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+
+		redirect_key.service_id = 15;
+		redirect_key.rule_id = 101;
+		if (expect_rewrite(&env, "observe rate limit over threshold still redirects",
+				   &pkt, XDP_REDIRECT, &redirect_key) != 0)
+			goto out;
+		if (expect_counter_delta(&env, "observe over-limit counter increments",
+					 &key, before, 1) != 0)
+			goto out;
+	}
+
+	if (upsert_rule(env.rule_config_a_fd, 102, ACTION_DROP, 1, 16,
+			RATE_DIM_SOURCE_SERVICE, 0, 0, 0, 0, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9092, 16, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 102) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9092);
+	key = key_for(REASON_RULE_DROP, ACTION_DROP, L4_TCP);
+	key.service_id = 16;
+	key.rule_id = 102;
+	if (expect_decision(&env, "drop rule drops matching service packet", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+
+	if (upsert_rule(env.rule_config_a_fd, 104, ACTION_RATE_LIMIT, 1, 18,
+			RATE_DIM_SOURCE_SERVICE, 0, 8, 0, 0, 60) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9094, 18, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 104) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9094);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 18;
+	key.rule_id = 104;
+	if (expect_rewrite(&env, "rate limit under bps redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9094);
+	key = key_for(REASON_RATE_LIMIT, ACTION_DROP, L4_TCP);
+	key.service_id = 18;
+	key.rule_id = 104;
+	if (expect_decision(&env, "rate limit over bps drops", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+
+	if (upsert_rule(env.rule_config_a_fd, 105, ACTION_RATE_LIMIT, 1, 19,
+			RATE_DIM_SOURCE_SERVICE, 0, 0, 1, 1, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9095, 19, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 105) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9095);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 19;
+	key.rule_id = 105;
+	if (expect_rewrite(&env, "syn cps under threshold redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9095);
+	key = key_for(REASON_RATE_LIMIT, ACTION_DROP, L4_TCP);
+	key.service_id = 19;
+	key.rule_id = 105;
+	if (expect_decision(&env, "syn cps over threshold drops", &pkt,
+			    XDP_DROP, &key) != 0)
 		goto out;
 
 	if (upsert_service(env.service_allowlist_a_fd, "203.0.113.10", L4_UDP, 53,
@@ -771,6 +955,28 @@ int main(int argc, char **argv)
 	key.service_id = 10;
 	if (expect_rewrite(&env, "whitelist overrides blacklist after service match",
 			   &pkt, XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_rule(env.rule_config_a_fd, 103, ACTION_RATE_LIMIT, 1, 17,
+			RATE_DIM_SOURCE_SERVICE, 1, 0, 0, 1, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9093, 17, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 103) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9093);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 17;
+	key.rule_id = 103;
+	if (expect_rewrite(&env, "whitelist bypasses rate limit first packet", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9093);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 17;
+	key.rule_id = 103;
+	if (expect_rewrite(&env, "whitelist bypasses rate limit over threshold", &pkt,
+			   XDP_REDIRECT, &key) != 0)
 		goto out;
 
 	pkt = make_tcp_syn_port(81);
