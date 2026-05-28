@@ -456,6 +456,24 @@ func serviceMapEntry(service PolicyService) (ServiceKey, ServiceValue, error) {
 	if err != nil {
 		return ServiceKey{}, ServiceValue{}, err
 	}
+	if service.ServiceID == 0 {
+		return ServiceKey{}, ServiceValue{}, errors.New("service_id must be non-zero")
+	}
+	if service.Action != actionRedirect {
+		return ServiceKey{}, ServiceValue{}, fmt.Errorf("action must be ACTION_REDIRECT (%d)", actionRedirect)
+	}
+	switch service.Proto {
+	case l4TCP, l4UDP:
+		if service.DstPort == 0 {
+			return ServiceKey{}, ServiceValue{}, errors.New("tcp/udp service dst_port must be non-zero")
+		}
+	case l4ICMP:
+		if service.DstPort != 0 {
+			return ServiceKey{}, ServiceValue{}, errors.New("icmp service dst_port must be 0")
+		}
+	default:
+		return ServiceKey{}, ServiceValue{}, fmt.Errorf("unsupported service proto %d", service.Proto)
+	}
 	if service.OutputIfindex == 0 {
 		return ServiceKey{}, ServiceValue{}, errors.New("output_ifindex must be non-zero")
 	}

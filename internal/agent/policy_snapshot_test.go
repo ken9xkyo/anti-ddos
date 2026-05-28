@@ -45,8 +45,6 @@ func TestCanonicalPolicyChecksumIgnoresFieldAndSliceOrder(t *testing.T) {
 }
 
 func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
-	valid := signedTestPolicySnapshot(t, 2)
-
 	tests := []struct {
 		name    string
 		mutate  func(PolicySnapshot) PolicySnapshot
@@ -98,11 +96,48 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 			},
 			want: "IPv6",
 		},
+		{
+			name: "service action must redirect",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.Services[0].Action = actionDrop
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "ACTION_REDIRECT",
+		},
+		{
+			name: "unsupported service proto",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.Services[0].Proto = 99
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "unsupported service proto",
+		},
+		{
+			name: "tcp service requires port",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.Services[0].DstPort = 0
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "tcp/udp service dst_port",
+		},
+		{
+			name: "icmp service uses zero port",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.Services[0].Proto = l4ICMP
+				snapshot.Services[0].DstPort = 443
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "icmp service dst_port",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			snapshot := valid
+			snapshot := signedTestPolicySnapshot(t, 2)
 			if tc.mutate != nil {
 				snapshot = tc.mutate(snapshot)
 			}

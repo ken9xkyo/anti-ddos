@@ -21,12 +21,16 @@
 #define VERIFIER_LOG_SIZE (1024 * 1024)
 #define MAX_PACKET_SIZE 256
 
+extern unsigned int if_nametoindex(const char *ifname);
+
 struct test_env {
 	struct bpf_object *obj;
 	int prog_fd;
 	int runtime_config_fd;
 	int whitelist_v4_a_fd;
 	int blacklist_v4_a_fd;
+	int service_allowlist_a_fd;
+	int tx_devmap_fd;
 	int drop_counters_fd;
 	int nr_cpus;
 	size_t counter_stride;
@@ -140,6 +144,8 @@ static int open_env(const char *obj_path, struct test_env *env)
 	env->runtime_config_fd = -1;
 	env->whitelist_v4_a_fd = -1;
 	env->blacklist_v4_a_fd = -1;
+	env->service_allowlist_a_fd = -1;
+	env->tx_devmap_fd = -1;
 	env->drop_counters_fd = -1;
 	env->nr_cpus = libbpf_num_possible_cpus();
 	env->counter_stride = roundup8(sizeof(struct counter_value));
@@ -176,10 +182,13 @@ static int open_env(const char *obj_path, struct test_env *env)
 	env->runtime_config_fd = map_fd_by_name(env->obj, "runtime_config");
 	env->whitelist_v4_a_fd = map_fd_by_name(env->obj, "whitelist_v4_a");
 	env->blacklist_v4_a_fd = map_fd_by_name(env->obj, "blacklist_v4_a");
+	env->service_allowlist_a_fd = map_fd_by_name(env->obj, "service_allowlist_a");
+	env->tx_devmap_fd = map_fd_by_name(env->obj, "tx_devmap");
 	env->drop_counters_fd = map_fd_by_name(env->obj, "drop_counters");
 
 	if (env->prog_fd < 0 || env->runtime_config_fd < 0 ||
 	    env->whitelist_v4_a_fd < 0 || env->blacklist_v4_a_fd < 0 ||
+	    env->service_allowlist_a_fd < 0 || env->tx_devmap_fd < 0 ||
 	    env->drop_counters_fd < 0)
 		return -1;
 
@@ -229,6 +238,60 @@ static int upsert_cidr_policy(int map_fd, const char *ip, uint32_t entry_id,
 	if (bpf_map_update_elem(map_fd, &key, &value, BPF_ANY) != 0) {
 		fprintf(stderr, "failed to update cidr policy %s: %s\n", ip,
 			strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+
+static int upsert_service(int map_fd, const char *dst_ip, uint8_t proto,
+			  uint16_t dst_port, uint32_t service_id,
+			  uint32_t action, uint32_t devmap_key,
+			  uint32_t neighbor_status)
+{
+	const uint8_t dst_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
+	const uint8_t src_mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+	struct service_key key = {
+		.dst_v4 = inet_addr(dst_ip),
+		.dst_port = dst_port,
+		.proto = proto,
+	};
+	struct service_value value = {
+		.service_id = service_id,
+		.forwarding_policy_id = service_id + 100,
+		.action = action,
+		.priority = 100,
+		.default_rule_id = 0,
+		.output_ifindex = 1,
+		.devmap_key = devmap_key,
+		.neighbor_status = neighbor_status,
+	};
+
+	memcpy(value.dst_mac, dst_mac, sizeof(value.dst_mac));
+	memcpy(value.src_mac, src_mac, sizeof(value.src_mac));
+
+	if (bpf_map_update_elem(map_fd, &key, &value, BPF_ANY) != 0) {
+		fprintf(stderr, "failed to update service %u: %s\n", service_id,
+			strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+
+static int upsert_devmap_target(int map_fd, uint32_t devmap_key)
+{
+	uint32_t output_ifindex = if_nametoindex("lo");
+
+	if (output_ifindex == 0) {
+		fprintf(stderr, "failed to resolve loopback ifindex: %s\n",
+			strerror(errno));
+		return -1;
+	}
+
+	if (bpf_map_update_elem(map_fd, &devmap_key, &output_ifindex, BPF_ANY) != 0) {
+		fprintf(stderr, "failed to update tx_devmap key %u: %s\n",
+			devmap_key, strerror(errno));
 		return -1;
 	}
 
@@ -299,8 +362,8 @@ static void dump_counters(struct test_env *env)
 	}
 }
 
-static int run_packet(struct test_env *env, const struct packet_fixture *fixture,
-		      uint32_t *retval)
+static int run_packet_capture(struct test_env *env, const struct packet_fixture *fixture,
+			      uint32_t *retval, struct packet_fixture *out_fixture)
 {
 	uint8_t out[MAX_PACKET_SIZE] = {};
 	struct bpf_test_run_opts opts = {
@@ -318,7 +381,20 @@ static int run_packet(struct test_env *env, const struct packet_fixture *fixture
 	}
 
 	*retval = opts.retval;
+	if (out_fixture) {
+		memset(out_fixture, 0, sizeof(*out_fixture));
+		out_fixture->len = opts.data_size_out;
+		if (out_fixture->len > sizeof(out_fixture->data))
+			out_fixture->len = sizeof(out_fixture->data);
+		memcpy(out_fixture->data, out, out_fixture->len);
+	}
 	return 0;
+}
+
+static int run_packet(struct test_env *env, const struct packet_fixture *fixture,
+		      uint32_t *retval)
+{
+	return run_packet_capture(env, fixture, retval, NULL);
 }
 
 static void init_eth(struct packet_fixture *fixture, uint16_t eth_proto)
@@ -351,7 +427,7 @@ static struct iphdr *append_ipv4(struct packet_fixture *fixture, uint8_t proto,
 	return ip;
 }
 
-static struct packet_fixture make_tcp_syn(void)
+static struct packet_fixture make_tcp_syn_port(uint16_t dst_port)
 {
 	struct packet_fixture fixture = {};
 	struct tcphdr *tcp;
@@ -360,14 +436,19 @@ static struct packet_fixture make_tcp_syn(void)
 	append_ipv4(&fixture, IPPROTO_TCP, sizeof(*tcp));
 	tcp = (struct tcphdr *)(fixture.data + sizeof(struct ethhdr) + sizeof(struct iphdr));
 	tcp->source = htons(12345);
-	tcp->dest = htons(80);
+	tcp->dest = htons(dst_port);
 	tcp->doff = 5;
 	tcp->syn = 1;
 
 	return fixture;
 }
 
-static struct packet_fixture make_udp(void)
+static struct packet_fixture make_tcp_syn(void)
+{
+	return make_tcp_syn_port(80);
+}
+
+static struct packet_fixture make_udp_port(uint16_t dst_port)
 {
 	struct packet_fixture fixture = {};
 	struct udphdr *udp;
@@ -376,10 +457,15 @@ static struct packet_fixture make_udp(void)
 	append_ipv4(&fixture, IPPROTO_UDP, sizeof(*udp));
 	udp = (struct udphdr *)(fixture.data + sizeof(struct ethhdr) + sizeof(struct iphdr));
 	udp->source = htons(12345);
-	udp->dest = htons(53);
+	udp->dest = htons(dst_port);
 	udp->len = htons(sizeof(*udp));
 
 	return fixture;
+}
+
+static struct packet_fixture make_udp(void)
+{
+	return make_udp_port(53);
 }
 
 static struct packet_fixture make_icmp(void)
@@ -518,6 +604,56 @@ static int expect_decision_reason_action(struct test_env *env, const char *name,
 	return 0;
 }
 
+static int expect_rewrite(struct test_env *env, const char *name,
+			  const struct packet_fixture *fixture,
+			  uint32_t expected_ret,
+			  const struct counter_key *counter_key)
+{
+	static const uint8_t expected_dst[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
+	static const uint8_t expected_src[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
+	struct packet_fixture out = {};
+	struct ethhdr *eth = (struct ethhdr *)out.data;
+	uint64_t before = 0;
+	uint64_t after = 0;
+	uint32_t retval = 0;
+
+	if (counter_key)
+		before = read_counter(env, counter_key);
+
+	if (run_packet_capture(env, fixture, &retval, &out) != 0)
+		return -1;
+
+	if (retval != expected_ret) {
+		fprintf(stderr, "%s: expected retval %u, got %u\n", name,
+			expected_ret, retval);
+		return -1;
+	}
+	if (out.len < sizeof(*eth)) {
+		fprintf(stderr, "%s: output packet too short: %u\n", name, out.len);
+		return -1;
+	}
+	if (memcmp(eth->h_dest, expected_dst, sizeof(expected_dst)) != 0 ||
+	    memcmp(eth->h_source, expected_src, sizeof(expected_src)) != 0) {
+		fprintf(stderr, "%s: ethernet MAC rewrite mismatch\n", name);
+		return -1;
+	}
+
+	if (counter_key) {
+		after = read_counter(env, counter_key);
+		if (after != before + 1) {
+			fprintf(stderr,
+				"%s: expected counter delta 1, got before=%llu after=%llu\n",
+				name, (unsigned long long)before,
+				(unsigned long long)after);
+			dump_counters(env);
+			return -1;
+		}
+	}
+
+	printf("PASS %s\n", name);
+	return 0;
+}
+
 static struct counter_key key_for(uint32_t reason, uint8_t action, uint8_t proto)
 {
 	struct counter_key key = {
@@ -555,6 +691,65 @@ int main(int argc, char **argv)
 	if (seed_runtime_config(&env) != 0)
 		goto out;
 
+	pkt = make_tcp_syn();
+	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_TCP);
+	if (expect_decision(&env, "service allowlist miss", &pkt, XDP_DROP, &key) != 0)
+		goto out;
+
+	if (upsert_service(env.service_allowlist_a_fd, "203.0.113.10", L4_TCP, 80,
+			   10, ACTION_REDIRECT, 3, NEIGHBOR_RESOLVED) != 0)
+		goto out;
+
+	pkt = make_tcp_syn();
+	key = key_for(REASON_REDIRECT_ERROR, ACTION_DROP, L4_TCP);
+	key.service_id = 10;
+	if (expect_rewrite(&env, "missing devmap target fails closed", &pkt,
+			   XDP_DROP, &key) != 0)
+		goto out;
+
+	if (upsert_devmap_target(env.tx_devmap_fd, 3) != 0)
+		goto out;
+
+	pkt = make_tcp_syn();
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 10;
+	if (expect_rewrite(&env, "allowed tcp service redirects with mac rewrite",
+			   &pkt, XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_service(env.service_allowlist_a_fd, "203.0.113.10", L4_UDP, 53,
+			   11, ACTION_REDIRECT, 3, NEIGHBOR_RESOLVED) != 0)
+		goto out;
+
+	pkt = make_udp();
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_UDP);
+	key.service_id = 11;
+	if (expect_rewrite(&env, "allowed udp service redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_service(env.service_allowlist_a_fd, "203.0.113.10", L4_ICMP, 0,
+			   12, ACTION_REDIRECT, 3, NEIGHBOR_RESOLVED) != 0)
+		goto out;
+
+	pkt = make_icmp();
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_ICMP);
+	key.service_id = 12;
+	if (expect_rewrite(&env, "allowed icmp service redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	if (upsert_service(env.service_allowlist_a_fd, "203.0.113.10", L4_TCP, 8080,
+			   13, ACTION_REDIRECT, 3, NEIGHBOR_UNRESOLVED) != 0)
+		goto out;
+
+	pkt = make_tcp_syn_port(8080);
+	key = key_for(REASON_NEIGHBOR_UNRESOLVED, ACTION_DROP, L4_TCP);
+	key.service_id = 13;
+	if (expect_decision(&env, "unresolved neighbor fails closed", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+
 	if (upsert_cidr_policy(env.blacklist_v4_a_fd, "198.51.100.10", 1,
 			       ACTION_DROP, POLICY_SCOPE_GLOBAL, 77) != 0)
 		goto out;
@@ -562,7 +757,9 @@ int main(int argc, char **argv)
 	pkt = make_tcp_syn();
 	key = key_for(REASON_BLACKLIST, ACTION_DROP, L4_TCP);
 	key.rule_id = 77;
-	if (expect_decision(&env, "blacklist source drop", &pkt, XDP_DROP, &key) != 0)
+	key.service_id = 10;
+	if (expect_decision(&env, "blacklist source drops after service match",
+			    &pkt, XDP_DROP, &key) != 0)
 		goto out;
 
 	if (upsert_cidr_policy(env.whitelist_v4_a_fd, "198.51.100.10", 2,
@@ -570,8 +767,15 @@ int main(int argc, char **argv)
 		goto out;
 
 	pkt = make_tcp_syn();
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 10;
+	if (expect_rewrite(&env, "whitelist overrides blacklist after service match",
+			   &pkt, XDP_REDIRECT, &key) != 0)
+		goto out;
+
+	pkt = make_tcp_syn_port(81);
 	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_TCP);
-	if (expect_decision(&env, "whitelist overrides blacklist before service allowlist",
+	if (expect_decision(&env, "whitelist cannot bypass service allowlist",
 			    &pkt, XDP_DROP, &key) != 0)
 		goto out;
 
@@ -590,19 +794,16 @@ int main(int argc, char **argv)
 					  REASON_FRAGMENT, ACTION_DROP) != 0)
 		goto out;
 
-	pkt = make_tcp_syn();
+	pkt = make_tcp_syn_port(81);
 	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_TCP);
-	if (expect_decision(&env, "valid tcp syn", &pkt, XDP_DROP, &key) != 0)
+	if (expect_decision(&env, "valid tcp syn to non-allowlisted port", &pkt,
+			    XDP_DROP, &key) != 0)
 		goto out;
 
-	pkt = make_udp();
+	pkt = make_udp_port(5353);
 	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_UDP);
-	if (expect_decision(&env, "valid udp", &pkt, XDP_DROP, &key) != 0)
-		goto out;
-
-	pkt = make_icmp();
-	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_ICMP);
-	if (expect_decision(&env, "valid icmp", &pkt, XDP_DROP, &key) != 0)
+	if (expect_decision(&env, "valid udp to non-allowlisted port", &pkt,
+			    XDP_DROP, &key) != 0)
 		goto out;
 
 	pkt = make_unknown_ipv4();

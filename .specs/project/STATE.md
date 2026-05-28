@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-Current work: Phase 02 - Agent Lifecycle completed; Phase 03 - Policy Snapshot Map Sync is next.
+Current work: Phase 04 - DEVMAP Forwarding and Service Allowlist completed; Phase 05 - Control Plane Core is next.
 
 ## Decisions
 
@@ -16,6 +16,8 @@ Current work: Phase 02 - Agent Lifecycle completed; Phase 03 - Policy Snapshot M
 - Phase 02 Agent is implemented in Go with `github.com/cilium/ebpf v0.17.3` and `github.com/prometheus/client_golang v1.22.0` to stay compatible with Go `1.22.2`.
 - Phase 02 verification attaches XDP only to temporary VETH/netns lab interfaces; no production or lab NIC attach was performed.
 - BPF maps/programs/links are pinned in bpffs; JSON program metadata is stored beside the last-valid snapshot because bpffs does not support regular JSON files.
+- Phase 04 forwarding resolution uses `github.com/vishvananda/netlink v1.3.1` for route/link/neighbor discovery.
+- Phase 04 VETH DEVMAP lab attaches a minimal `xdp_pass` program to the backend veth peer so native XDP redirect frames are accepted by the peer-side veth; this is lab support, not a production datapath change.
 
 ## Phase Progress
 
@@ -24,6 +26,8 @@ Current work: Phase 02 - Agent Lifecycle completed; Phase 03 - Policy Snapshot M
 | 00 - Foundation Lab Readiness | Ready for Phase 01 with gaps carried | Lab readiness docs exist; backend inventory, interface roles, PostgreSQL, Prometheus, native attach and benchmarks remain open. |
 | 01 - XDP Data Plane Skeleton | Done | `make phase1-verify` PASS on 2026-05-28; report `reports/phase-01-xdp-data-plane-skeleton.md`; verifier log `build/bpf/verifier.log`. |
 | 02 - Agent Lifecycle | Done | `make phase2-verify` PASS on 2026-05-28; report `reports/phase-02-agent-lifecycle.md`; VETH lifecycle test attached XDP to a temporary veth, scraped `/metrics`, verified pinned link restart behavior, and cleaned up with safe detach. |
+| 03 - Policy Snapshot Map Sync | Done | `make phase3-verify` PASS on 2026-05-28; report `reports/phase-03-policy-snapshot-map-sync.md`; policy snapshot validation, A/B map apply, devmap update, runtime flip, rollback and last-valid persistence passed. |
+| 04 - DEVMAP Forwarding and Service Allowlist | Done | `make phase4-verify` PASS on 2026-05-28; report `reports/phase-04-devmap-forwarding-service-allowlist.md`; packet fixtures and VETH namespace test verified allowlisted DEVMAP redirect with MAC rewrite and fail-closed service miss. |
 
 ## Current Host Facts
 
@@ -40,7 +44,7 @@ Current work: Phase 02 - Agent Lifecycle completed; Phase 03 - Policy Snapshot M
 
 ## Open Blockers
 
-- Protected backend service inventory is missing: service name, backend IP/CIDR, protocol, allowed ports, owner, criticality, output interface, and return path.
+- Production protected backend service inventory is missing: service name, backend IP/CIDR, protocol, allowed ports, owner, criticality, output interface, and return path.
 - WAN/LAN roles are not formally assigned for `enp94s0f0` and `enp134s0f1`.
 - PostgreSQL and Prometheus binaries are not installed on the lab target.
 - Native XDP attach capability on real NICs has not been tested; no XDP program should be attached to `enp94s0f0`, `enp134s0f1`, or any production/lab NIC without explicit execution approval and confirmed interface roles.
@@ -48,8 +52,8 @@ Current work: Phase 02 - Agent Lifecycle completed; Phase 03 - Policy Snapshot M
 
 ## Next Actions
 
-- Start Phase 03 Policy Snapshot Map Sync using the Phase 02 Agent loader, pinned maps and last-valid snapshot baseline.
-- Network/SRE confirms protected backend service inventory and final WAN/LAN/output interface roles before any redirect policy work.
+- Start Phase 05 Control Plane Core using the Phase 04 snapshot apply and forwarding metadata contracts.
+- Network/SRE confirms production protected backend service inventory and final WAN/LAN/output interface roles before real service policy rollout.
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
-- Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle testing is available through `make phase2-veth-test`.
-- Run benchmark matrix only after Agent attach flow and service redirect path exist.
+- Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.
+- Run benchmark matrix after production interface roles and backend service inventory are confirmed.

@@ -10,18 +10,23 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	agentUp          prometheus.Gauge
-	xdpMode          *prometheus.GaugeVec
-	attachErrors     *prometheus.CounterVec
-	xdpPackets       *prometheus.GaugeVec
-	xdpBytes         *prometheus.GaugeVec
-	mapEntries       *prometheus.GaugeVec
-	mapCapacity      *prometheus.GaugeVec
-	mapUtilization   *prometheus.GaugeVec
-	ringbufEvents    prometheus.Counter
-	ringbufErrors    prometheus.Counter
-	lastSnapshotVer  prometheus.Gauge
-	loadedObjectInfo *prometheus.GaugeVec
+	agentUp                prometheus.Gauge
+	xdpMode                *prometheus.GaugeVec
+	attachErrors           *prometheus.CounterVec
+	xdpPackets             *prometheus.GaugeVec
+	xdpBytes               *prometheus.GaugeVec
+	mapEntries             *prometheus.GaugeVec
+	mapCapacity            *prometheus.GaugeVec
+	mapUtilization         *prometheus.GaugeVec
+	ringbufEvents          prometheus.Counter
+	ringbufErrors          prometheus.Counter
+	lastSnapshotVer        prometheus.Gauge
+	loadedObjectInfo       *prometheus.GaugeVec
+	redirectedPackets      *prometheus.GaugeVec
+	redirectErrors         *prometheus.GaugeVec
+	notAllowedService      *prometheus.GaugeVec
+	neighborUnresolved     *prometheus.GaugeVec
+	neighborResolutionStat *prometheus.GaugeVec
 }
 
 func NewMetrics() (*Metrics, error) {
@@ -74,6 +79,26 @@ func NewMetrics() (*Metrics, error) {
 		Name: "anti_ddos_xdp_program_info",
 		Help: "Loaded XDP object metadata. Value is always 1.",
 	}, []string{"checksum"})
+	m.redirectedPackets = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_redirected_packets_total",
+		Help: "Cumulative packets redirected through the XDP DEVMAP path.",
+	}, []string{"service_id", "protocol", "output_interface"})
+	m.redirectErrors = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_redirect_errors_total",
+		Help: "Cumulative packets dropped because the redirect path failed closed.",
+	}, []string{"service_id", "output_interface", "reason"})
+	m.notAllowedService = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_not_allowed_service_total",
+		Help: "Cumulative packets dropped because no service allowlist entry matched.",
+	}, []string{"protocol"})
+	m.neighborUnresolved = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_neighbor_unresolved_total",
+		Help: "Cumulative packets dropped because service neighbor metadata was unresolved.",
+	}, []string{"service_id", "output_interface"})
+	m.neighborResolutionStat = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_neighbor_resolution_status",
+		Help: "Neighbor resolution status for active service policy entries, 1 resolved and 0 unresolved.",
+	}, []string{"service_id", "output_interface"})
 
 	collectors := []prometheus.Collector{
 		m.agentUp,
@@ -88,6 +113,11 @@ func NewMetrics() (*Metrics, error) {
 		m.ringbufErrors,
 		m.lastSnapshotVer,
 		m.loadedObjectInfo,
+		m.redirectedPackets,
+		m.redirectErrors,
+		m.notAllowedService,
+		m.neighborUnresolved,
+		m.neighborResolutionStat,
 	}
 	for _, collector := range collectors {
 		if err := m.registry.Register(collector); err != nil {
@@ -151,6 +181,47 @@ func (m *Metrics) SetCounters(counters []AggregatedCounter) {
 	}
 }
 
+func (m *Metrics) SetForwardingCounters(counters []AggregatedCounter, snapshot LastValidSnapshot) {
+	m.redirectedPackets.Reset()
+	m.redirectErrors.Reset()
+	m.notAllowedService.Reset()
+	m.neighborUnresolved.Reset()
+	m.neighborResolutionStat.Reset()
+
+	serviceByID := map[uint32]PolicyService{}
+	if snapshot.Policy != nil {
+		for _, service := range snapshot.Policy.Services {
+			serviceByID[service.ServiceID] = service
+			status := 0.0
+			if service.NeighborStatus == neighborResolved {
+				status = 1
+			}
+			m.neighborResolutionStat.WithLabelValues(
+				fmt.Sprint(service.ServiceID),
+				outputInterfaceLabel(service),
+			).Set(status)
+		}
+	}
+
+	for _, counter := range counters {
+		service := serviceByID[counter.Key.ServiceID]
+		serviceID := fmt.Sprint(counter.Key.ServiceID)
+		outputInterface := outputInterfaceLabel(service)
+		proto := fmt.Sprint(counter.Key.Proto)
+
+		switch {
+		case counter.Key.Reason == reasonNone && counter.Key.Action == actionRedirect:
+			m.redirectedPackets.WithLabelValues(serviceID, proto, outputInterface).Set(float64(counter.Packets))
+		case counter.Key.Reason == reasonRedirectError:
+			m.redirectErrors.WithLabelValues(serviceID, outputInterface, fmt.Sprint(counter.Key.Reason)).Set(float64(counter.Packets))
+		case counter.Key.Reason == reasonNotAllowedService:
+			m.notAllowedService.WithLabelValues(proto).Set(float64(counter.Packets))
+		case counter.Key.Reason == reasonNeighborUnresolved:
+			m.neighborUnresolved.WithLabelValues(serviceID, outputInterface).Set(float64(counter.Packets))
+		}
+	}
+}
+
 func (m *Metrics) SetMapStats(maps map[string]*ebpf.Map) {
 	for name, bpfMap := range maps {
 		if bpfMap == nil {
@@ -168,6 +239,13 @@ func (m *Metrics) SetMapStats(maps map[string]*ebpf.Map) {
 			m.mapUtilization.WithLabelValues(name).Set(float64(entries) / capacity)
 		}
 	}
+}
+
+func outputInterfaceLabel(service PolicyService) string {
+	if service.OutputIfindex == 0 {
+		return "unknown"
+	}
+	return fmt.Sprint(service.OutputIfindex)
 }
 
 func counterLabels(key CounterKey) []string {

@@ -9,10 +9,16 @@ const (
 	actionNotForward = 5
 	actionRedirect   = 6
 
-	reasonNone              = 0
-	reasonBlacklist         = 3
-	reasonNotAllowedService = 4
-	reasonMapError          = 7
+	reasonNone               = 0
+	reasonBlacklist          = 3
+	reasonNotAllowedService  = 4
+	reasonMapError           = 7
+	reasonRedirectError      = 8
+	reasonNeighborUnresolved = 9
+
+	l4ICMP = 1
+	l4TCP  = 6
+	l4UDP  = 17
 
 	policyScopeGlobal  = 0
 	policyScopeService = 1

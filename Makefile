@@ -10,12 +10,15 @@ REPORT_DIR := reports
 
 VMLINUX := $(BPF_BUILD_DIR)/vmlinux.h
 BPF_OBJ := $(BPF_BUILD_DIR)/xdp_data_plane.bpf.o
+BPF_PASS_OBJ := $(BPF_BUILD_DIR)/xdp_pass.bpf.o
 PHASE1_TEST := $(TEST_BUILD_DIR)/xdp_fixture_test
 PHASE1_REPORT := $(REPORT_DIR)/phase-01-xdp-data-plane-skeleton.md
 AGENT_BUILD_DIR := $(BUILD_DIR)/agent
 AGENT_BIN := $(AGENT_BUILD_DIR)/anti-ddos-agent
 PHASE2_REPORT := $(REPORT_DIR)/phase-02-agent-lifecycle.md
 PHASE3_REPORT := $(REPORT_DIR)/phase-03-policy-snapshot-map-sync.md
+PHASE4_REPORT := $(REPORT_DIR)/phase-04-devmap-forwarding-service-allowlist.md
+PHASE4_POLICYGEN := $(BUILD_DIR)/phase4-policygen
 
 BPF_CFLAGS := -g -O2 -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	-I$(BPF_BUILD_DIR) -Iinclude
@@ -23,7 +26,7 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
-.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify clean
+.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify clean
 
 phase1-build: $(BPF_OBJ)
 
@@ -75,11 +78,35 @@ phase3-verify: phase3-test
 	@printf -- '- Go unit tests covered canonical policy snapshot checksum, validation failures, capacity checks, TTL rejection, atomic map apply, runtime flip, rollback, and last-valid persistence.\n' >> $(PHASE3_REPORT)
 	@printf -- '- Phase 02 Agent test baseline passed with the phase 03 policy snapshot and map sync code compiled into the Agent.\n' >> $(PHASE3_REPORT)
 
+phase4-policygen:
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(PHASE4_POLICYGEN) ./cmd/phase4-policygen
+
+phase4-test: phase1-test
+	go test ./...
+
+phase4-veth-test: phase2-build phase4-policygen $(BPF_PASS_OBJ)
+	scripts/lab/phase4-devmap-veth-test.sh
+
+phase4-verify: phase4-test phase4-veth-test
+	@mkdir -p $(REPORT_DIR)
+	@printf '# Phase 04 Verification Report\n\n' > $(PHASE4_REPORT)
+	@printf 'Date: %s\n\n' "$$(date -u +%F)" >> $(PHASE4_REPORT)
+	@printf 'Command: `make phase4-verify`\n\n' >> $(PHASE4_REPORT)
+	@printf 'Result: PASS\n\n' >> $(PHASE4_REPORT)
+	@printf -- '- XDP packet fixtures covered service allowlist miss, TCP/UDP/ICMP allowlisted redirect, MAC rewrite, missing DEVMAP fail-closed, unresolved neighbor drop, blacklist after service match, and whitelist after service match.\n' >> $(PHASE4_REPORT)
+	@printf -- '- Go unit tests covered forwarding resolver route/link/neighbor validation, tightened service snapshot validation, policy apply, and forwarding metrics.\n' >> $(PHASE4_REPORT)
+	@printf -- '- VETH namespace test attached XDP only to temporary interfaces and verified client -> WAN XDP -> DEVMAP -> backend forwarding with rewritten Ethernet headers.\n' >> $(PHASE4_REPORT)
+
 $(VMLINUX):
 	@mkdir -p $(BPF_BUILD_DIR)
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 $(BPF_OBJ): bpf/xdp_data_plane.bpf.c include/anti_ddos/bpf_contract.h $(VMLINUX)
+	@mkdir -p $(BPF_BUILD_DIR)
+	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
+
+$(BPF_PASS_OBJ): bpf/xdp_pass.bpf.c $(VMLINUX)
 	@mkdir -p $(BPF_BUILD_DIR)
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 

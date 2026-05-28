@@ -122,6 +122,7 @@ func (a *Agent) collect(runtime *Runtime) error {
 		return err
 	}
 	a.metrics.SetCounters(counters)
+	a.metrics.SetForwardingCounters(counters, runtime.Snapshot)
 	a.metrics.SetMapStats(runtime.Collection.Maps)
 	return nil
 }

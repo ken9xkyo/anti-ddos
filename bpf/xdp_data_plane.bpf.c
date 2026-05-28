@@ -12,6 +12,7 @@
 #define IPV4_MF 0x2000
 #define IPV4_OFFSET 0x1fff
 #define TCP_FLAGS_OFFSET 13
+#define ETH_ALEN 6
 
 enum parse_result {
 	PARSE_OK = 0,
@@ -334,6 +335,48 @@ lookup_active_blacklist(__u32 active_slot, __u32 src_v4)
 	return bpf_map_lookup_elem(&blacklist_v4_b, &key);
 }
 
+static __always_inline struct service_value *
+lookup_active_service(__u32 active_slot, const struct packet_meta *meta)
+{
+	struct service_key key = {
+		.dst_v4 = meta->dst_v4,
+		.dst_port = meta->dst_port,
+		.proto = meta->proto,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&service_allowlist_a, &key);
+
+	return bpf_map_lookup_elem(&service_allowlist_b, &key);
+}
+
+static __always_inline int rewrite_eth_addrs(struct xdp_md *ctx,
+					     const __u8 dst_mac[ETH_ALEN],
+					     const __u8 src_mac[ETH_ALEN])
+{
+	void *data = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+	struct ethhdr *eth = data;
+
+	if ((void *)(eth + 1) > data_end)
+		return -1;
+
+	eth->h_dest[0] = dst_mac[0];
+	eth->h_dest[1] = dst_mac[1];
+	eth->h_dest[2] = dst_mac[2];
+	eth->h_dest[3] = dst_mac[3];
+	eth->h_dest[4] = dst_mac[4];
+	eth->h_dest[5] = dst_mac[5];
+	eth->h_source[0] = src_mac[0];
+	eth->h_source[1] = src_mac[1];
+	eth->h_source[2] = src_mac[2];
+	eth->h_source[3] = src_mac[3];
+	eth->h_source[4] = src_mac[4];
+	eth->h_source[5] = src_mac[5];
+
+	return 0;
+}
+
 SEC("xdp")
 int xdp_entry(struct xdp_md *ctx)
 {
@@ -341,9 +384,11 @@ int xdp_entry(struct xdp_md *ctx)
 	struct runtime_config_value *cfg;
 	struct cidr_policy_value *whitelist;
 	struct cidr_policy_value *blacklist;
+	struct service_value *service;
 	__u8 whitelist_applies = 0;
 	__u32 cfg_key = 0;
 	int parse_result;
+	int redirect_ret;
 
 	cfg = bpf_map_lookup_elem(&runtime_config, &cfg_key);
 	if (!cfg || cfg->policy_version == 0) {
@@ -394,8 +439,21 @@ int xdp_entry(struct xdp_md *ctx)
 		return XDP_DROP;
 	}
 
+	service = lookup_active_service(cfg->active_slot, &meta);
+	if (!service) {
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_NOT_ALLOWED_SERVICE;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
+		return XDP_DROP;
+	}
+	meta.service_id = service->service_id;
+	meta.rule_id = service->default_rule_id;
+
 	whitelist = lookup_active_whitelist(cfg->active_slot, meta.src_v4);
-	if (whitelist && whitelist->scope == POLICY_SCOPE_GLOBAL)
+	if (whitelist && (whitelist->scope == POLICY_SCOPE_GLOBAL ||
+			  (whitelist->scope == POLICY_SCOPE_SERVICE &&
+			   whitelist->service_id == service->service_id)))
 		whitelist_applies = 1;
 
 	blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
@@ -408,11 +466,37 @@ int xdp_entry(struct xdp_md *ctx)
 		return XDP_DROP;
 	}
 
-	meta.action = ACTION_DROP;
-	meta.reason = REASON_NOT_ALLOWED_SERVICE;
+	if (service->neighbor_status != NEIGHBOR_RESOLVED) {
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_NEIGHBOR_UNRESOLVED;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
+		return XDP_DROP;
+	}
+
+	if (service->action != ACTION_REDIRECT ||
+	    rewrite_eth_addrs(ctx, service->dst_mac, service->src_mac) != 0) {
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_REDIRECT_ERROR;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
+		return XDP_DROP;
+	}
+
+	redirect_ret = bpf_redirect_map(&tx_devmap, service->devmap_key, XDP_DROP);
+	if (redirect_ret != XDP_REDIRECT) {
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_REDIRECT_ERROR;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
+		return redirect_ret;
+	}
+
+	meta.action = ACTION_REDIRECT;
+	meta.reason = REASON_NONE;
 	count_packet(&meta);
 	maybe_sample(&meta, cfg);
-	return XDP_DROP;
+	return redirect_ret;
 }
 
 char LICENSE[] SEC("license") = "GPL";

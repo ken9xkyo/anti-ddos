@@ -33,6 +33,30 @@
 | P04-T14 | Kiểm thử end-to-end VETH/namespace DEVMAP forwarding | Xác nhận redirect path hoạt động thật | Client namespace -> WAN veth -> XDP -> DEVMAP -> backend namespace | P04-T10 |
 | P04-T15 | Viết tài liệu redirect failure behavior | Vận hành biết khi nào cần cảnh báo/rollback | Runbook ngắn cho output interface down, DEVMAP missing, neighbor unresolved, return path sai | P04-T12 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase4-verify` PASS; report ở `reports/phase-04-devmap-forwarding-service-allowlist.md`. Phase này dùng mock/bootstrap policy và VETH namespace lab, chưa attach XDP vào NIC thật và chưa triển khai Control Plane CRUD service.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P04-T01 | Done | `service_key` và `service_value` giữ contract dst_v4/proto/dst_port, service/policy/action, output ifindex, devmap key, neighbor status và MAC rewrite metadata. |
+| P04-T02 | Done | Agent có `ForwardingResolver` netlink đọc route, link, ifindex, output MAC và neighbor MAC/state; unit tests dùng fake netlink client. |
+| P04-T03 | Done | Resolver và snapshot validation reject interface missing/down, source MAC invalid, route mismatch, neighbor missing/failed/unresolved và service shape sai. |
+| P04-T04 | Done | `ApplyPolicySnapshot` populate `tx_devmap` theo devmap_key/output_ifindex và rollback touched keys khi apply lỗi. |
+| P04-T05 | Done | Service allowlist A/B slot populate từ validated snapshot, active slot flip không cần reload XDP. |
+| P04-T06 | Done | XDP lookup active `service_allowlist` theo dst/proto/port trước blacklist/rate path. |
+| P04-T07 | Done | Service miss drop `REASON_NOT_ALLOWED_SERVICE` với counter/event sampling path. |
+| P04-T08 | Done | Neighbor unresolved trong service value drop `REASON_NEIGHBOR_UNRESOLVED`. |
+| P04-T09 | Done | XDP rewrite `eth->h_dest` và `eth->h_source` bằng MAC resolved từ service value. |
+| P04-T10 | Done | XDP return `bpf_redirect_map(&tx_devmap, service.devmap_key, XDP_DROP)` cho packet allowlisted. |
+| P04-T11 | Done | Counters cover redirected, redirect_error, neighbor_unresolved và not_allowed_service. |
+| P04-T12 | Done | Prometheus metrics expose redirected packets, redirect errors, not allowed service, neighbor unresolved và neighbor resolution status. |
+| P04-T13 | Done | Packet fixture và VETH test xác nhận port không allowlist không tới backend. |
+| P04-T14 | Done | `scripts/lab/phase4-devmap-veth-test.sh` xác nhận client namespace -> WAN XDP -> DEVMAP -> backend namespace với MAC rewrite đúng. |
+| P04-T15 | Done | Runbook ở `docs/runbooks/forwarding-failure-behavior.md`. |
+
 ## Tiêu chí chấp nhận
 
 - Packet tới backend IP/protocol/port đã khai báo được L2 rewrite và return `XDP_REDIRECT` qua `tx_devmap`.
