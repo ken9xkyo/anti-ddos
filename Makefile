@@ -20,6 +20,7 @@ PHASE3_REPORT := $(REPORT_DIR)/phase-03-policy-snapshot-map-sync.md
 PHASE4_REPORT := $(REPORT_DIR)/phase-04-devmap-forwarding-service-allowlist.md
 PHASE4_POLICYGEN := $(BUILD_DIR)/phase4-policygen
 PHASE5_REPORT := $(REPORT_DIR)/phase-05-control-plane-core.md
+PHASE6_REPORT := $(REPORT_DIR)/phase-06-observability-dashboard.md
 
 BPF_CFLAGS := -g -O2 -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	-I$(BPF_BUILD_DIR) -Iinclude
@@ -27,7 +28,7 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
-.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify clean
+.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify clean
 
 phase1-build: $(BPF_OBJ)
 
@@ -115,6 +116,28 @@ phase5-verify: phase5-test phase5-postgres-test
 	@printf -- '- PostgreSQL integration test ran migrations twice on a clean database, bootstrapped Admin, verified local session auth/RBAC, denied Viewer mutation, and checked audit reason capture.\n' >> $(PHASE5_REPORT)
 	@printf -- '- Policy mutations created deterministic Agent-compatible snapshots using the Phase 03/04 `PolicySnapshot` contract, and unchanged rebuild skipped a redundant version.\n' >> $(PHASE5_REPORT)
 	@printf -- '- Rollback created a new snapshot with `rollback_from`; Agent register, heartbeat, snapshot fetch and apply ack endpoints were exercised.\n' >> $(PHASE5_REPORT)
+
+phase6-test: phase5-test
+
+phase6-postgres-test:
+	scripts/lab/phase6-postgres-test.sh
+
+phase6-ui-test:
+	npm --prefix web/dashboard test -- --run
+	npm --prefix web/dashboard run build
+
+phase6-verify: phase6-test phase6-postgres-test phase6-ui-test
+	@mkdir -p $(REPORT_DIR)
+	@printf '# Phase 06 Verification Report\n\n' > $(PHASE6_REPORT)
+	@printf 'Date: %s\n\n' "$$(date -u +%F)" >> $(PHASE6_REPORT)
+	@printf 'Command: `make phase6-verify`\n\n' >> $(PHASE6_REPORT)
+	@printf 'Result: PASS\n\n' >> $(PHASE6_REPORT)
+	@printf -- '- Existing Go tests and XDP packet fixture baseline passed through `phase5-test`.\n' >> $(PHASE6_REPORT)
+	@printf -- '- Control API exposed `/metrics`, bounded request labels, dashboard APIs, Prometheus proxy status and PostgreSQL-backed sampled security event ingestion/query APIs.\n' >> $(PHASE6_REPORT)
+	@printf -- '- Agent ringbuf consumer forwarded sampled events to Control API best-effort with bounded queue, drop metrics and forwarding error metrics.\n' >> $(PHASE6_REPORT)
+	@printf -- '- PostgreSQL integration test ran phase 06 migrations, ingested sampled events, queried events/summary/dashboard and audited metrics label safety.\n' >> $(PHASE6_REPORT)
+	@printf -- '- React/Vite dashboard tests verified Viewer read-only behavior, Operator actions, freshness indicators and event investigation rendering; production build succeeded.\n' >> $(PHASE6_REPORT)
+	@printf -- '- Grafana dashboard and Prometheus scrape example were added under `deploy/`.\n' >> $(PHASE6_REPORT)
 
 $(VMLINUX):
 	@mkdir -p $(BPF_BUILD_DIR)

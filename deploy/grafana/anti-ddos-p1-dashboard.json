@@ -1,0 +1,118 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "pps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        { "expr": "sum(rate(anti_ddos_xdp_packets_total[1m]))", "legendFormat": "pps", "refId": "A" }
+      ],
+      "title": "Traffic pps",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "bps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "targets": [
+        { "expr": "sum(rate(anti_ddos_xdp_bytes_total[1m])) * 8", "legendFormat": "bps", "refId": "A" }
+      ],
+      "title": "Traffic bps",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "pps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "targets": [
+        { "expr": "sum(rate(anti_ddos_xdp_packets_total{proto=\"6\"}[1m]))", "legendFormat": "tcp packets", "refId": "A" }
+      ],
+      "title": "TCP activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "pps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "targets": [
+        { "expr": "sum by (reason) (rate(anti_ddos_xdp_packets_total{action=\"1\"}[1m]))", "legendFormat": "reason {{reason}}", "refId": "A" }
+      ],
+      "title": "Drops by reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "pps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "targets": [
+        { "expr": "sum by (service_id, output_interface) (rate(anti_ddos_redirected_packets_total[1m]))", "legendFormat": "svc {{service_id}} if {{output_interface}}", "refId": "A" },
+        { "expr": "sum by (service_id, output_interface) (rate(anti_ddos_redirect_errors_total[1m]))", "legendFormat": "redirect error svc {{service_id}}", "refId": "B" }
+      ],
+      "title": "Redirect path",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "id": 6,
+      "targets": [
+        { "expr": "max by (map) (anti_ddos_ebpf_map_utilization_ratio)", "legendFormat": "{{map}}", "refId": "A" }
+      ],
+      "title": "eBPF map utilization",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "id": 7,
+      "targets": [
+        { "expr": "min by (service_id, output_interface) (anti_ddos_neighbor_resolution_status)", "legendFormat": "svc {{service_id}} if {{output_interface}}", "refId": "A" }
+      ],
+      "title": "Neighbor health",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "id": 8,
+      "targets": [
+        { "expr": "sum(anti_ddos_control_agent_stale)", "legendFormat": "stale agents", "refId": "A" },
+        { "expr": "sum(rate(anti_ddos_xdp_attach_errors_total[5m]))", "legendFormat": "attach errors", "refId": "B" },
+        { "expr": "sum(rate(anti_ddos_control_security_events_rejected_total[5m]))", "legendFormat": "event rejects", "refId": "C" }
+      ],
+      "title": "Operational alerts",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["anti-ddos", "xdp", "p1"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Anti-DDoS P1 Operations",
+  "uid": "anti-ddos-p1",
+  "version": 1,
+  "weekStart": ""
+}
