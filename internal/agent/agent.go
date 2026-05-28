@@ -64,16 +64,20 @@ func (a *Agent) Run(ctx context.Context) error {
 		runtime.Close(a.cfg.SafeDetachOnExit)
 	}()
 
+	var eventSink EventSink
+	if a.cfg.ControlURL != "" {
+		forwarder := NewSecurityEventForwarder(a.cfg, runtime.Snapshot.SampleDenom, a.metrics, a.logger)
+		eventSink = forwarder
+		go forwarder.Run(ctx)
+		go RunControlSync(ctx, a.cfg, runtime, a.metrics, a.logger)
+	}
 	ringCtx, cancelRing := context.WithCancel(ctx)
 	defer cancelRing()
 	go func() {
-		if err := ConsumeRingbuf(ringCtx, runtime.Collection.Maps["events"], a.metrics, a.logger); err != nil {
+		if err := ConsumeRingbuf(ringCtx, runtime.Collection.Maps["events"], a.metrics, a.logger, eventSink); err != nil {
 			a.logger.Warn("ringbuf consumer stopped", "error", RedactString(err.Error()))
 		}
 	}()
-	if a.cfg.ControlURL != "" {
-		go RunControlSync(ctx, a.cfg, runtime, a.metrics, a.logger)
-	}
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

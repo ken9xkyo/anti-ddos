@@ -27,6 +27,9 @@ type Metrics struct {
 	notAllowedService      *prometheus.GaugeVec
 	neighborUnresolved     *prometheus.GaugeVec
 	neighborResolutionStat *prometheus.GaugeVec
+	controlEventsForwarded prometheus.Counter
+	controlEventDrops      *prometheus.CounterVec
+	controlEventErrors     prometheus.Counter
 }
 
 func NewMetrics() (*Metrics, error) {
@@ -99,6 +102,18 @@ func NewMetrics() (*Metrics, error) {
 		Name: "anti_ddos_neighbor_resolution_status",
 		Help: "Neighbor resolution status for active service policy entries, 1 resolved and 0 unresolved.",
 	}, []string{"service_id", "output_interface"})
+	m.controlEventsForwarded = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "anti_ddos_agent_control_events_forwarded_total",
+		Help: "Sampled security events successfully forwarded to the Control API.",
+	})
+	m.controlEventDrops = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_agent_control_events_dropped_total",
+		Help: "Sampled security events dropped before forwarding to the Control API.",
+	}, []string{"reason"})
+	m.controlEventErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "anti_ddos_agent_control_event_forward_errors_total",
+		Help: "Control API sampled event forwarding errors observed by the agent.",
+	})
 
 	collectors := []prometheus.Collector{
 		m.agentUp,
@@ -118,6 +133,9 @@ func NewMetrics() (*Metrics, error) {
 		m.notAllowedService,
 		m.neighborUnresolved,
 		m.neighborResolutionStat,
+		m.controlEventsForwarded,
+		m.controlEventDrops,
+		m.controlEventErrors,
 	}
 	for _, collector := range collectors {
 		if err := m.registry.Register(collector); err != nil {
@@ -160,6 +178,18 @@ func (m *Metrics) IncRingbufEvent() {
 
 func (m *Metrics) IncRingbufError() {
 	m.ringbufErrors.Inc()
+}
+
+func (m *Metrics) AddControlEventsForwarded(count int) {
+	m.controlEventsForwarded.Add(float64(count))
+}
+
+func (m *Metrics) IncControlEventDrop(reason string) {
+	m.controlEventDrops.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) IncControlEventForwardError() {
+	m.controlEventErrors.Inc()
 }
 
 func (m *Metrics) SetSnapshotVersion(version uint32) {

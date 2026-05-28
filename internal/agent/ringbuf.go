@@ -13,7 +13,11 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-func ConsumeRingbuf(ctx context.Context, events *ebpf.Map, metrics *Metrics, logger *slog.Logger) error {
+type EventSink interface {
+	Enqueue(EventRecord)
+}
+
+func ConsumeRingbuf(ctx context.Context, events *ebpf.Map, metrics *Metrics, logger *slog.Logger, sinks ...EventSink) error {
 	if events == nil {
 		return nil
 	}
@@ -54,6 +58,9 @@ func ConsumeRingbuf(ctx context.Context, events *ebpf.Map, metrics *Metrics, log
 		}
 		if metrics != nil {
 			metrics.IncRingbufEvent()
+		}
+		if len(sinks) > 0 && sinks[0] != nil {
+			sinks[0].Enqueue(event)
 		}
 	}
 }

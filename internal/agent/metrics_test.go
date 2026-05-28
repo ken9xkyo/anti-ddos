@@ -11,6 +11,9 @@ func TestMetricsGather(t *testing.T) {
 	metrics.SetAgentUp(true)
 	metrics.SetXDPMode("generic")
 	metrics.SetSnapshotVersion(7)
+	metrics.AddControlEventsForwarded(2)
+	metrics.IncControlEventDrop("queue_full")
+	metrics.IncControlEventForwardError()
 	metrics.SetCounters([]AggregatedCounter{{
 		Key:     CounterKey{Reason: reasonMapError, Action: actionDrop, Proto: 6},
 		Packets: 3,
@@ -55,6 +58,9 @@ func TestMetricsGather(t *testing.T) {
 		"anti_ddos_redirect_errors_total",
 		"anti_ddos_not_allowed_service_total",
 		"anti_ddos_neighbor_resolution_status",
+		"anti_ddos_agent_control_events_forwarded_total",
+		"anti_ddos_agent_control_events_dropped_total",
+		"anti_ddos_agent_control_event_forward_errors_total",
 	} {
 		if !names[name] {
 			t.Fatalf("missing metric family %s", name)
