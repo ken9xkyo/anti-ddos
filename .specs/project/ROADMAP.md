@@ -9,7 +9,7 @@
 | 02 - Agent Lifecycle | Done | Load, attach, rollback, pinned maps, metrics, last-valid snapshot | Phase 01 |
 | 03 - Policy Snapshot Map Sync | Done | Validate and atomically apply immutable policy snapshots to eBPF maps | Phase 01, 02 |
 | 04 - DEVMAP Forwarding and Service Allowlist | Done | L2 rewrite, DEVMAP redirect, route/neighbor resolution, fail-closed forwarding | Phase 01, 02, 03 |
-| 05 - Control Plane Core | Planned | API, PostgreSQL, RBAC, audit, protected service registry, rollback | Phase 03, 04 |
+| 05 - Control Plane Core | Done | API, PostgreSQL, RBAC, audit, protected service registry, rollback | Phase 03, 04 |
 | 06 - Observability Dashboard | Planned | Prometheus, sampled events, realtime dashboard, Grafana | Phase 02, 05 |
 | 07 - Rate Limit Baseline Auto-Enforce | Planned | Baselines, anomaly scoring, token bucket rules, TTL auto-enforce | Phase 03, 05, 06 |
 | 08 - Threat Feed Sync | Planned | Spamhaus, Team Cymru, AbuseIPDB, internal feed sync and aggregation | Phase 05, 06 |
@@ -18,7 +18,7 @@
 
 ## Carried Readiness Gaps
 
-- Protected backend service inventory is still missing and remains a blocker before production service policy rollout in Phase 05.
+- Protected backend service inventory is still missing and remains a blocker before production service policy rollout through the Phase 05 Control Plane.
 - WAN/LAN/output interface roles are still not formally assigned; no XDP attach should target a production NIC yet.
 - PostgreSQL and Prometheus binaries are still missing on the lab target.
 - Native XDP attach capability and throughput benchmarks on real NICs have not been run.

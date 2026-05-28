@@ -31,6 +31,28 @@ Xây dựng Control Plane API làm nguồn cấu hình chính cho users, agents,
 | P05-T12 | Triển khai bootstrap Admin CLI/secret | Tạo tài khoản Admin đầu tiên an toàn | One-time bootstrap, force password change, audit event | P05-T03 |
 | P05-T13 | Triển khai Viewer read-only behavior | Đảm bảo RBAC đúng | Tests Viewer không mutate, Admin/Operator mutate theo quyền | P05-T03 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase5-verify` PASS; report ở `reports/phase-05-control-plane-core.md`. Phase này triển khai Control Plane lõi với PostgreSQL, local RBAC, audit, policy snapshot builder và Agent sync API. Verification dùng PostgreSQL Docker container vì `psql/postgres` local vẫn chưa được cài trên lab host.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P05-T01 | Done | `cmd/control-api` có `migrate`, `serve`, config env và kết nối PostgreSQL qua `pgx/v5`. |
+| P05-T02 | Done | Migration runner idempotent tạo core tables cho users, sessions, agents, services, forwarding policies, rules, whitelist, blacklist placeholders, feed placeholders, snapshots, apply status và audit. |
+| P05-T03 | Done | Local login/session dùng bearer/cookie token hash, bcrypt password hash và role Admin/Operator/Viewer. |
+| P05-T04 | Done | Mutations ghi `audit_events` với before/after/reason và redaction cho password/token/API key/session/authorization-like fields. |
+| P05-T05 | Done | Backend service API validate IPv4 CIDR, protocol, allowed ports, output interface, owner, criticality, mode và resolved forwarding metadata. |
+| P05-T06 | Done | Forwarding policy API validate protocol/port/action/output target; snapshot builder reject active non-host CIDR/unresolved metadata fail-closed trước Agent apply. |
+| P05-T07 | Done | Whitelist API validate IPv4 CIDR, global/service scope, owner, reason, expiry và priority; entries enter Agent snapshot as allow CIDR policy. |
+| P05-T08 | Done | Rule và manual blacklist APIs validate action/mode/TTL/evidence/confidence/source và publish effective rule/blacklist entries. |
+| P05-T09 | Done | Snapshot builder reuses `agent.PolicySnapshot`, signs canonical checksum, verifies capacity/shape and skips redundant unchanged effective snapshots. |
+| P05-T10 | Done | Agent endpoints support register, heartbeat desired version, snapshot fetch and apply ack/failure; Agent optional sync activates with `ANTI_DDOS_CONTROL_URL`. |
+| P05-T11 | Done | Rollback API creates a new snapshot from target content with fresh version and `rollback_from` set to latest active version. |
+| P05-T12 | Done | `cmd/control-admin bootstrap --username admin --password-stdin` creates the first Admin once, forces password change and audits bootstrap. |
+| P05-T13 | Done | Integration test confirms Viewer cannot mutate while Admin can create policy-affecting resources. |
+
 ## Tiêu chí chấp nhận
 
 - Admin có thể quản lý users, services, policies, rules, feeds config, rollback và mọi mutation ghi audit.

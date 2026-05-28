@@ -71,6 +71,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.logger.Warn("ringbuf consumer stopped", "error", RedactString(err.Error()))
 		}
 	}()
+	if a.cfg.ControlURL != "" {
+		go RunControlSync(ctx, a.cfg, runtime, a.metrics, a.logger)
+	}
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
