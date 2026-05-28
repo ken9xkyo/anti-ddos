@@ -29,6 +29,27 @@ Xây dựng chương trình XDP tối thiểu nhưng verifier-safe: parse Ethern
 | P01-T11 | Thiết lập build và verifier log gate | Bắt lỗi verifier sớm | Lệnh build, verbose verifier output, xlated dump nếu cần | P01-T10 |
 | P01-T12 | Packet unit tests bằng fixture | Chống regression parser | Tests malformed Ethernet/IP, TCP/UDP/ICMP, fragments, unknown protocol | P01-T11 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase1-verify` PASS; report ở `reports/phase-01-xdp-data-plane-skeleton.md`; verifier log ở `build/bpf/verifier.log`. Phase này chỉ build/load/test-run bằng libbpf, không attach XDP vào interface thật hoặc veth.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P01-T01 | Done | Tạo layout `bpf/`, `include/anti_ddos/`, `tests/phase01/`, root `Makefile`. |
+| P01-T02 | Done | `include/anti_ddos/bpf_contract.h` định nghĩa `ACTION_*`, `REASON_*`, `L4_*`. |
+| P01-T03 | Done | `packet_meta` trong shared contract và XDP entry dùng zero-initialized stack struct. |
+| P01-T04 | Done | BPF maps khai báo đủ runtime, LPM A/B, service A/B, `tx_devmap`, rate, rules, counters, events, `prog_array`; harness validate type/max_entries. |
+| P01-T05 | Done | Parser Ethernet/IPv4 bounds-check trước khi đọc header và drop malformed. |
+| P01-T06 | Done | Parser TCP/UDP/ICMP bounds-check, lấy ports/flags khi header đủ, unknown protocol không đọc L4. |
+| P01-T07 | Done | Malformed và fragment default `XDP_DROP` với `REASON_MALFORMED`/`REASON_FRAGMENT`. |
+| P01-T08 | Done | `drop_counters` per-CPU hash cập nhật packets/bytes theo reason/action/proto/service/rule. |
+| P01-T09 | Done | `maybe_sample` ringbuf reserve/submit theo `sample_denom`; reserve failure chỉ tăng counter sample error. |
+| P01-T10 | Done | `runtime_config[0]` chưa initialized (`policy_version == 0`) fail-closed `XDP_DROP` + `REASON_MAP_ERROR`. |
+| P01-T11 | Done | `make phase1-build`, `make phase1-test`, `make phase1-verify`; verifier log captured. |
+| P01-T12 | Done | Fixtures pass: missing runtime config, truncated Ethernet payload, malformed IPv4/IHL, IPv4 fragment, TCP SYN, UDP, ICMP, unknown IPv4 protocol, non-IPv4 pass. |
+
 ## Tiêu chí chấp nhận
 
 - XDP object build được bằng clang target BPF và load được trong lab.

@@ -4,8 +4,8 @@
 
 | Phase | Status | Purpose | Primary dependency |
 |---|---|---|---|
-| 00 - Foundation Lab Readiness | In progress | Confirm lab host, topology inputs, toolchain, config conventions, benchmark matrix | None |
-| 01 - XDP Data Plane Skeleton | Planned | Build verifier-safe XDP parser, shared structs, maps, counters, event stub | Phase 00 |
+| 00 - Foundation Lab Readiness | Ready for Phase 01 with gaps carried | Confirm lab host, topology inputs, toolchain, config conventions, benchmark matrix | None |
+| 01 - XDP Data Plane Skeleton | Done | Build verifier-safe XDP parser, shared structs, maps, counters, event stub | Phase 00 |
 | 02 - Agent Lifecycle | Planned | Load, attach, rollback, pinned maps, metrics, last-valid snapshot | Phase 01 |
 | 03 - Policy Snapshot Map Sync | Planned | Validate and atomically apply immutable policy snapshots to eBPF maps | Phase 01, 02 |
 | 04 - DEVMAP Forwarding and Service Allowlist | Planned | L2 rewrite, DEVMAP redirect, route/neighbor resolution, fail-closed forwarding | Phase 01, 02, 03 |
@@ -16,11 +16,10 @@
 | 09 - Telegram ISP Runbook | Planned | Telegram alert delivery, dedupe/retry, manual ISP escalation evidence | Phase 05, 06, 07, 08 |
 | 10 - Hardening Benchmark UAT | Planned | Hardening, retention, benchmark report, UAT, runbooks, final acceptance | All prior phases |
 
-## Current Phase 0 Exit Criteria
+## Carried Readiness Gaps
 
-- Lab host inventory recorded with kernel, BTF, eBPF toolchain, Go, PostgreSQL, Prometheus, NIC, link, queue, route, and neighbor state.
-- Required protected backend service table exists with TODO placeholders and no inferred services.
-- Benchmark matrix covers drop path, allowlist miss, blacklist hit, UDP/SYN/ICMP flood, neighbor unresolved, and full DEVMAP redirect path.
-- Config and secret baseline defines required env keys and redaction expectations.
-- Gaps are explicit before Phase 01 and before any production readiness claim.
-
+- Protected backend service inventory is still missing and remains a blocker before Phase 04.
+- WAN/LAN/output interface roles are still not formally assigned; no XDP attach should target a production NIC yet.
+- PostgreSQL and Prometheus binaries are still missing on the lab target.
+- Native XDP attach capability and throughput benchmarks have not been run.
+- Phase 01 verification completed build/load/test-run only and intentionally did not attach to any interface.
