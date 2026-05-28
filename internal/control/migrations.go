@@ -14,10 +14,11 @@ type Migration struct {
 	SQL     string
 }
 
-var Migrations = []Migration{{
-	Version: 1,
-	Name:    "phase05_control_core",
-	SQL: `
+var Migrations = []Migration{
+	{
+		Version: 1,
+		Name:    "phase05_control_core",
+		SQL: `
 CREATE TABLE app_users (
     id uuid PRIMARY KEY,
     username text NOT NULL UNIQUE,
@@ -245,7 +246,44 @@ CREATE TABLE audit_events_default PARTITION OF audit_events DEFAULT;
 CREATE INDEX audit_events_actor_idx ON audit_events(actor_id, created_at);
 CREATE INDEX audit_events_entity_idx ON audit_events(entity_type, entity_id, created_at);
 `,
-}}
+	},
+	{
+		Version: 2,
+		Name:    "phase06_observability_events",
+		SQL: `
+CREATE TABLE security_events (
+    id uuid PRIMARY KEY,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    event_time timestamptz NOT NULL DEFAULT now(),
+    agent_id uuid REFERENCES agents(id) ON DELETE SET NULL,
+    mono_ts_ns bigint NOT NULL DEFAULT 0,
+    policy_version bigint NOT NULL DEFAULT 0,
+    src_ip inet NOT NULL,
+    src_prefix24 inet NOT NULL,
+    dst_ip inet NOT NULL,
+    src_port integer NOT NULL DEFAULT 0,
+    dst_port integer NOT NULL DEFAULT 0,
+    protocol integer NOT NULL DEFAULT 0,
+    tcp_flags integer NOT NULL DEFAULT 0,
+    action integer NOT NULL DEFAULT 0,
+    reason integer NOT NULL DEFAULT 0,
+    service_id bigint NOT NULL DEFAULT 0,
+    rule_id bigint NOT NULL DEFAULT 0,
+    pkt_len integer NOT NULL DEFAULT 0,
+    sample_rate integer NOT NULL DEFAULT 1,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX security_events_time_idx ON security_events(event_time DESC);
+CREATE INDEX security_events_agent_time_idx ON security_events(agent_id, event_time DESC);
+CREATE INDEX security_events_service_time_idx ON security_events(service_id, event_time DESC);
+CREATE INDEX security_events_rule_time_idx ON security_events(rule_id, event_time DESC);
+CREATE INDEX security_events_action_reason_time_idx ON security_events(action, reason, event_time DESC);
+CREATE INDEX security_events_src_ip_time_idx ON security_events(src_ip, event_time DESC);
+CREATE INDEX security_events_src_prefix24_time_idx ON security_events(src_prefix24, event_time DESC);
+CREATE INDEX security_events_dst_port_time_idx ON security_events(dst_port, event_time DESC);
+`,
+	},
+}
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if pool == nil {

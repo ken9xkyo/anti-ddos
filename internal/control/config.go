@@ -13,6 +13,7 @@ const (
 	defaultControlAddr = "127.0.0.1:8080"
 	defaultSessionTTL  = 12 * time.Hour
 	defaultXDPObject   = "build/bpf/xdp_data_plane.bpf.o"
+	defaultAgentStale  = 30 * time.Second
 )
 
 type Config struct {
@@ -21,6 +22,9 @@ type Config struct {
 	SessionTTL       time.Duration
 	XDPObject        string
 	AgentSharedToken string
+	PrometheusURL    string
+	AgentStaleAfter  time.Duration
+	EventSampleDenom uint32
 }
 
 func LoadConfigFromEnv() Config {
@@ -30,6 +34,9 @@ func LoadConfigFromEnv() Config {
 		SessionTTL:       parseDurationEnv("ANTI_DDOS_SESSION_TTL", defaultSessionTTL),
 		XDPObject:        envOrDefault("ANTI_DDOS_XDP_OBJECT", defaultXDPObject),
 		AgentSharedToken: strings.TrimSpace(os.Getenv("ANTI_DDOS_AGENT_SHARED_TOKEN")),
+		PrometheusURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("ANTI_DDOS_PROMETHEUS_URL")), "/"),
+		AgentStaleAfter:  parseDurationEnv("ANTI_DDOS_AGENT_STALE_AFTER", defaultAgentStale),
+		EventSampleDenom: uint32(parseUint64Env("ANTI_DDOS_EVENT_SAMPLE_DENOM", 1)),
 	}
 }
 
@@ -46,6 +53,9 @@ func (c Config) Validate(requireDB bool) error {
 	}
 	if strings.TrimSpace(c.XDPObject) == "" {
 		errs = append(errs, errors.New("ANTI_DDOS_XDP_OBJECT is required"))
+	}
+	if c.AgentStaleAfter <= 0 {
+		errs = append(errs, fmt.Errorf("ANTI_DDOS_AGENT_STALE_AFTER must be positive, got %s", c.AgentStaleAfter))
 	}
 	return errors.Join(errs...)
 }
@@ -70,4 +80,16 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
+}
+
+func parseUint64Env(key string, fallback uint64) uint64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

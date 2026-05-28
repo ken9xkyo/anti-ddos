@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -8,29 +9,43 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Server struct {
-	store  *Store
-	cfg    Config
-	logger *slog.Logger
-	mux    *http.ServeMux
+	store   *Store
+	cfg     Config
+	logger  *slog.Logger
+	mux     *http.ServeMux
+	metrics *ControlMetrics
+	prom    *PrometheusClient
 }
 
 func NewServer(store *Store, cfg Config, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{store: store, cfg: cfg, logger: logger, mux: http.NewServeMux()}
+	metrics, err := NewControlMetrics()
+	if err != nil {
+		logger.Warn("control metrics disabled", "error", err)
+	}
+	s := &Server{store: store, cfg: cfg, logger: logger, mux: http.NewServeMux(), metrics: metrics, prom: NewPrometheusClient(cfg.PrometheusURL, metrics)}
 	s.routes()
 	return s
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	start := time.Now()
+	mw := &metricResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	s.mux.ServeHTTP(mw, r)
+	if s.metrics != nil {
+		s.metrics.ObserveHTTP(r.Method, routeName(r), mw.status, time.Since(start))
+	}
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok\n"))
@@ -51,8 +66,32 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/snapshots/build", s.handleBuildSnapshot)
 	s.mux.HandleFunc("/v1/snapshots/rollback", s.handleRollback)
 	s.mux.HandleFunc("/v1/audit", s.handleAudit)
+	s.mux.HandleFunc("/v1/security-events", s.handleSecurityEvents)
+	s.mux.HandleFunc("/v1/security-events/summary", s.handleSecurityEventSummary)
+	s.mux.HandleFunc("/v1/security-events/investigate", s.handleSecurityEventInvestigate)
+	s.mux.HandleFunc("/v1/dashboard/overview", s.handleDashboardOverview)
+	s.mux.HandleFunc("/v1/dashboard/agents", s.handleDashboardAgents)
+	s.mux.HandleFunc("/v1/dashboard/services", s.handleDashboardServices)
+	s.mux.HandleFunc("/v1/dashboard/rules", s.handleDashboardRules)
 	s.mux.HandleFunc("/v1/agents/register", s.handleAgentRegister)
 	s.mux.HandleFunc("/v1/agents/", s.handleAgentSubroute)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if s.metrics == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("metrics disabled"))
+		return
+	}
+	ctx, cancel := contextWithTimeout(r, 2*time.Second)
+	defer cancel()
+	if err := s.store.RefreshControlMetrics(ctx, s.metrics, s.cfg.AgentStaleAfter); err != nil {
+		s.logger.Warn("control metrics refresh failed", "error", err)
+	}
+	promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{Registry: s.metrics.Registry()}).ServeHTTP(w, r)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +467,20 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		}
 		err := s.store.RecordAgentApply(r.Context(), agentID, req)
 		writeResult(w, map[string]bool{"ok": true}, err)
+	case "events":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var req SecurityEventBatch
+		if !decodeJSON(w, r, &req) {
+			if s.metrics != nil {
+				s.metrics.IncSecurityEventReject("decode")
+			}
+			return
+		}
+		result, err := s.store.IngestSecurityEvents(r.Context(), agentID, req, s.metrics)
+		writeResult(w, result, err)
 	default:
 		http.NotFound(w, r)
 	}
@@ -504,6 +557,62 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+}
+
+func contextWithTimeout(r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), timeout)
+}
+
+func routeName(r *http.Request) string {
+	path := r.URL.Path
+	switch {
+	case path == "/metrics":
+		return "/metrics"
+	case path == "/healthz":
+		return "/healthz"
+	case path == "/v1/auth/login":
+		return "/v1/auth/login"
+	case path == "/v1/auth/logout":
+		return "/v1/auth/logout"
+	case path == "/v1/me":
+		return "/v1/me"
+	case path == "/v1/users":
+		return "/v1/users"
+	case strings.HasPrefix(path, "/v1/users/"):
+		return "/v1/users/{id}"
+	case path == "/v1/services":
+		return "/v1/services"
+	case strings.HasPrefix(path, "/v1/services/"):
+		return "/v1/services/{id}"
+	case path == "/v1/forwarding-policies":
+		return "/v1/forwarding-policies"
+	case path == "/v1/whitelist":
+		return "/v1/whitelist"
+	case path == "/v1/rules":
+		return "/v1/rules"
+	case path == "/v1/blacklist":
+		return "/v1/blacklist"
+	case path == "/v1/feed-sources":
+		return "/v1/feed-sources"
+	case strings.HasPrefix(path, "/v1/snapshots"):
+		return "/v1/snapshots"
+	case path == "/v1/audit":
+		return "/v1/audit"
+	case strings.HasPrefix(path, "/v1/security-events"):
+		return "/v1/security-events"
+	case strings.HasPrefix(path, "/v1/dashboard"):
+		return "/v1/dashboard"
+	case path == "/v1/agents/register":
+		return "/v1/agents/register"
+	case strings.HasPrefix(path, "/v1/agents/"):
+		parts := strings.Split(strings.TrimPrefix(path, "/v1/agents/"), "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return "/v1/agents/{id}/" + parts[1]
+		}
+		return "/v1/agents/{id}"
+	default:
+		return "unknown"
+	}
 }
 
 func NewHTTPServer(store *Store, cfg Config, logger *slog.Logger) *http.Server {

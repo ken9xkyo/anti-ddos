@@ -322,6 +322,135 @@ type AgentApplyRequest struct {
 	DevmapStats   json.RawMessage `json:"devmap_stats,omitempty"`
 }
 
+type SecurityEventBatch struct {
+	Events []SecurityEventInput `json:"events"`
+}
+
+type SecurityEventInput struct {
+	EventTime     time.Time       `json:"event_time,omitempty"`
+	MonoTSNS      uint64          `json:"mono_ts_ns,omitempty"`
+	PolicyVersion uint32          `json:"policy_version,omitempty"`
+	SrcIP         string          `json:"src_ip"`
+	DstIP         string          `json:"dst_ip"`
+	SrcPort       uint16          `json:"src_port,omitempty"`
+	DstPort       uint16          `json:"dst_port,omitempty"`
+	Protocol      uint8           `json:"protocol,omitempty"`
+	TCPFlags      uint8           `json:"tcp_flags,omitempty"`
+	Action        uint8           `json:"action,omitempty"`
+	Reason        uint8           `json:"reason,omitempty"`
+	ServiceID     uint32          `json:"service_id,omitempty"`
+	RuleID        uint32          `json:"rule_id,omitempty"`
+	PktLen        uint32          `json:"pkt_len,omitempty"`
+	SampleRate    uint32          `json:"sample_rate,omitempty"`
+	Metadata      json.RawMessage `json:"metadata,omitempty"`
+}
+
+type SecurityEvent struct {
+	ID            string          `json:"id"`
+	ReceivedAt    time.Time       `json:"received_at"`
+	EventTime     time.Time       `json:"event_time"`
+	AgentID       string          `json:"agent_id,omitempty"`
+	MonoTSNS      uint64          `json:"mono_ts_ns,omitempty"`
+	PolicyVersion uint32          `json:"policy_version,omitempty"`
+	SrcIP         string          `json:"src_ip"`
+	SrcPrefix24   string          `json:"src_prefix24"`
+	DstIP         string          `json:"dst_ip"`
+	SrcPort       uint16          `json:"src_port,omitempty"`
+	DstPort       uint16          `json:"dst_port,omitempty"`
+	Protocol      uint8           `json:"protocol,omitempty"`
+	TCPFlags      uint8           `json:"tcp_flags,omitempty"`
+	Action        uint8           `json:"action,omitempty"`
+	Reason        uint8           `json:"reason,omitempty"`
+	ServiceID     uint32          `json:"service_id,omitempty"`
+	RuleID        uint32          `json:"rule_id,omitempty"`
+	PktLen        uint32          `json:"pkt_len,omitempty"`
+	SampleRate    uint32          `json:"sample_rate,omitempty"`
+	Metadata      json.RawMessage `json:"metadata,omitempty"`
+}
+
+type SecurityEventIngestResult struct {
+	Accepted int `json:"accepted"`
+}
+
+type SecurityEventSummary struct {
+	WindowSeconds int                `json:"window_seconds"`
+	Total         uint64             `json:"total"`
+	TopSources    []SecurityEventTop `json:"top_sources"`
+	TopPorts      []SecurityEventTop `json:"top_ports"`
+	ByDecision    []SecurityEventTop `json:"by_decision"`
+}
+
+type SecurityEventTop struct {
+	Key     string `json:"key"`
+	Count   uint64 `json:"count"`
+	Packets uint64 `json:"packets,omitempty"`
+	Bytes   uint64 `json:"bytes,omitempty"`
+}
+
+type DashboardOverview struct {
+	GeneratedAt       time.Time              `json:"generated_at"`
+	Prometheus        PrometheusStatus       `json:"prometheus"`
+	Traffic           DashboardTraffic       `json:"traffic"`
+	DecisionRates     map[string]float64     `json:"decision_rates"`
+	SecurityEvents    SecurityEventSummary   `json:"security_events"`
+	AgentSummary      DashboardAgentSummary  `json:"agents"`
+	SnapshotVersion   uint32                 `json:"snapshot_version"`
+	LatestApplyStatus []DashboardApplyStatus `json:"latest_apply_status"`
+}
+
+type PrometheusStatus struct {
+	Configured bool   `json:"configured"`
+	Healthy    bool   `json:"healthy"`
+	Error      string `json:"error,omitempty"`
+}
+
+type DashboardTraffic struct {
+	PPS float64 `json:"pps"`
+	BPS float64 `json:"bps"`
+	CPS float64 `json:"cps"`
+}
+
+type DashboardAgentSummary struct {
+	Total int `json:"total"`
+	Stale int `json:"stale"`
+}
+
+type DashboardApplyStatus struct {
+	AgentID       string    `json:"agent_id"`
+	Hostname      string    `json:"hostname"`
+	PolicyVersion uint32    `json:"policy_version"`
+	Status        string    `json:"status"`
+	ErrorStage    string    `json:"error_stage,omitempty"`
+	ErrorReason   string    `json:"error_reason,omitempty"`
+	ReportedAt    time.Time `json:"reported_at"`
+}
+
+type DashboardAgent struct {
+	ID                  string                `json:"id"`
+	Hostname            string                `json:"hostname"`
+	Status              string                `json:"status"`
+	XDPMode             string                `json:"xdp_mode"`
+	DevmapSupport       bool                  `json:"devmap_support"`
+	ActivePolicyVersion uint32                `json:"active_policy_version"`
+	LastSeenAt          *time.Time            `json:"last_seen_at,omitempty"`
+	Stale               bool                  `json:"stale"`
+	MapUtilization      json.RawMessage       `json:"map_utilization,omitempty"`
+	Interfaces          []AgentInterface      `json:"interfaces,omitempty"`
+	LatestApply         *DashboardApplyStatus `json:"latest_apply,omitempty"`
+}
+
+type DashboardService struct {
+	Service
+	Counters    map[string]float64 `json:"counters,omitempty"`
+	ApplyStatus string             `json:"apply_status,omitempty"`
+}
+
+type DashboardRule struct {
+	Rule
+	TTLRemainingSeconds int64              `json:"ttl_remaining_seconds,omitempty"`
+	Counters            map[string]float64 `json:"counters,omitempty"`
+}
+
 type RollbackRequest struct {
 	Reason        string `json:"reason"`
 	TargetVersion uint32 `json:"target_version"`
