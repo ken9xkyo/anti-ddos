@@ -29,6 +29,27 @@ Thiết kế và triển khai luồng apply immutable policy snapshot vào eBPF 
 | P03-T11 | Triển khai apply ack/failure payload | Control Plane biết trạng thái apply | Ack có version, status, map stats, redirect stats, error reason | P03-T09 |
 | P03-T12 | Kiểm thử whitelist/blacklist precedence input | Đảm bảo whitelist precedence trước blacklist/rate limit | Snapshot fixture conflict và expected active maps | P03-T06 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase3-verify` PASS; report ở `reports/phase-03-policy-snapshot-map-sync.md`. Phase này dùng local/mock policy snapshot và eBPF map tests, chưa tích hợp Control Plane API.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P03-T01 | Done | `PolicySnapshot` v1 định nghĩa schema version, version, checksum, object checksum, feature flags, runtime, whitelist, blacklist, services và rules. |
+| P03-T02 | Done | `CanonicalPolicyChecksum` normalize/sort snapshot, loại checksum khỏi canonical payload và dùng SHA-256 lowercase hex. |
+| P03-T03 | Done | `VerifyPolicySnapshot` reject stale version, unsupported feature flag, object checksum mismatch, IPv6 input và TTL expired. |
+| P03-T04 | Done | Capacity/memory estimator cover whitelist, blacklist, service allowlist, rule config và `tx_devmap`; unit tests dùng capacity override nhỏ để reject overflow. |
+| P03-T05 | Done | Service redirect metadata validate output ifindex, devmap key capacity, resolved neighbor status và non-zero src/dst MAC. |
+| P03-T06 | Done | `ApplyPolicySnapshot` clear/populate inactive whitelist, blacklist, service allowlist và rule config slot. |
+| P03-T07 | Done | `tx_devmap` updater validate shared key ownership, backup touched keys và rollback nếu update lỗi. |
+| P03-T08 | Done | Runtime flip update `runtime_config[0]` bằng active slot mới, policy version, malformed policy và sample denom sau khi maps/devmap thành công. |
+| P03-T09 | Done | Populate failure clear inactive slot, rollback touched devmap keys và giữ `runtime_config.active_slot`/policy version cũ. |
+| P03-T10 | Done | Last-valid snapshot wrapper persist sau flip thành công, chứa embedded full policy snapshot và vẫn đọc được legacy phase 02 snapshot. |
+| P03-T11 | Done | `PolicyApplyResult` trả version, previous version, status, active slot, map stats, devmap stats, error stage và reason. |
+| P03-T12 | Done | XDP fixture cover blacklist hit và whitelist global override blacklist trước khi service allowlist fail-closed. |
+
 ## Tiêu chí chấp nhận
 
 - Snapshot sai checksum, version cũ, unsupported feature, redirect target sai hoặc vượt capacity bị reject trước khi ghi active policy.

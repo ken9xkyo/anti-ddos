@@ -18,26 +18,30 @@ const (
 )
 
 type Config struct {
-	WANIface             string
-	XDPObject            string
-	XDPMode              string
-	AllowGenericFallback bool
-	MetricsAddr          string
-	BPFPinDir            string
-	SnapshotPath         string
-	SafeDetachOnExit     bool
+	WANIface                string
+	XDPObject               string
+	XDPMode                 string
+	AllowGenericFallback    bool
+	MetricsAddr             string
+	BPFPinDir               string
+	SnapshotPath            string
+	BootstrapPolicyPath     string
+	PolicyMemoryBudgetBytes uint64
+	SafeDetachOnExit        bool
 }
 
 func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
-		WANIface:             os.Getenv("ANTI_DDOS_WAN_IFACE"),
-		XDPObject:            envOrDefault("ANTI_DDOS_XDP_OBJECT", defaultXDPObject),
-		XDPMode:              strings.ToLower(envOrDefault("ANTI_DDOS_XDP_MODE", defaultXDPMode)),
-		AllowGenericFallback: parseBoolEnv("ANTI_DDOS_XDP_ALLOW_GENERIC_FALLBACK", false),
-		MetricsAddr:          envOrDefault("ANTI_DDOS_METRICS_ADDR", defaultMetricsAddr),
-		BPFPinDir:            envOrDefault("ANTI_DDOS_BPF_PIN_DIR", defaultBPFPinDir),
-		SnapshotPath:         envOrDefault("ANTI_DDOS_SNAPSHOT_PATH", defaultSnapshotPath),
-		SafeDetachOnExit:     parseBoolEnv("ANTI_DDOS_SAFE_DETACH_ON_EXIT", false),
+		WANIface:                os.Getenv("ANTI_DDOS_WAN_IFACE"),
+		XDPObject:               envOrDefault("ANTI_DDOS_XDP_OBJECT", defaultXDPObject),
+		XDPMode:                 strings.ToLower(envOrDefault("ANTI_DDOS_XDP_MODE", defaultXDPMode)),
+		AllowGenericFallback:    parseBoolEnv("ANTI_DDOS_XDP_ALLOW_GENERIC_FALLBACK", false),
+		MetricsAddr:             envOrDefault("ANTI_DDOS_METRICS_ADDR", defaultMetricsAddr),
+		BPFPinDir:               envOrDefault("ANTI_DDOS_BPF_PIN_DIR", defaultBPFPinDir),
+		SnapshotPath:            envOrDefault("ANTI_DDOS_SNAPSHOT_PATH", defaultSnapshotPath),
+		BootstrapPolicyPath:     strings.TrimSpace(os.Getenv("ANTI_DDOS_BOOTSTRAP_POLICY_PATH")),
+		PolicyMemoryBudgetBytes: parseUint64Env("ANTI_DDOS_POLICY_MEMORY_BUDGET_BYTES", 0),
+		SafeDetachOnExit:        parseBoolEnv("ANTI_DDOS_SAFE_DETACH_ON_EXIT", false),
 	}
 	return cfg, cfg.Validate()
 }
@@ -111,6 +115,18 @@ func parseBoolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseUint64Env(key string, fallback uint64) uint64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
 		return fallback
 	}

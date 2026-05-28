@@ -306,11 +306,42 @@ static __always_inline int parse_packet(struct xdp_md *ctx,
 	return parse_l4(l4, data_end, meta);
 }
 
+static __always_inline struct cidr_policy_value *
+lookup_active_whitelist(__u32 active_slot, __u32 src_v4)
+{
+	struct lpm_v4_key key = {
+		.prefixlen = 32,
+		.addr = src_v4,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&whitelist_v4_a, &key);
+
+	return bpf_map_lookup_elem(&whitelist_v4_b, &key);
+}
+
+static __always_inline struct cidr_policy_value *
+lookup_active_blacklist(__u32 active_slot, __u32 src_v4)
+{
+	struct lpm_v4_key key = {
+		.prefixlen = 32,
+		.addr = src_v4,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&blacklist_v4_a, &key);
+
+	return bpf_map_lookup_elem(&blacklist_v4_b, &key);
+}
+
 SEC("xdp")
 int xdp_entry(struct xdp_md *ctx)
 {
 	struct packet_meta meta = {};
 	struct runtime_config_value *cfg;
+	struct cidr_policy_value *whitelist;
+	struct cidr_policy_value *blacklist;
+	__u8 whitelist_applies = 0;
 	__u32 cfg_key = 0;
 	int parse_result;
 
@@ -323,6 +354,17 @@ int xdp_entry(struct xdp_md *ctx)
 		meta.action = ACTION_DROP;
 		meta.reason = REASON_MAP_ERROR;
 		count_packet(&meta);
+		return XDP_DROP;
+	}
+	if (cfg->active_slot > 1) {
+		void *data = (void *)(long)ctx->data;
+		void *data_end = (void *)(long)ctx->data_end;
+
+		meta.pkt_len = packet_len(data, data_end);
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_MAP_ERROR;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
 		return XDP_DROP;
 	}
 
@@ -347,6 +389,20 @@ int xdp_entry(struct xdp_md *ctx)
 	if (meta.is_fragment) {
 		meta.action = ACTION_DROP;
 		meta.reason = REASON_FRAGMENT;
+		count_packet(&meta);
+		maybe_sample(&meta, cfg);
+		return XDP_DROP;
+	}
+
+	whitelist = lookup_active_whitelist(cfg->active_slot, meta.src_v4);
+	if (whitelist && whitelist->scope == POLICY_SCOPE_GLOBAL)
+		whitelist_applies = 1;
+
+	blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
+	if (!whitelist_applies && blacklist && blacklist->action == ACTION_DROP) {
+		meta.rule_id = blacklist->rule_id;
+		meta.action = ACTION_DROP;
+		meta.reason = REASON_BLACKLIST;
 		count_packet(&meta);
 		maybe_sample(&meta, cfg);
 		return XDP_DROP;

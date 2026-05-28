@@ -89,6 +89,26 @@ func LoadAndAttach(cfg Config, metrics *Metrics, logger *slog.Logger) (*Runtime,
 	if metrics != nil {
 		metrics.SetSnapshotVersion(snapshot.PolicyVersion)
 	}
+	if cfg.BootstrapPolicyPath != "" {
+		bootstrapPolicy, err := LoadPolicySnapshot(cfg.BootstrapPolicyPath)
+		if err != nil {
+			coll.Close()
+			return nil, fmt.Errorf("load bootstrap policy snapshot: %w", err)
+		}
+		applyResult, err := ApplyPolicySnapshot(rt, bootstrapPolicy, PolicyApplyOptions{
+			SnapshotPath:      cfg.SnapshotPath,
+			ObjectChecksum:    objectChecksum,
+			MemoryBudgetBytes: cfg.PolicyMemoryBudgetBytes,
+			Metrics:           metrics,
+		})
+		if err != nil {
+			coll.Close()
+			return nil, fmt.Errorf("apply bootstrap policy snapshot version %d at %s failed in %s: %w", bootstrapPolicy.Version, cfg.BootstrapPolicyPath, applyResult.ErrorStage, err)
+		}
+		if logger != nil {
+			logger.Info("applied bootstrap policy snapshot", "version", applyResult.Version, "active_slot", applyResult.ActiveSlot)
+		}
+	}
 
 	if err := os.Remove(cfg.ProgramPinPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		coll.Close()

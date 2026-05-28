@@ -21,8 +21,31 @@ func TestLoadConfigFromEnvDefaults(t *testing.T) {
 	if cfg.AllowGenericFallback {
 		t.Fatal("generic fallback should default to false")
 	}
+	if cfg.BootstrapPolicyPath != "" {
+		t.Fatalf("unexpected bootstrap policy path %q", cfg.BootstrapPolicyPath)
+	}
+	if cfg.PolicyMemoryBudgetBytes != 0 {
+		t.Fatalf("unexpected policy memory budget %d", cfg.PolicyMemoryBudgetBytes)
+	}
 	if cfg.LinkPinPath() == cfg.ProgramPinPath() {
 		t.Fatal("link and program pins must be distinct")
+	}
+}
+
+func TestLoadConfigFromEnvPolicyOptions(t *testing.T) {
+	t.Setenv("ANTI_DDOS_WAN_IFACE", "veth-test")
+	t.Setenv("ANTI_DDOS_BOOTSTRAP_POLICY_PATH", "/tmp/policy.json")
+	t.Setenv("ANTI_DDOS_POLICY_MEMORY_BUDGET_BYTES", "4096")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv() error = %v", err)
+	}
+	if cfg.BootstrapPolicyPath != "/tmp/policy.json" {
+		t.Fatalf("unexpected bootstrap policy path %q", cfg.BootstrapPolicyPath)
+	}
+	if cfg.PolicyMemoryBudgetBytes != 4096 {
+		t.Fatalf("unexpected policy memory budget %d", cfg.PolicyMemoryBudgetBytes)
 	}
 }
 

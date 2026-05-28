@@ -25,6 +25,8 @@ struct test_env {
 	struct bpf_object *obj;
 	int prog_fd;
 	int runtime_config_fd;
+	int whitelist_v4_a_fd;
+	int blacklist_v4_a_fd;
 	int drop_counters_fd;
 	int nr_cpus;
 	size_t counter_stride;
@@ -136,6 +138,8 @@ static int open_env(const char *obj_path, struct test_env *env)
 	memset(env, 0, sizeof(*env));
 	env->prog_fd = -1;
 	env->runtime_config_fd = -1;
+	env->whitelist_v4_a_fd = -1;
+	env->blacklist_v4_a_fd = -1;
 	env->drop_counters_fd = -1;
 	env->nr_cpus = libbpf_num_possible_cpus();
 	env->counter_stride = roundup8(sizeof(struct counter_value));
@@ -170,9 +174,13 @@ static int open_env(const char *obj_path, struct test_env *env)
 	}
 	env->prog_fd = bpf_program__fd(prog);
 	env->runtime_config_fd = map_fd_by_name(env->obj, "runtime_config");
+	env->whitelist_v4_a_fd = map_fd_by_name(env->obj, "whitelist_v4_a");
+	env->blacklist_v4_a_fd = map_fd_by_name(env->obj, "blacklist_v4_a");
 	env->drop_counters_fd = map_fd_by_name(env->obj, "drop_counters");
 
-	if (env->prog_fd < 0 || env->runtime_config_fd < 0 || env->drop_counters_fd < 0)
+	if (env->prog_fd < 0 || env->runtime_config_fd < 0 ||
+	    env->whitelist_v4_a_fd < 0 || env->blacklist_v4_a_fd < 0 ||
+	    env->drop_counters_fd < 0)
 		return -1;
 
 	return 0;
@@ -197,6 +205,30 @@ static int seed_runtime_config(struct test_env *env)
 
 	if (bpf_map_update_elem(env->runtime_config_fd, &key, &cfg, BPF_ANY) != 0) {
 		fprintf(stderr, "failed to seed runtime_config: %s\n", strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+
+static int upsert_cidr_policy(int map_fd, const char *ip, uint32_t entry_id,
+			      uint32_t action, uint32_t scope, uint32_t rule_id)
+{
+	struct lpm_v4_key key = {
+		.prefixlen = 32,
+		.addr = inet_addr(ip),
+	};
+	struct cidr_policy_value value = {
+		.entry_id = entry_id,
+		.priority = 100,
+		.action = action,
+		.scope = scope,
+		.rule_id = rule_id,
+	};
+
+	if (bpf_map_update_elem(map_fd, &key, &value, BPF_ANY) != 0) {
+		fprintf(stderr, "failed to update cidr policy %s: %s\n", ip,
+			strerror(errno));
 		return -1;
 	}
 
@@ -521,6 +553,26 @@ int main(int argc, char **argv)
 		goto out;
 
 	if (seed_runtime_config(&env) != 0)
+		goto out;
+
+	if (upsert_cidr_policy(env.blacklist_v4_a_fd, "198.51.100.10", 1,
+			       ACTION_DROP, POLICY_SCOPE_GLOBAL, 77) != 0)
+		goto out;
+
+	pkt = make_tcp_syn();
+	key = key_for(REASON_BLACKLIST, ACTION_DROP, L4_TCP);
+	key.rule_id = 77;
+	if (expect_decision(&env, "blacklist source drop", &pkt, XDP_DROP, &key) != 0)
+		goto out;
+
+	if (upsert_cidr_policy(env.whitelist_v4_a_fd, "198.51.100.10", 2,
+			       ACTION_PASS, POLICY_SCOPE_GLOBAL, 0) != 0)
+		goto out;
+
+	pkt = make_tcp_syn();
+	key = key_for(REASON_NOT_ALLOWED_SERVICE, ACTION_DROP, L4_TCP);
+	if (expect_decision(&env, "whitelist overrides blacklist before service allowlist",
+			    &pkt, XDP_DROP, &key) != 0)
 		goto out;
 
 	pkt = make_truncated_eth();
