@@ -1,0 +1,182 @@
+# Trien Khai Lab Stack Bang Docker Compose
+
+Tai lieu nay huong dan chay full lab stack cho Anti-DDoS management/control plane. Stack gom PostgreSQL, Control API, Prometheus, Grafana va Admin Dashboard. Node Agent khong nam trong compose vi Agent can quyen eBPF/XDP va interface host.
+
+## Kien Truc Runtime
+
+```mermaid
+flowchart LR
+    Dashboard["Admin Dashboard :8088"] --> API["Control API :8080"]
+    API --> DB["PostgreSQL :5432"]
+    API --> Prom["Prometheus :9090"]
+    Grafana["Grafana :3000"] --> Prom
+    Prom --> API
+    Prom -. scrape host.docker.internal:9091 .-> Agent["Node Agent on host"]
+    Agent -. sync .-> API
+```
+
+Tat ca port public mac dinh bind ve `127.0.0.1`. Cac service noi bo noi chuyen qua Docker network `anti-ddos-mgmt`.
+
+## File Lien Quan
+
+| File | Muc dich |
+|---|---|
+| `docker-compose.yml` | Dinh nghia full lab stack va healthcheck |
+| `.env.example` | Mau bien moi truong, chi chua placeholder |
+| `deploy/docker/control-api.Dockerfile` | Multi-stage build cho `control-api` va `control-admin` |
+| `deploy/docker/admin-dashboard.Dockerfile` | Build React/Vite va serve bang Nginx |
+| `deploy/prometheus/compose-prometheus.yml` | Prometheus config cho compose |
+| `deploy/grafana/provisioning/` | Datasource Prometheus va dashboard provider |
+
+## Chuan Bi
+
+1. Cai Docker Engine va Docker Compose plugin.
+2. Tao env local:
+
+```bash
+cp .env.example .env
+```
+
+3. Sua cac gia tri `change-me-*` trong `.env`.
+
+Khong commit `.env`. Repo chi track `.env.example`.
+
+## Khoi Dong Stack
+
+```bash
+docker compose config
+docker compose build control-api admin-dashboard
+docker compose up -d
+```
+
+Docker Compose v2 co the bao warning rang truong `version` da obsolete. File hien van giu `version: "3.9"` de dung theo baseline compose cua du an; warning nay khong lam fail cau hinh.
+
+Control API tu chay PostgreSQL migrations khi `control-api serve` start.
+
+Kiem tra trang thai container:
+
+```bash
+docker compose ps
+docker compose logs -f control-api
+```
+
+Kiem tra endpoint:
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:9090/-/ready
+curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:8088/healthz
+```
+
+## Bootstrap Admin
+
+Sau khi PostgreSQL va Control API healthy, tao Admin dau tien:
+
+```bash
+printf '%s\n' '123@Vtccloud' \
+  | docker compose run --rm --no-deps --entrypoint control-admin control-api \
+      bootstrap --username admin --password-stdin
+```
+
+Lenh nay dung binary `control-admin` da duoc build trong cung image voi Control API va tai su dung `ANTI_DDOS_DB_DSN` tu compose.
+
+Dang nhap:
+
+- Admin Dashboard: `http://127.0.0.1:8088`
+- Username: `admin`
+- Password: gia tri vua truyen qua stdin
+
+Neu bootstrap da chay truoc do, CLI se bao Admin da ton tai. Day la hanh vi mong muon.
+
+## Grafana Va Prometheus
+
+Grafana co san datasource:
+
+- Name: `Prometheus`
+- UID: `DS_PROMETHEUS`
+- URL noi bo: `http://prometheus:9090`
+
+Dashboard `Anti-DDoS P1 Operations` duoc provision tu `deploy/grafana/anti-ddos-p1-dashboard.json`.
+
+Prometheus scrape:
+
+- `control-api:8080` trong Docker network.
+- `host.docker.internal:9091` cho Node Agent chay tren host.
+
+Agent target se `DOWN` cho den khi Agent host chay va bind metrics tai `0.0.0.0:9091`.
+
+## Chay Node Agent Tren Host
+
+Chi chay Agent khi da co interface lab hoac WAN duoc phe duyet. Khong dung lenh nay tren NIC production neu chua co interface role va rollback plan.
+
+```bash
+make phase2-build
+
+sudo env \
+  ANTI_DDOS_WAN_IFACE=<approved-lab-or-wan-iface> \
+  ANTI_DDOS_XDP_OBJECT=build/bpf/xdp_data_plane.bpf.o \
+  ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091 \
+  ANTI_DDOS_CONTROL_URL=http://127.0.0.1:8080 \
+  ANTI_DDOS_AGENT_TOKEN=<same-value-as-ANTI_DDOS_AGENT_SHARED_TOKEN> \
+  build/agent/anti-ddos-agent
+```
+
+`ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync.
+
+## Ports Mac Dinh
+
+| Service | URL |
+|---|---|
+| Admin Dashboard | `http://127.0.0.1:8088` |
+| Control API | `http://127.0.0.1:8080` |
+| Prometheus | `http://127.0.0.1:9090` |
+| Grafana | `http://127.0.0.1:3000` |
+| PostgreSQL | `127.0.0.1:5432` |
+
+Doi port bang `.env` neu host da co service dung port tuong ung.
+
+## Bao Mat Va Gioi Han Lab
+
+- Compose phuc vu lab/dev, khong phai HA production deployment.
+- Cac port bind loopback de tranh expose ra mang ngoai mac dinh.
+- Khong dua raw token, DSN, password that vao repo.
+- Control API va Dashboard container chay non-root, drop capabilities va dung `no-new-privileges`.
+- PostgreSQL, Prometheus va Grafana dung named volume de giu du lieu qua restart.
+- `ANTI_DDOS_XDP_OBJECT` trong Control API container co the tro toi path khong ton tai; khi do snapshot metadata dung checksum `control-object-unavailable`. Agent host van dung object that tu `build/bpf/xdp_data_plane.bpf.o`.
+
+## Lenh Van Hanh
+
+Dung stack:
+
+```bash
+docker compose down
+```
+
+Dung stack va xoa data lab:
+
+```bash
+docker compose down -v
+```
+
+Xem log:
+
+```bash
+docker compose logs -f postgres control-api prometheus grafana admin-dashboard
+```
+
+Kiem tra Prometheus targets:
+
+```bash
+curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active'
+```
+
+## Troubleshooting
+
+| Trieu chung | Huong xu ly |
+|---|---|
+| `control-api` unhealthy | Kiem tra `docker compose logs control-api` va DSN/PostgreSQL health |
+| Admin Dashboard login that bai | Dam bao da bootstrap Admin va dung password moi tao |
+| Grafana khong co du lieu | Kiem tra Prometheus datasource va target `anti-ddos-control` |
+| Agent target `DOWN` | Day la binh thuong neu Agent host chua chay; khi chay Agent can bind `ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091` |
+| Port conflict | Doi `*_PORT` trong `.env` |
