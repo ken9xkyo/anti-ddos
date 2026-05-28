@@ -30,6 +30,27 @@ Xây dựng Node Agent để quản lý lifecycle data plane: load/attach native
 | P02-T11 | Triển khai healthcheck và safe detach policy | Vận hành an toàn khi stop/restart | Health endpoint, uptime metric, optional detach theo config | P02-T09 |
 | P02-T12 | Redact sensitive config/log values | Tránh lộ secret từ agent logs | Log redaction cho token, key, DSN sensitive | P02-T01 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase2-verify` PASS; report ở `reports/phase-02-agent-lifecycle.md`. Verification dùng VETH/netns tạm, không attach vào NIC thật. Agent dùng Go module `github.com/ken9xkyo/anti-ddos`, `github.com/cilium/ebpf v0.17.3` và `github.com/prometheus/client_golang v1.22.0` để tương thích Go `1.22.2`.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P02-T01 | Done | Tạo `cmd/agent/` và `internal/agent/`; binary `build/agent/anti-ddos-agent`; env config loader, JSON structured logs và signal handling. |
+| P02-T02 | Done | Loader dùng `LoadCollectionSpec`, validate `xdp_entry` và map contracts Phase 01 trước khi load collection. |
+| P02-T03 | Done | Attach flow ưu tiên `link.XDPDriverMode`; VETH lifecycle test xác nhận XDP attach bằng `ip -d link`. |
+| P02-T04 | Done | Generic fallback theo `ANTI_DDOS_XDP_ALLOW_GENERIC_FALLBACK`; attach errors có metric theo mode. |
+| P02-T05 | Done | Pin maps/program/link dưới `ANTI_DDOS_BPF_PIN_DIR`; JSON metadata lưu checksum/program/iface/mode cạnh snapshot vì bpffs không hỗ trợ regular JSON file. |
+| P02-T06 | Done | Restart path load pinned link và `Update()` sang program mới; load/attach fail trước update không detach pinned data plane đang chạy. |
+| P02-T07 | Done | Aggregator đọc `drop_counters` per-CPU và cộng packets/bytes theo bounded labels reason/action/proto/service/rule. |
+| P02-T08 | Done | Ringbuf consumer chạy async với deadline/context cancellation, counter events/errors và không block packet path. |
+| P02-T09 | Done | `/metrics` expose agent up, XDP mode, attach errors, packet/byte counters, map capacity/entries/utilization và ringbuf metrics. |
+| P02-T10 | Done | Last-valid snapshot JSON có schema/checksum; agent load hoặc tạo snapshot local tối thiểu và seed `runtime_config[0]`. |
+| P02-T11 | Done | `/healthz` chỉ ready sau load/attach thành công; `ANTI_DDOS_SAFE_DETACH_ON_EXIT` điều khiển detach khi stop. |
+| P02-T12 | Done | Redaction cho key/value chứa token, secret, password, DSN, API key, authorization, cookie, session và token-like strings. |
+
 ## Tiêu chí chấp nhận
 
 - Agent attach XDP native thành công trên interface cấu hình, hoặc fallback generic có metric/cảnh báo khi policy cho phép.
@@ -59,3 +80,4 @@ Xây dựng Node Agent để quản lý lifecycle data plane: load/attach native
 - Safe detach cần theo policy: production thường không tự detach khi stop nếu điều đó làm backend mất protection.
 - Prometheus labels không được chứa raw source IP/CIDR để tránh cardinality cao.
 - Log phải redact secret/config sensitive ngay từ phase này.
+- JSON metadata không ghi trực tiếp vào bpffs; bpffs chỉ dùng để pin BPF maps/programs/links, metadata sidecar nằm cạnh last-valid snapshot.

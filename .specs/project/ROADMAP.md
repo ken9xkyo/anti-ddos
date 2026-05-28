@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 00 - Foundation Lab Readiness | Ready for Phase 01 with gaps carried | Confirm lab host, topology inputs, toolchain, config conventions, benchmark matrix | None |
 | 01 - XDP Data Plane Skeleton | Done | Build verifier-safe XDP parser, shared structs, maps, counters, event stub | Phase 00 |
-| 02 - Agent Lifecycle | Planned | Load, attach, rollback, pinned maps, metrics, last-valid snapshot | Phase 01 |
+| 02 - Agent Lifecycle | Done | Load, attach, rollback, pinned maps, metrics, last-valid snapshot | Phase 01 |
 | 03 - Policy Snapshot Map Sync | Planned | Validate and atomically apply immutable policy snapshots to eBPF maps | Phase 01, 02 |
 | 04 - DEVMAP Forwarding and Service Allowlist | Planned | L2 rewrite, DEVMAP redirect, route/neighbor resolution, fail-closed forwarding | Phase 01, 02, 03 |
 | 05 - Control Plane Core | Planned | API, PostgreSQL, RBAC, audit, protected service registry, rollback | Phase 03, 04 |
@@ -21,5 +21,5 @@
 - Protected backend service inventory is still missing and remains a blocker before Phase 04.
 - WAN/LAN/output interface roles are still not formally assigned; no XDP attach should target a production NIC yet.
 - PostgreSQL and Prometheus binaries are still missing on the lab target.
-- Native XDP attach capability and throughput benchmarks have not been run.
-- Phase 01 verification completed build/load/test-run only and intentionally did not attach to any interface.
+- Native XDP attach capability and throughput benchmarks on real NICs have not been run.
+- Phase 02 verification attached XDP only to temporary VETH lab interfaces and intentionally did not attach to production/lab NICs.
