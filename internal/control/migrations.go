@@ -403,6 +403,70 @@ CREATE INDEX feed_conflicts_source_status_idx ON feed_conflicts(source_id, statu
 CREATE INDEX feed_conflicts_whitelist_idx ON feed_conflicts(whitelist_id, status);
 `,
 	},
+	{
+		Version: 5,
+		Name:    "phase09_telegram_isp_runbook",
+		SQL: `
+CREATE TABLE telegram_configs (
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    bot_token_ref text NOT NULL DEFAULT '',
+    chat_id text NOT NULL DEFAULT '',
+    parse_mode text NOT NULL DEFAULT '',
+    enabled boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE alert_policies (
+    id uuid PRIMARY KEY,
+    alert_type text NOT NULL,
+    severity text NOT NULL,
+    channel text NOT NULL DEFAULT 'telegram',
+    rate_limit_seconds integer NOT NULL DEFAULT 300,
+    max_attempts integer NOT NULL DEFAULT 3,
+    template text NOT NULL DEFAULT '',
+    enabled boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (alert_type, severity, channel)
+);
+CREATE INDEX alert_policies_enabled_idx ON alert_policies(enabled, alert_type, severity);
+
+CREATE TABLE alerts (
+    id uuid PRIMARY KEY,
+    severity text NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+    type text NOT NULL,
+    dedupe_key text NOT NULL,
+    service_id uuid REFERENCES backend_services(id) ON DELETE SET NULL,
+    affected_service text NOT NULL DEFAULT '',
+    vector text NOT NULL DEFAULT '',
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+    recommended_action text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'pending',
+    created_by uuid REFERENCES app_users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    resolved_at timestamptz
+);
+CREATE INDEX alerts_dedupe_created_idx ON alerts(dedupe_key, created_at DESC);
+CREATE INDEX alerts_status_created_idx ON alerts(status, created_at DESC);
+CREATE INDEX alerts_type_severity_idx ON alerts(type, severity);
+
+CREATE TABLE alert_deliveries (
+    id uuid PRIMARY KEY,
+    alert_id uuid NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    channel text NOT NULL DEFAULT 'telegram',
+    status text NOT NULL,
+    attempt integer NOT NULL DEFAULT 0,
+    error text NOT NULL DEFAULT '',
+    response jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    sent_at timestamptz
+);
+CREATE INDEX alert_deliveries_alert_idx ON alert_deliveries(alert_id, created_at);
+CREATE INDEX alert_deliveries_status_idx ON alert_deliveries(status, created_at DESC);
+`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

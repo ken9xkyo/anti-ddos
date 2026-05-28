@@ -535,6 +535,18 @@ WHERE id=$1`, source.ID, feedStatusHealthy, parseErrors, nextRun)
 		if s.metrics != nil {
 			s.metrics.feedSyncErrors.WithLabelValues(boundedMetricValue(source.Name), "sync").Inc()
 		}
+		_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
+			Severity:          "warning",
+			Type:              "feed_failure",
+			DedupeKey:         "feed_failure:" + source.ID,
+			AffectedService:   source.Name,
+			Vector:            "threat_feed_sync",
+			Evidence:          mustJSON(map[string]any{"source_id": source.ID, "source": source.Name, "error": errText}),
+			RecommendedAction: "check feed source connectivity and credentials; last valid entries remain active",
+		})
+		if alertErr != nil {
+			s.logger.Warn("feed failure alert creation failed", "source_id", source.ID, "error", agentRedactedError(alertErr))
+		}
 		return run, runErr
 	}
 	if s.metrics != nil {

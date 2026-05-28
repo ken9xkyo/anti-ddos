@@ -465,6 +465,29 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		Source:             source,
 		Evidence:           evidence,
 	})
+	if err == nil {
+		alertType := "anomaly"
+		if eval.AutoEnforced {
+			alertType = "auto_enforce"
+		}
+		severity := "warning"
+		if eval.AutoEnforced || eval.Score >= autoMinScore {
+			severity = "critical"
+		}
+		_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
+			Severity:          severity,
+			Type:              alertType,
+			DedupeKey:         fmt.Sprintf("%s:%s:%s", alertType, service.ID, strings.Join(signals, ",")),
+			ServiceID:         service.ID,
+			AffectedService:   service.Name,
+			Vector:            strings.Join(signals, ","),
+			Evidence:          evidence,
+			RecommendedAction: recommendedAction,
+		})
+		if alertErr != nil {
+			s.logger.Warn("anomaly alert creation failed", "service_id", service.ID, "error", agentRedactedError(alertErr))
+		}
+	}
 	return eval, err
 }
 

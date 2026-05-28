@@ -30,6 +30,8 @@ type Store struct {
 	logger         *slog.Logger
 	resolver       agent.ForwardingResolver
 	feedHTTPClient *http.Client
+	telegramClient *TelegramClient
+	alertRetryBase time.Duration
 	feedMu         sync.Mutex
 	feedLocks      map[string]*sync.Mutex
 	metrics        *ControlMetrics
@@ -66,6 +68,8 @@ func NewStore(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) *Store {
 		logger:         logger,
 		resolver:       agent.NewNetlinkForwardingResolver(),
 		feedHTTPClient: &http.Client{Timeout: 15 * time.Second},
+		telegramClient: NewTelegramClient(cfg.TelegramAPIURL, &http.Client{Timeout: 5 * time.Second}),
+		alertRetryBase: time.Second,
 		feedLocks:      map[string]*sync.Mutex{},
 	}
 }

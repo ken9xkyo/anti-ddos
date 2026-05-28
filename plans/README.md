@@ -35,6 +35,11 @@ Tài liệu này là chỉ mục cho bộ kế hoạch hoàn thiện P1 MVP theo
 | 09 | `phase-09-telegram-isp-runbook.md` | Telegram alerts, dedupe/retry, manual ISP escalation | Phase 05, 06, 07, 08 |
 | 10 | `phase-10-hardening-benchmark-uat.md` | Hardening, retention, benchmark, UAT, runbooks, final acceptance | Tất cả phase trước |
 
+## Tiến độ triển khai
+
+- Phase 01-09: Done, có verification report trong `reports/`.
+- Phase 10: Pending, bắt đầu sau khi hardening/benchmark/UAT scope được chốt.
+
 ## Truy vết tổng hợp
 
 | PRD | Phase chính |

@@ -28,6 +28,9 @@ type ControlMetrics struct {
 	feedSyncErrors    *prometheus.CounterVec
 	feedEntries       *prometheus.GaugeVec
 	feedConflicts     *prometheus.GaugeVec
+	alertsCreated     *prometheus.CounterVec
+	alertsSent        *prometheus.CounterVec
+	alertsFailed      *prometheus.CounterVec
 }
 
 func NewControlMetrics() (*ControlMetrics, error) {
@@ -89,6 +92,18 @@ func NewControlMetrics() (*ControlMetrics, error) {
 		Name: "anti_ddos_feed_conflicts_active",
 		Help: "Active whitelist/feed conflicts by bounded source name.",
 	}, []string{"source"})
+	m.alertsCreated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_alerts_created_total",
+		Help: "Alert instances created by type and severity.",
+	}, []string{"type", "severity"})
+	m.alertsSent = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_alerts_sent_total",
+		Help: "Successful alert deliveries by channel and severity.",
+	}, []string{"channel", "severity"})
+	m.alertsFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_alerts_failed_total",
+		Help: "Failed alert deliveries by channel and bounded reason.",
+	}, []string{"channel", "reason"})
 
 	for _, collector := range []prometheus.Collector{
 		m.httpRequests,
@@ -105,6 +120,9 @@ func NewControlMetrics() (*ControlMetrics, error) {
 		m.feedSyncErrors,
 		m.feedEntries,
 		m.feedConflicts,
+		m.alertsCreated,
+		m.alertsSent,
+		m.alertsFailed,
 	} {
 		if err := m.registry.Register(collector); err != nil {
 			return nil, err

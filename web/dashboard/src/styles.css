@@ -26,6 +26,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .login-screen {
   min-height: 100vh;
   display: grid;
@@ -242,6 +247,42 @@ input {
   flex-wrap: wrap;
 }
 
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.runbook-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runbook-grid span,
+.payload-box {
+  border: 1px solid #d5dee7;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.runbook-grid span {
+  padding: 9px 10px;
+  color: #334155;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.payload-box {
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #1e293b;
+  font-size: 12px;
+}
+
 .status-pill,
 .freshness,
 .cidr-chip {
@@ -431,6 +472,10 @@ td {
   .wide-panel,
   .list-panel {
     grid-column: span 1;
+  }
+
+  .runbook-grid {
+    grid-template-columns: 1fr;
   }
 
   .single-column,

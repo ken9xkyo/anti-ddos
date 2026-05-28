@@ -151,6 +151,27 @@ const data: DashboardData = {
     whitelist_cidr: '198.51.100.10/32',
     status: 'active',
     detected_at: new Date().toISOString()
+  }],
+  telegramConfig: {
+    bot_token_ref: 'env://TELEGRAM_TOKEN',
+    bot_token_present: true,
+    chat_id: '1234',
+    enabled: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  alerts: [{
+    id: 'al1',
+    severity: 'critical',
+    type: 'isp_escalation_needed',
+    dedupe_key: 'isp:api-https:link_saturation',
+    affected_service: 'api-https',
+    vector: 'link_saturation',
+    evidence: { manual_only: true, peak_bps: 3000000000, peak_pps: 300000 },
+    recommended_action: 'manual ISP escalation; no automatic BGP/RTBH/FlowSpec',
+    status: 'sent',
+    created_at: new Date().toISOString(),
+    deliveries: [{ id: 'd1', alert_id: 'al1', channel: 'telegram', status: 'sent', attempt: 1, created_at: new Date().toISOString() }]
   }]
 };
 
@@ -207,5 +228,12 @@ describe('DashboardShell', () => {
     expect(screen.getAllByText('spamhaus-drop').length).toBeGreaterThan(0);
     expect(screen.getByText('198.51.100.0/24')).toBeInTheDocument();
     expect(screen.getByText('198.51.100.10/32')).toBeInTheDocument();
+  });
+
+  it('renders alerts and manual ISP runbook', () => {
+    renderShell(baseUser, 'alerts');
+    expect(screen.getByText('isp_escalation_needed')).toBeInTheDocument();
+    expect(screen.getByText('No automatic BGP, RTBH or FlowSpec action')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /test alert/i })).toBeDisabled();
   });
 });

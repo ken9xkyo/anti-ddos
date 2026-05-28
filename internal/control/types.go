@@ -289,6 +289,78 @@ type FeedConflict struct {
 	DetectedAt     time.Time `json:"detected_at"`
 }
 
+type TelegramConfigInput struct {
+	Reason      string `json:"reason"`
+	BotTokenRef string `json:"bot_token_ref"`
+	ChatID      string `json:"chat_id"`
+	ParseMode   string `json:"parse_mode,omitempty"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+type TelegramConfig struct {
+	BotTokenRef     string    `json:"bot_token_ref"`
+	BotTokenPresent bool      `json:"bot_token_present"`
+	ChatID          string    `json:"chat_id"`
+	ParseMode       string    `json:"parse_mode,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type AlertInput struct {
+	Severity          string          `json:"severity"`
+	Type              string          `json:"type"`
+	DedupeKey         string          `json:"dedupe_key"`
+	ServiceID         string          `json:"service_id,omitempty"`
+	AffectedService   string          `json:"affected_service,omitempty"`
+	Vector            string          `json:"vector,omitempty"`
+	Evidence          json.RawMessage `json:"evidence,omitempty"`
+	RecommendedAction string          `json:"recommended_action,omitempty"`
+}
+
+type Alert struct {
+	ID                string          `json:"id"`
+	Severity          string          `json:"severity"`
+	Type              string          `json:"type"`
+	DedupeKey         string          `json:"dedupe_key"`
+	ServiceID         string          `json:"service_id,omitempty"`
+	AffectedService   string          `json:"affected_service,omitempty"`
+	Vector            string          `json:"vector,omitempty"`
+	Evidence          json.RawMessage `json:"evidence,omitempty"`
+	RecommendedAction string          `json:"recommended_action,omitempty"`
+	Status            string          `json:"status"`
+	CreatedBy         string          `json:"created_by,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	ResolvedAt        *time.Time      `json:"resolved_at,omitempty"`
+	Deliveries        []AlertDelivery `json:"deliveries,omitempty"`
+}
+
+type AlertDelivery struct {
+	ID        string          `json:"id"`
+	AlertID   string          `json:"alert_id"`
+	Channel   string          `json:"channel"`
+	Status    string          `json:"status"`
+	Attempt   uint32          `json:"attempt"`
+	Error     string          `json:"error,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	SentAt    *time.Time      `json:"sent_at,omitempty"`
+}
+
+type ISPEscalationInput struct {
+	Reason          string          `json:"reason"`
+	ServiceID       string          `json:"service_id,omitempty"`
+	Target          string          `json:"target,omitempty"`
+	Vector          string          `json:"vector,omitempty"`
+	StartTime       time.Time       `json:"start_time,omitempty"`
+	PeakBPS         float64         `json:"peak_bps,omitempty"`
+	PeakPPS         float64         `json:"peak_pps,omitempty"`
+	PacketLossRatio float64         `json:"packet_loss_ratio,omitempty"`
+	RouteFailure    string          `json:"route_failure,omitempty"`
+	Evidence        json.RawMessage `json:"evidence,omitempty"`
+}
+
 type AuditEvent struct {
 	ID            string          `json:"id"`
 	CreatedAt     time.Time       `json:"created_at"`

@@ -100,6 +100,23 @@ FROM agents ORDER BY hostname`)
 		}
 		agent.MapUtilization = mapUtil
 		agent.Stale = agent.LastSeenAt == nil || now.Sub(*agent.LastSeenAt) > staleAfter
+		if agent.Stale {
+			dedupe := "agent_stale:" + agent.ID
+			if !s.RecentAlertExists(ctx, dedupe, 10*time.Minute) {
+				_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
+					Severity:          "warning",
+					Type:              "agent_stale",
+					DedupeKey:         dedupe,
+					AffectedService:   agent.Hostname,
+					Vector:            "control_plane_heartbeat",
+					Evidence:          mustJSON(map[string]any{"agent_id": agent.ID, "hostname": agent.Hostname, "last_seen_at": agent.LastSeenAt}),
+					RecommendedAction: "check agent process, control-plane connectivity and last-valid policy state",
+				})
+				if alertErr != nil {
+					s.logger.Warn("agent stale alert creation failed", "agent_id", agent.ID, "error", agentRedactedError(alertErr))
+				}
+			}
+		}
 		agents = append(agents, agent)
 	}
 	if err := rows.Err(); err != nil {

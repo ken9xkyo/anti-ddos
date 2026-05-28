@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -112,6 +113,24 @@ ON CONFLICT (agent_id, policy_version) DO UPDATE SET
     reported_at=now()`,
 		id, agentID, req.PolicyVersion, status, req.ErrorStage, req.ErrorReason, mapStats, devmapStats,
 	)
+	if err == nil && status == "failed" {
+		alertType := "redirect_failure"
+		if strings.Contains(strings.ToLower(req.ErrorStage+" "+req.ErrorReason), "neighbor") {
+			alertType = "neighbor_unresolved"
+		}
+		_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
+			Severity:          "critical",
+			Type:              alertType,
+			DedupeKey:         alertType + ":" + agentID + ":" + req.ErrorStage,
+			AffectedService:   agentID,
+			Vector:            req.ErrorStage,
+			Evidence:          mustJSON(map[string]any{"agent_id": agentID, "policy_version": req.PolicyVersion, "error_stage": req.ErrorStage, "error_reason": req.ErrorReason, "devmap_stats": json.RawMessage(devmapStats)}),
+			RecommendedAction: "inspect forwarding target, DEVMAP entry and neighbor resolution before rebuilding snapshot",
+		})
+		if alertErr != nil {
+			s.logger.Warn("agent apply alert creation failed", "agent_id", agentID, "error", agentRedactedError(alertErr))
+		}
+	}
 	return err
 }
 

@@ -68,6 +68,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
 	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
 	s.mux.HandleFunc("/v1/feed-conflicts", s.handleFeedConflicts)
+	s.mux.HandleFunc("/v1/telegram/config", s.handleTelegramConfig)
+	s.mux.HandleFunc("/v1/telegram/test", s.handleTelegramTest)
+	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
+	s.mux.HandleFunc("/v1/alerts/", s.handleAlertSubroute)
 	s.mux.HandleFunc("/v1/snapshots", s.handleSnapshots)
 	s.mux.HandleFunc("/v1/snapshots/build", s.handleBuildSnapshot)
 	s.mux.HandleFunc("/v1/snapshots/rollback", s.handleRollback)
@@ -689,6 +693,20 @@ func routeName(r *http.Request) string {
 		return "/v1/feed-runs"
 	case path == "/v1/feed-conflicts":
 		return "/v1/feed-conflicts"
+	case path == "/v1/telegram/config":
+		return "/v1/telegram/config"
+	case path == "/v1/telegram/test":
+		return "/v1/telegram/test"
+	case path == "/v1/alerts":
+		return "/v1/alerts"
+	case strings.HasPrefix(path, "/v1/alerts/"):
+		if strings.HasSuffix(path, "/evaluate-isp-escalation") {
+			return "/v1/alerts/evaluate-isp-escalation"
+		}
+		if strings.HasSuffix(path, "/deliveries") {
+			return "/v1/alerts/{id}/deliveries"
+		}
+		return "/v1/alerts/{id}"
 	case strings.HasPrefix(path, "/v1/snapshots"):
 		return "/v1/snapshots"
 	case path == "/v1/audit":

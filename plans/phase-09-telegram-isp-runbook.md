@@ -28,6 +28,24 @@ Hoàn thiện alerting bắt buộc cho MVP: alert schema, Telegram delivery, de
 | P09-T10 | Tạo ISP escalation payload | Operator có thông tin gửi ISP | Payload peak bps/pps, target, vector, start time, top sources summary | P09-T09 |
 | P09-T11 | Thêm runbook dashboard view | Hướng dẫn thao tác khi escalation | UI view cho escalation alert, copyable incident data, action checklist | P09-T10 |
 
+## Tiến độ
+
+Evidence chính: `make phase9-verify` PASS; report ở `reports/phase-09-telegram-isp-runbook.md`. Phase này triển khai alert schema/service trong Control Plane, Telegram delivery với dedupe/retry/delivery log, alert producers cho các subsystem chính và dashboard runbook ISP escalation thủ công.
+
+| ID | Trạng thái | Ghi chú |
+|---|---|---|
+| P09-T01 | Done | Migration phase 09 tạo `telegram_configs`, `alert_policies`, `alerts`, `alert_deliveries`; API list/create alerts và delivery log. |
+| P09-T02 | Done | Telegram config API dùng token secret/env ref, chat_id, parse mode, RBAC và redaction trong API/audit. |
+| P09-T03 | Done | `CreateAlert`/`CreateSystemAlert` nhận severity, type, dedupe_key, evidence, affected service/vector/action. |
+| P09-T04 | Done | Dedupe theo `dedupe_key` trong policy/default window, ghi delivery `deduped` và không gọi Telegram. |
+| P09-T05 | Done | Telegram `sendMessage` client render template/default message, POST JSON và xử lý success/4xx/429/5xx/malformed. |
+| P09-T06 | Done | Retry exponential backoff, delivery attempts và final sent/failed/deduped status được lưu. |
+| P09-T07 | Done | `/v1/telegram/test` và Alerts dashboard hiển thị kết quả delivery. |
+| P09-T08 | Done | Producers tạo alert cho anomaly/auto-enforce, feed failure, redirect/neighbor apply failure và stale Agent. |
+| P09-T09 | Done | ISP escalation endpoint lấy/nhận peak pps/bps, packet loss/route evidence và tạo alert `isp_escalation_needed`. |
+| P09-T10 | Done | ISP payload gồm target/service, vector, start time, peak bps/pps, top source summary và checklist thủ công. |
+| P09-T11 | Done | Dashboard Alerts tab hiển thị Telegram status, alert delivery log và manual ISP runbook copyable payload. |
+
 ## Tiêu chí chấp nhận
 
 - Alert thử gửi Telegram thành công và hiện delivery result trên dashboard.

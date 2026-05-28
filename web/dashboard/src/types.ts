@@ -216,6 +216,43 @@ export interface FeedConflict {
   detected_at: string;
 }
 
+export interface TelegramConfig {
+  bot_token_ref: string;
+  bot_token_present: boolean;
+  chat_id: string;
+  parse_mode?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertDelivery {
+  id: string;
+  alert_id: string;
+  channel: string;
+  status: string;
+  attempt: number;
+  error?: string;
+  response?: Record<string, unknown>;
+  created_at: string;
+  sent_at?: string;
+}
+
+export interface Alert {
+  id: string;
+  severity: string;
+  type: string;
+  dedupe_key: string;
+  service_id?: string;
+  affected_service?: string;
+  vector?: string;
+  evidence?: Record<string, unknown>;
+  recommended_action?: string;
+  status: string;
+  created_at: string;
+  deliveries?: AlertDelivery[];
+}
+
 export interface DashboardData {
   overview: DashboardOverview;
   agents: Agent[];
@@ -227,4 +264,6 @@ export interface DashboardData {
   feedSources: FeedSource[];
   feedRuns: FeedRun[];
   feedConflicts: FeedConflict[];
+  telegramConfig: TelegramConfig;
+  alerts: Alert[];
 }

@@ -13,16 +13,17 @@ import {
   RefreshCw,
   Router,
   Search,
+  Send,
   Server,
   Shield,
   TrendingUp
 } from 'lucide-react';
 import { ApiClient } from './api';
-import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, User } from './types';
+import type { Agent, Alert, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, TelegramConfig, User } from './types';
 import './styles.css';
 
 const api = new ApiClient();
-const tabs = ['overview', 'anomalies', 'rules', 'reputation', 'services', 'agents', 'events'] as const;
+const tabs = ['overview', 'alerts', 'anomalies', 'rules', 'reputation', 'services', 'agents', 'events'] as const;
 export type Tab = (typeof tabs)[number];
 
 export default function App() {
@@ -186,6 +187,7 @@ export function DashboardShell({
       {error ? <div className="banner error"><AlertTriangle size={16} />{error}</div> : null}
       {!data ? <div className="empty-state">Loading dashboard data</div> : null}
       {data && activeTab === 'overview' ? <OverviewView data={data} canMutate={canMutate} /> : null}
+      {data && activeTab === 'alerts' ? <AlertsView alerts={data.alerts} config={data.telegramConfig} canMutate={canMutate} /> : null}
       {data && activeTab === 'anomalies' ? <AnomaliesView anomalies={data.anomalies} baselines={data.baselines} /> : null}
       {data && activeTab === 'rules' ? <RulesView rules={data.rules} canMutate={canMutate} /> : null}
       {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} canMutate={canMutate} /> : null}
@@ -214,6 +216,77 @@ function OverviewView({ data, canMutate }: { data: DashboardData; canMutate: boo
       <TopList title="Top source /24" items={data.overview.security_events.top_sources} />
       <TopList title="Top ports" items={data.overview.security_events.top_ports} />
       <TopList title="Recent signals" items={(data.anomalies[0]?.signals ?? []).map((signal) => ({ key: signal, count: Math.round(data.anomalies[0]?.score ?? 0) }))} />
+    </section>
+  );
+}
+
+function AlertsView({ alerts, config, canMutate }: { alerts: Alert[]; config: TelegramConfig; canMutate: boolean }) {
+  const [working, setWorking] = useState('');
+  const [result, setResult] = useState('');
+  const runAction = async (action: 'test' | 'isp') => {
+    if (!canMutate) return;
+    try {
+      setWorking(action);
+      const alert = action === 'test' ? await api.testTelegram() : await api.evaluateIspEscalation();
+      setResult(`${alert.type}: ${alert.status}`);
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'request failed');
+    } finally {
+      setWorking('');
+    }
+  };
+  const latestEscalation = alerts.find((alert) => alert.type === 'isp_escalation_needed');
+  return (
+    <section className="stacked-view">
+      <div className="wide-panel">
+        <PanelHeader icon={<Send size={18} />} title="Telegram" />
+        <div className="status-row">
+          <StatusPill state={config.enabled && config.bot_token_present ? 'ok' : 'warn'} text={config.enabled ? 'enabled' : 'disabled'} />
+          <span>{config.chat_id || 'chat not configured'} · {config.bot_token_present ? 'token present' : 'token missing'}</span>
+        </div>
+        <div className="button-row">
+          <button type="button" className="secondary-action" disabled={!canMutate || working !== ''} onClick={() => runAction('test')}>
+            <Send size={15} />{working === 'test' ? 'Testing' : 'Test alert'}
+          </button>
+          <button type="button" className="secondary-action" disabled={!canMutate || working !== ''} onClick={() => runAction('isp')}>
+            <AlertTriangle size={15} />{working === 'isp' ? 'Evaluating' : 'ISP runbook'}
+          </button>
+          {result ? <span className="muted">{result}</span> : null}
+        </div>
+      </div>
+      <TablePanel icon={<AlertTriangle size={18} />} title="Alerts">
+        <thead><tr><th>Time</th><th>Severity</th><th>Type</th><th>Service</th><th>Vector</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead>
+        <tbody>{alerts.map((alert) => {
+          const delivery = alert.deliveries?.[alert.deliveries.length - 1];
+          return (
+            <tr key={alert.id}>
+              <td>{formatTime(alert.created_at)}</td>
+              <td><StatusPill state={alert.severity === 'critical' ? 'warn' : alert.severity === 'warning' ? 'warn' : 'ok'} text={alert.severity} /></td>
+              <td>{alert.type}</td>
+              <td>{alert.affected_service || alert.service_id || 'n/a'}</td>
+              <td>{alert.vector || 'n/a'}</td>
+              <td>{alert.status}</td>
+              <td>{delivery ? `${delivery.status} #${delivery.attempt}` : 'pending'}</td>
+              <td>{alert.recommended_action || 'investigate'}</td>
+            </tr>
+          );
+        })}</tbody>
+      </TablePanel>
+      <div className="wide-panel">
+        <PanelHeader icon={<ListChecks size={18} />} title="ISP Escalation" />
+        <div className="runbook-grid">
+          <span>Manual escalation only</span>
+          <span>No automatic BGP, RTBH or FlowSpec action</span>
+          <span>{latestEscalation?.affected_service || 'Select affected service from incident evidence'}</span>
+          <span>{latestEscalation?.vector || 'link_saturation'}</span>
+        </div>
+        <pre className="payload-box">{JSON.stringify(latestEscalation?.evidence ?? {
+          manual_only: true,
+          target: 'affected target',
+          vector: 'link_saturation',
+          required: ['peak_bps', 'peak_pps', 'start_time', 'top_sources']
+        }, null, 2)}</pre>
+      </div>
     </section>
   );
 }

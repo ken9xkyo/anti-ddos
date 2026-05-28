@@ -23,6 +23,7 @@ PHASE5_REPORT := $(REPORT_DIR)/phase-05-control-plane-core.md
 PHASE6_REPORT := $(REPORT_DIR)/phase-06-observability-dashboard.md
 PHASE7_REPORT := $(REPORT_DIR)/phase-07-rate-limit-baseline-auto-enforce.md
 PHASE8_REPORT := $(REPORT_DIR)/phase-08-threat-feed-sync.md
+PHASE9_REPORT := $(REPORT_DIR)/phase-09-telegram-isp-runbook.md
 
 BPF_CFLAGS := -g -O2 -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	-I$(BPF_BUILD_DIR) -Iinclude
@@ -30,7 +31,7 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
-.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify phase8-test phase8-postgres-test phase8-ui-test phase8-verify clean
+.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify phase8-test phase8-postgres-test phase8-ui-test phase8-verify phase9-test phase9-postgres-test phase9-ui-test phase9-verify clean
 
 phase1-build: $(BPF_OBJ)
 
@@ -186,6 +187,28 @@ phase8-verify: phase8-test phase8-postgres-test phase8-ui-test
 	@printf -- '- PostgreSQL integration test ran Phase 08 migrations, feed source CRUD/RBAC, manual sync, run history, conflict report, snapshot inclusion and last-valid retention on fetch failure.\n' >> $(PHASE8_REPORT)
 	@printf -- '- Control metrics expose bounded feed sync success/error counters and active entry/conflict gauges without raw IP/CIDR labels.\n' >> $(PHASE8_REPORT)
 	@printf -- '- React/Vite dashboard tests verified feed status, run history, conflict visibility and viewer read-only behavior; production build succeeded.\n' >> $(PHASE8_REPORT)
+
+phase9-test: phase1-test
+	go test ./...
+
+phase9-postgres-test:
+	scripts/lab/phase9-postgres-test.sh
+
+phase9-ui-test:
+	npm --prefix web/dashboard test -- --run
+	npm --prefix web/dashboard run build
+
+phase9-verify: phase9-test phase9-postgres-test phase9-ui-test
+	@mkdir -p $(REPORT_DIR)
+	@printf '# Phase 09 Verification Report\n\n' > $(PHASE9_REPORT)
+	@printf 'Date: %s\n\n' "$$(date -u +%F)" >> $(PHASE9_REPORT)
+	@printf 'Command: `make phase9-verify`\n\n' >> $(PHASE9_REPORT)
+	@printf 'Result: PASS\n\n' >> $(PHASE9_REPORT)
+	@printf -- '- Existing Go tests and XDP packet fixture baseline passed through `phase9-test`.\n' >> $(PHASE9_REPORT)
+	@printf -- '- Alert schema, Telegram config/API, dedupe window, retry backoff, delivery logs and secret redaction were covered by unit and PostgreSQL integration tests.\n' >> $(PHASE9_REPORT)
+	@printf -- '- Telegram mock server verified success, 4xx no-retry, 5xx retry, malformed response handling and dedupe without duplicate send.\n' >> $(PHASE9_REPORT)
+	@printf -- '- Producers created alert records for test alert, anomaly/manual alert, feed failure, neighbor/redirect failure and ISP escalation runbook payload.\n' >> $(PHASE9_REPORT)
+	@printf -- '- React/Vite dashboard tests verified Alerts tab, Telegram status, delivery log visibility, ISP manual runbook and viewer read-only behavior; production build succeeded.\n' >> $(PHASE9_REPORT)
 
 $(VMLINUX):
 	@mkdir -p $(BPF_BUILD_DIR)

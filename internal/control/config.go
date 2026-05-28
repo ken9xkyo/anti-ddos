@@ -14,6 +14,7 @@ const (
 	defaultSessionTTL  = 12 * time.Hour
 	defaultXDPObject   = "build/bpf/xdp_data_plane.bpf.o"
 	defaultAgentStale  = 30 * time.Second
+	defaultTelegramAPI = "https://api.telegram.org"
 )
 
 type Config struct {
@@ -25,6 +26,7 @@ type Config struct {
 	PrometheusURL    string
 	AgentStaleAfter  time.Duration
 	EventSampleDenom uint32
+	TelegramAPIURL   string
 }
 
 func LoadConfigFromEnv() Config {
@@ -37,6 +39,7 @@ func LoadConfigFromEnv() Config {
 		PrometheusURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("ANTI_DDOS_PROMETHEUS_URL")), "/"),
 		AgentStaleAfter:  parseDurationEnv("ANTI_DDOS_AGENT_STALE_AFTER", defaultAgentStale),
 		EventSampleDenom: uint32(parseUint64Env("ANTI_DDOS_EVENT_SAMPLE_DENOM", 1)),
+		TelegramAPIURL:   strings.TrimRight(envOrDefault("ANTI_DDOS_TELEGRAM_API_URL", defaultTelegramAPI), "/"),
 	}
 }
 
