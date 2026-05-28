@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-Current work: Phase 05 - Control Plane Core completed; Phase 06 - Observability Dashboard is next.
+Current work: Phase 06 - Observability Dashboard completed; Phase 07 - Rate Limit Baseline Auto-Enforce is next.
 
 ## Decisions
 
@@ -21,6 +21,10 @@ Current work: Phase 05 - Control Plane Core completed; Phase 06 - Observability 
 - Phase 05 Control Plane is implemented in Go with `github.com/jackc/pgx/v5 v5.7.2` for PostgreSQL access and `golang.org/x/crypto/bcrypt` for local password hashing.
 - Phase 05 Agent-Control sync is optional and only activates when `ANTI_DDOS_CONTROL_URL` is set; otherwise the existing local/bootstrap snapshot behavior remains unchanged.
 - Phase 05 active service snapshots support IPv4 host destinations only because the current XDP `service_key` matches exact destination IPv4, protocol and port.
+- Phase 06 dashboard frontend is a React/Vite TypeScript app under `web/dashboard` and uses Control API auth/RBAC.
+- Phase 06 dashboard timeseries flow goes through Control API Prometheus proxy/status using `ANTI_DDOS_PROMETHEUS_URL`; when unset, UI reports Prometheus as unconfigured rather than failing.
+- Phase 06 sampled security events are best-effort from Agent ringbuf to Control API; raw source IP/CIDR stays in PostgreSQL `security_events`, not Prometheus labels.
+- Phase 06 verification keeps real NIC XDP attach disabled and uses PostgreSQL Docker container plus UI unit/build gates.
 
 ## Phase Progress
 
@@ -32,6 +36,7 @@ Current work: Phase 05 - Control Plane Core completed; Phase 06 - Observability 
 | 03 - Policy Snapshot Map Sync | Done | `make phase3-verify` PASS on 2026-05-28; report `reports/phase-03-policy-snapshot-map-sync.md`; policy snapshot validation, A/B map apply, devmap update, runtime flip, rollback and last-valid persistence passed. |
 | 04 - DEVMAP Forwarding and Service Allowlist | Done | `make phase4-verify` PASS on 2026-05-28; report `reports/phase-04-devmap-forwarding-service-allowlist.md`; packet fixtures and VETH namespace test verified allowlisted DEVMAP redirect with MAC rewrite and fail-closed service miss. |
 | 05 - Control Plane Core | Done | `make phase5-verify` PASS on 2026-05-28; report `reports/phase-05-control-plane-core.md`; Control API/Admin CLI, PostgreSQL migrations, local auth/RBAC, audit, policy CRUD, snapshot builder, rollback and Agent register/heartbeat/fetch/ack were verified. |
+| 06 - Observability Dashboard | Done | `make phase6-verify` PASS on 2026-05-28; report `reports/phase-06-observability-dashboard.md`; Control/Agent metrics, sampled event ingestion/query, Prometheus-backed dashboard APIs, React/Vite dashboard, Grafana JSON and scrape config were verified. |
 
 ## Current Host Facts
 
@@ -56,7 +61,7 @@ Current work: Phase 05 - Control Plane Core completed; Phase 06 - Observability 
 
 ## Next Actions
 
-- Start Phase 06 Observability Dashboard using Phase 05 Control Plane, Agent apply status and existing Prometheus Agent metrics.
+- Start Phase 07 Rate Limit Baseline Auto-Enforce using Phase 06 Prometheus queries, sampled events and dashboard rule visibility.
 - Network/SRE confirms production protected backend service inventory and final WAN/LAN/output interface roles before real service policy rollout.
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
 - Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.

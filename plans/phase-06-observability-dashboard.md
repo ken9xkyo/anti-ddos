@@ -29,6 +29,27 @@ Xây dựng khả năng quan sát và dashboard vận hành cho P1: Prometheus s
 | P06-T11 | Thêm dashboard RBAC behavior | Viewer read-only trên UI | UI ẩn/chặn mutation cho Viewer, hiển thị audit/result cho mutations | Phase 05 |
 | P06-T12 | Thêm dashboard freshness indicators | Biết dữ liệu có stale hay không | Last update timestamp, stale markers, apply pending/failed/applied state | P06-T05 |
 
+## Tiến độ thực hiện
+
+Ngày cập nhật: 2026-05-28
+
+Evidence chính: `make phase6-verify` PASS; report ở `reports/phase-06-observability-dashboard.md`. Phase này triển khai Control API metrics, sampled security event ingestion/query, dashboard APIs qua Prometheus proxy, React/Vite operations dashboard, Grafana dashboard và Prometheus scrape example. Verification dùng PostgreSQL Docker container vì `psql/postgres` local vẫn chưa được cài trên lab host.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P06-T01 | Done | `docs/observability/metric-catalog.md` định nghĩa `anti_ddos_*` metrics và label policy không dùng raw source IP/CIDR/user/secret trong labels. |
+| P06-T02 | Done | Control API có `/metrics`, request metrics, DB health, snapshot version, apply status, agent stale và security event metrics. |
+| P06-T03 | Done | Agent endpoint `/v1/agents/{agent_id}/events` validate sampled events và lưu vào PostgreSQL `security_events`. |
+| P06-T04 | Done | APIs `/v1/security-events`, `/summary`, `/investigate` filter theo time, service, src IP/CIDR, action, reason và rule. |
+| P06-T05 | Done | React dashboard overview hiển thị pps/bps/cps, drops/redirect inputs, Prometheus status, freshness và top sampled sources/ports. |
+| P06-T06 | Done | Rules view hiển thị active rule, action, mode, TTL remaining, owner và state. |
+| P06-T07 | Done | Reputation view hiển thị source prefix từ sampled events; investigation API trả event history cùng whitelist/blacklist matches. |
+| P06-T08 | Done | Services/forwarding view hiển thị backend, protocol/ports, output interface, neighbor status và apply status. |
+| P06-T09 | Done | Agents/maps view hiển thị XDP mode, active policy version, stale status, devmap support và latest apply result. |
+| P06-T10 | Done | `deploy/grafana/anti-ddos-p1-dashboard.json` có panels traffic, drops, redirects, maps, neighbor và alerts; `deploy/prometheus/anti-ddos-scrape.yml` có scrape targets. |
+| P06-T11 | Done | UI tests xác nhận Viewer không thấy mutation entrypoints, Operator thấy allowed actions. |
+| P06-T12 | Done | Dashboard hiển thị last refresh/freshness, Prometheus unconfigured state và apply pending/applied/failed state. |
+
 ## Tiêu chí chấp nhận
 
 - Prometheus scrape được Agent và Control API metrics.
