@@ -41,9 +41,9 @@ func (s *Store) BuildDashboardOverview(ctx context.Context, prom *PrometheusClie
 
 	status := PrometheusStatus{Configured: false, Healthy: false, Error: "prometheus is not configured"}
 	if prom != nil && prom.Configured() {
-		overview.Traffic.PPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total[1m]))`)
-		overview.Traffic.BPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_bytes_total[1m])) * 8`)
-		overview.Traffic.CPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{proto="6"}[1m]))`)
+		overview.Traffic.PPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{action=~"0|1|6"}[1m]))`)
+		overview.Traffic.BPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_bytes_total{action=~"0|1|6"}[1m])) * 8`)
+		overview.Traffic.CPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{proto="6",tcp_syn="1",action=~"0|1|6"}[1m]))`)
 		overview.DecisionRates["drop"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{action="1"}[1m]))`)
 		overview.DecisionRates["redirect"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_redirected_packets_total[1m]))`)
 		overview.DecisionRates["not_allowed_service"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_not_allowed_service_total[1m]))`)

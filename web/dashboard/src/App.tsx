@@ -18,7 +18,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { ApiClient } from './api';
-import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, Rule, SecurityEvent, Service, User } from './types';
+import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, User } from './types';
 import './styles.css';
 
 const api = new ApiClient();
@@ -188,7 +188,7 @@ export function DashboardShell({
       {data && activeTab === 'overview' ? <OverviewView data={data} canMutate={canMutate} /> : null}
       {data && activeTab === 'anomalies' ? <AnomaliesView anomalies={data.anomalies} baselines={data.baselines} /> : null}
       {data && activeTab === 'rules' ? <RulesView rules={data.rules} canMutate={canMutate} /> : null}
-      {data && activeTab === 'reputation' ? <ReputationView events={data.events} canMutate={canMutate} /> : null}
+      {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} canMutate={canMutate} /> : null}
       {data && activeTab === 'services' ? <ServicesView services={data.services} canMutate={canMutate} /> : null}
       {data && activeTab === 'agents' ? <AgentsView agents={data.agents} /> : null}
       {data && activeTab === 'events' ? <EventsView events={data.events} /> : null}
@@ -276,14 +276,50 @@ function RulesView({ rules, canMutate }: { rules: Rule[]; canMutate: boolean }) 
   );
 }
 
-function ReputationView({ events, canMutate }: { events: SecurityEvent[]; canMutate: boolean }) {
-  const sources = [...new Set(events.map((event) => event.src_prefix24))].slice(0, 12);
+function ReputationView({ sources, runs, conflicts, canMutate }: { sources: FeedSource[]; runs: FeedRun[]; conflicts: FeedConflict[]; canMutate: boolean }) {
   return (
-    <section className="single-column">
-      <PanelHeader icon={<Ban size={18} />} title="Reputation" action={canMutate ? 'Add whitelist' : undefined} />
-      <div className="source-grid">
-        {sources.map((source) => <span key={source} className="cidr-chip">{source}</span>)}
-      </div>
+    <section className="stacked-view">
+      <TablePanel icon={<Ban size={18} />} title="Threat feeds" action={canMutate ? 'Sync feed' : undefined}>
+        <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Active</th><th>Conflicts</th><th>Errors</th><th>Next run</th><th>License</th></tr></thead>
+        <tbody>{sources.map((source) => (
+          <tr key={source.id}>
+            <td>{source.name}</td>
+            <td>{source.type}</td>
+            <td><StatusPill state={source.enabled ? source.status === 'healthy' ? 'ok' : source.status === 'error' ? 'warn' : 'off' : 'off'} text={source.enabled ? source.status : 'disabled'} /></td>
+            <td>{numberValue(source.active_entries)}</td>
+            <td>{numberValue(source.conflict_count)}</td>
+            <td>{source.last_error || source.parse_error_count ? `${source.parse_error_count} parse` : 'none'}</td>
+            <td>{source.next_run_at ? formatTime(source.next_run_at) : 'pending'}</td>
+            <td>{source.license_note || 'n/a'}</td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
+      <TablePanel icon={<Clock size={18} />} title="Feed run history">
+        <thead><tr><th>Source</th><th>Status</th><th>Fetched</th><th>Valid</th><th>Parse errors</th><th>Snapshot</th><th>Started</th></tr></thead>
+        <tbody>{runs.map((run) => (
+          <tr key={run.id}>
+            <td>{run.source_name || run.source_id}</td>
+            <td><StatusPill state={run.status === 'success' ? 'ok' : run.status === 'error' ? 'warn' : 'off'} text={run.status} /></td>
+            <td>{numberValue(run.items_fetched)}</td>
+            <td>{numberValue(run.items_valid)}</td>
+            <td>{numberValue(run.parse_errors)}</td>
+            <td>{run.snapshot_version ?? 0}</td>
+            <td>{formatTime(run.started_at)}</td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
+      <TablePanel icon={<AlertTriangle size={18} />} title="Whitelist conflicts">
+        <thead><tr><th>Source</th><th>Reputation CIDR</th><th>Whitelist CIDR</th><th>Status</th><th>Detected</th></tr></thead>
+        <tbody>{conflicts.map((conflict) => (
+          <tr key={conflict.id}>
+            <td>{conflict.source_name || conflict.source_id}</td>
+            <td>{conflict.reputation_cidr}</td>
+            <td>{conflict.whitelist_cidr}</td>
+            <td><StatusPill state="warn" text={conflict.status} /></td>
+            <td>{formatTime(conflict.detected_at)}</td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
     </section>
   );
 }

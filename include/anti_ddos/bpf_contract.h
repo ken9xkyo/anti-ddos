@@ -156,6 +156,9 @@ struct rate_value {
 	__u64 tokens_packets;
 	__u64 tokens_bytes;
 	__u64 tokens_syn;
+	__u64 packet_remainder_ns;
+	__u64 byte_remainder_ns;
+	__u64 syn_remainder_ns;
 	__u64 syn_seen;
 	__u64 packets_seen;
 	__u64 bytes_seen;

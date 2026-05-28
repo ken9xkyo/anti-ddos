@@ -20,6 +20,7 @@ const (
 	autoTTLSeconds    = 15 * 60
 	autoMinTTLSeconds = 5 * 60
 	autoMaxTTLSeconds = 60 * 60
+	autoLockNamespace = 7007
 
 	defaultBaselinePPS   = 100000.0
 	defaultBaselineBPS   = 1000000000.0
@@ -211,6 +212,20 @@ func (s *Store) EvaluateAnomalies(ctx context.Context, prom *PrometheusClient, r
 	return out, nil
 }
 
+func queryRequiredScalar(ctx context.Context, prom *PrometheusClient, promQL string) (float64, error) {
+	value, status := prom.QueryScalar(ctx, promQL)
+	if !status.Configured {
+		return 0, errors.New("prometheus is not configured")
+	}
+	if !status.Healthy {
+		if status.Error == "" {
+			status.Error = "prometheus query failed"
+		}
+		return 0, fmt.Errorf("prometheus query failed: %s", status.Error)
+	}
+	return value, nil
+}
+
 func (s *Store) ListAnomalies(ctx context.Context, limit int) ([]AnomalyEvaluation, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -302,10 +317,22 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 	if baseline != nil && baseline.Window != "" {
 		timeWindow = baseline.Window
 	}
-	pps, _ := prom.QueryScalar(ctx, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d"}[1m]))`, service.EBPFID))
-	bps, _ := prom.QueryScalar(ctx, fmt.Sprintf(`sum(rate(anti_ddos_xdp_bytes_total{service_id="%d"}[1m])) * 8`, service.EBPFID))
-	cps, _ := prom.QueryScalar(ctx, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d",proto="6",tcp_syn="1"}[1m]))`, service.EBPFID))
-	drops, _ := prom.QueryScalar(ctx, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d",action="1"}[1m]))`, service.EBPFID))
+	pps, err := queryRequiredScalar(ctx, prom, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d",action=~"0|1|6"}[1m]))`, service.EBPFID))
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	bps, err := queryRequiredScalar(ctx, prom, fmt.Sprintf(`sum(rate(anti_ddos_xdp_bytes_total{service_id="%d",action=~"0|1|6"}[1m])) * 8`, service.EBPFID))
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	cps, err := queryRequiredScalar(ctx, prom, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d",proto="6",tcp_syn="1",action=~"0|1|6"}[1m]))`, service.EBPFID))
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	drops, err := queryRequiredScalar(ctx, prom, fmt.Sprintf(`sum(rate(anti_ddos_xdp_packets_total{service_id="%d",action="1"}[1m]))`, service.EBPFID))
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
 	dropRatio := 0.0
 	if pps > 0 {
 		dropRatio = drops / pps
@@ -379,14 +406,8 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		status = "blocked_whitelist"
 		recommendation = "observe"
 		evalReason = "source conflicts with active whitelist"
-	} else if activeRule, err := s.activeAutoRuleForService(ctx, service.ID); err != nil {
-		return AnomalyEvaluation{}, err
-	} else if activeRule != "" {
-		status = "already_enforced"
-		autoEnforced = true
-		proposedRuleID = activeRule
 	} else {
-		rule, err := s.CreateSystemRule(ctx, RuleInput{
+		rule, created, err := s.ensureAutoEnforceRule(ctx, service.ID, RuleInput{
 			ServiceID:    service.ID,
 			Name:         "auto-rate-limit-" + service.Name,
 			Action:       "rate_limit",
@@ -408,7 +429,11 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		}
 		autoEnforced = true
 		proposedRuleID = rule.ID
-		status = "auto_enforced"
+		if created {
+			status = "auto_enforced"
+		} else {
+			status = "already_enforced"
+		}
 	}
 
 	evidence := mustJSON(map[string]any{
@@ -441,6 +466,79 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		Evidence:           evidence,
 	})
 	return eval, err
+}
+
+func (s *Store) ensureAutoEnforceRule(ctx context.Context, serviceID string, input RuleInput, reason string) (Rule, bool, error) {
+	if err := validateRuleInput(input); err != nil {
+		return Rule{}, false, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return Rule{}, false, errors.New("reason is required")
+	}
+	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Rule{}, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, autoLockNamespace, serviceID); err != nil {
+		return Rule{}, false, err
+	}
+	active, err := activeAutoRuleForServiceQuery(ctx, tx, serviceID)
+	if err != nil {
+		return Rule{}, false, err
+	}
+	if active.ID != "" {
+		if err := tx.Commit(ctx); err != nil {
+			return Rule{}, false, err
+		}
+		return active, false, nil
+	}
+
+	id, err := newUUID()
+	if err != nil {
+		return Rule{}, false, err
+	}
+	enabled := boolDefault(input.Enabled, true)
+	var expires any
+	if !input.ExpiresAt.IsZero() {
+		expires = input.ExpiresAt
+	}
+	var serviceValue any
+	if strings.TrimSpace(input.ServiceID) != "" {
+		serviceValue = strings.TrimSpace(input.ServiceID)
+	}
+
+	var rule Rule
+	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
+    id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
+    dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+          threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
+          confidence::float8, enabled, owner, created_at, updated_at`,
+		id, serviceValue, input.Name, defaultPriority(input.Priority), defaultJSON(input.MatchExpr),
+		normalizeRuleAction(input.Action), normalizeMode(input.Mode), input.ThresholdPPS, input.ThresholdBPS,
+		input.ThresholdCPS, normalizeRuleDimension(input.Dimension), input.BurstPackets, input.BurstBytes,
+		input.SampleDenom, input.TTLSeconds, expires, defaultJSON(input.Evidence), input.Confidence, enabled, input.Owner,
+	), &rule)
+	if err != nil {
+		return Rule{}, false, err
+	}
+	if err := insertAudit(ctx, tx, nil, "create_rule", "rule", rule.ID, nil, rule, reason, ""); err != nil {
+		return Rule{}, false, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, nil, nil, reason); err != nil {
+		return Rule{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Rule{}, false, err
+	}
+	return rule, true, nil
 }
 
 func (s *Store) CreateSystemRule(ctx context.Context, input RuleInput, reason string) (Rule, error) {
@@ -644,36 +742,55 @@ LIMIT 1`, serviceEBPFID).Scan(&source)
 }
 
 func (s *Store) sourceWhitelistConflict(ctx context.Context, source, serviceID string) (bool, error) {
-	entries, err := s.ListWhitelistEntries(ctx)
+	rows, err := s.pool.Query(ctx, `SELECT ip_or_cidr::text, scope, COALESCE(service_id::text, '')
+FROM whitelist_entries
+WHERE enabled AND (expires_at IS NULL OR expires_at > now())
+  AND (scope = 'global' OR service_id = $1)`, serviceID)
 	if err != nil {
 		return false, err
 	}
-	for _, entry := range entries {
-		if !entry.Enabled {
+	defer rows.Close()
+	for rows.Next() {
+		var cidr, scope, entryServiceID string
+		if err := rows.Scan(&cidr, &scope, &entryServiceID); err != nil {
+			return false, err
+		}
+		if scope == "service" && entryServiceID != serviceID {
 			continue
 		}
-		if entry.Scope == "service" && entry.ServiceID != serviceID {
-			continue
-		}
-		if cidrMatches(source, entry.CIDR) {
+		if cidrMatches(source, cidr) {
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, rows.Err()
 }
 
 func (s *Store) activeAutoRuleForService(ctx context.Context, serviceID string) (string, error) {
-	var id string
-	err := s.pool.QueryRow(ctx, `SELECT id::text
+	rule, err := activeAutoRuleForServiceQuery(ctx, s.pool, serviceID)
+	if err != nil {
+		return "", err
+	}
+	return rule.ID, nil
+}
+
+func activeAutoRuleForServiceQuery(ctx context.Context, q dbQuerier, serviceID string) (Rule, error) {
+	row := q.QueryRow(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
+       threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
+       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
 FROM rules
 WHERE service_id=$1 AND enabled AND (expires_at IS NULL OR expires_at > now())
   AND evidence->>'auto_enforce' = 'true'
 ORDER BY created_at DESC
-LIMIT 1`, serviceID).Scan(&id)
+LIMIT 1`, serviceID)
+	var rule Rule
+	err := scanRule(row, &rule)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return Rule{}, nil
 	}
-	return id, err
+	if err != nil {
+		return Rule{}, err
+	}
+	return rule, nil
 }
 
 func validateBaselineProfileInput(input BaselineProfileInput) error {

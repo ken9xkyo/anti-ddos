@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-Current work: Phase 07 - Rate Limit Baseline Auto-Enforce completed; Phase 08 - Threat Feed Sync is next.
+Current work: Phase 08 - Threat Feed Sync completed; Phase 09 - Telegram ISP Runbook is next.
 
 ## Decisions
 
@@ -30,6 +30,11 @@ Current work: Phase 07 - Rate Limit Baseline Auto-Enforce completed; Phase 08 - 
 - Phase 07 auto-enforce is conservative by default: minimum confidence `0.90`, minimum score `85`, at least two evidence signals, default action `rate_limit`, TTL `15m` clamped to `5m..60m`, and low-confidence baselines are observe-only.
 - Phase 07 scheduler runs in-process with `control-api serve`; anomaly evaluation ticks every `10s`, TTL expiry ticks every `30s`, and missing Prometheus configuration is reported/skipped cleanly.
 - Phase 07 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and temporary VETH namespaces only.
+- Phase 08 Threat Feed Sync stays entirely in the Control Plane and reuses existing `PolicySnapshot.BlacklistV4`; no eBPF ABI or XDP C changes are required for feed enforcement.
+- Phase 08 feed credentials are references only. `env://VAR_NAME` resolves from that exact environment variable; `secret://anti-ddos/name` resolves to lab env `ANTI_DDOS_SECRET_NAME`; missing values fail the run without logging plaintext.
+- Phase 08 Team Cymru HTTP feeds are IPv4-only and enforce a minimum 4-hour interval; IPv6 remains rejected because active policy supports IPv4 only.
+- Phase 08 feed failures record `feed_runs`/source status and keep the last valid reputation entries and policy snapshot unchanged. Telegram alert delivery for prolonged feed failures remains Phase 09.
+- Phase 08 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and dashboard unit/build gates only.
 
 ## Phase Progress
 
@@ -43,6 +48,7 @@ Current work: Phase 07 - Rate Limit Baseline Auto-Enforce completed; Phase 08 - 
 | 05 - Control Plane Core | Done | `make phase5-verify` PASS on 2026-05-28; report `reports/phase-05-control-plane-core.md`; Control API/Admin CLI, PostgreSQL migrations, local auth/RBAC, audit, policy CRUD, snapshot builder, rollback and Agent register/heartbeat/fetch/ack were verified. |
 | 06 - Observability Dashboard | Done | `make phase6-verify` PASS on 2026-05-28; report `reports/phase-06-observability-dashboard.md`; Control/Agent metrics, sampled event ingestion/query, Prometheus-backed dashboard APIs, React/Vite dashboard, Grafana JSON and scrape config were verified. |
 | 07 - Rate Limit Baseline Auto-Enforce | Done | `make phase7-verify` PASS on 2026-05-28; report `reports/phase-07-rate-limit-baseline-auto-enforce.md`; XDP token buckets, rule selection, SYN CPS counters, baseline/anomaly APIs, conservative auto-enforce, TTL expiry, rollback, VETH lab and dashboard visibility were verified. |
+| 08 - Threat Feed Sync | Done | `make phase8-verify` PASS on 2026-05-28; report `reports/phase-08-threat-feed-sync.md`; feed source schema/API, parser pipeline, scheduler, safe aggregation, whitelist conflict suppression, snapshot inclusion, last-valid retention, metrics and dashboard visibility were verified. |
 
 ## Current Host Facts
 
@@ -67,7 +73,7 @@ Current work: Phase 07 - Rate Limit Baseline Auto-Enforce completed; Phase 08 - 
 
 ## Next Actions
 
-- Start Phase 08 Threat Feed Sync using Phase 07 rule/audit foundations and Phase 06 sampled-event/dashboard visibility.
+- Start Phase 09 Telegram ISP Runbook using Phase 08 feed failure status as one alert producer input.
 - Network/SRE confirms production protected backend service inventory and final WAN/LAN/output interface roles before real service policy rollout.
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
 - Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.

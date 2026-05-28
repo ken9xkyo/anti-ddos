@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,10 +25,14 @@ type dbQuerier interface {
 }
 
 type Store struct {
-	pool     *pgxpool.Pool
-	cfg      Config
-	logger   *slog.Logger
-	resolver agent.ForwardingResolver
+	pool           *pgxpool.Pool
+	cfg            Config
+	logger         *slog.Logger
+	resolver       agent.ForwardingResolver
+	feedHTTPClient *http.Client
+	feedMu         sync.Mutex
+	feedLocks      map[string]*sync.Mutex
+	metrics        *ControlMetrics
 }
 
 type Actor struct {
@@ -54,7 +60,14 @@ func NewStore(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Store{pool: pool, cfg: cfg, logger: logger, resolver: agent.NewNetlinkForwardingResolver()}
+	return &Store{
+		pool:           pool,
+		cfg:            cfg,
+		logger:         logger,
+		resolver:       agent.NewNetlinkForwardingResolver(),
+		feedHTTPClient: &http.Client{Timeout: 15 * time.Second},
+		feedLocks:      map[string]*sync.Mutex{},
+	}
 }
 
 func (s *Store) Pool() *pgxpool.Pool {

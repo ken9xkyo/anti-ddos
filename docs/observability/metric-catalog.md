@@ -51,9 +51,9 @@ Phase 06 standardizes `anti_ddos_*` metrics for Prometheus scrape targets.
 
 | Recording rule | Labels | Purpose |
 |---|---|---|
-| `anti_ddos:service_pps:rate1m` / `rate5m` | `service_id`, `proto` | Packet-rate input for baseline/anomaly evaluation. |
-| `anti_ddos:service_bps:rate1m` / `rate5m` | `service_id`, `proto` | Bit-rate input for baseline/anomaly evaluation. |
-| `anti_ddos:service_syn_cps:rate1m` / `rate5m` | `service_id` | SYN-based CPS approximation. |
+| `anti_ddos:service_pps:rate1m` / `rate5m` | `service_id`, `proto` | Terminal-action packet-rate input for baseline/anomaly evaluation. |
+| `anti_ddos:service_bps:rate1m` / `rate5m` | `service_id`, `proto` | Terminal-action bit-rate input for baseline/anomaly evaluation. |
+| `anti_ddos:service_syn_cps:rate1m` / `rate5m` | `service_id` | Terminal-action TCP SYN without ACK CPS approximation. |
 | `anti_ddos:service_drop_ratio:rate5m` | `service_id` | Drop pressure signal by protected service. |
 | `anti_ddos:service_protocol_mix:rate5m` | `service_id`, `proto` | Protocol mix shift signal. |
 | `anti_ddos:service_pps:peak5m`, `anti_ddos:service_bps:peak5m`, `anti_ddos:service_syn_cps:peak5m` | service labels | Short-window peak baseline inputs. |

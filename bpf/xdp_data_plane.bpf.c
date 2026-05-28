@@ -382,13 +382,6 @@ static __always_inline __u8 is_tcp_syn_without_ack(const struct packet_meta *met
 		(meta->tcp_flags & TCP_FLAG_ACK) == 0;
 }
 
-static __always_inline __u64 min_u64(__u64 left, __u64 right)
-{
-	if (left < right)
-		return left;
-	return right;
-}
-
 static __always_inline __u64 nonzero_u64(__u64 preferred, __u64 fallback)
 {
 	if (preferred != 0)
@@ -396,6 +389,51 @@ static __always_inline __u64 nonzero_u64(__u64 preferred, __u64 fallback)
 	if (fallback != 0)
 		return fallback;
 	return 1;
+}
+
+static __always_inline void refill_bucket(__u64 *tokens,
+					  __u64 *remainder_ns,
+					  __u64 burst,
+					  __u64 rate,
+					  __u64 elapsed)
+{
+	__u64 total_elapsed;
+	__u64 refill;
+	__u64 consumed_ns;
+	__u64 next_tokens;
+
+	if (rate == 0)
+		return;
+
+	if (*tokens >= burst) {
+		*tokens = burst;
+		*remainder_ns = 0;
+		return;
+	}
+
+	total_elapsed = elapsed + *remainder_ns;
+	if (total_elapsed > 2ULL * NSEC_PER_SEC)
+		total_elapsed = 2ULL * NSEC_PER_SEC;
+
+	refill = (total_elapsed * rate) / NSEC_PER_SEC;
+	if (refill == 0) {
+		*remainder_ns = total_elapsed;
+		return;
+	}
+
+	next_tokens = *tokens + refill;
+	if (next_tokens >= burst) {
+		*tokens = burst;
+		*remainder_ns = 0;
+		return;
+	}
+
+	*tokens = next_tokens;
+	consumed_ns = (refill * NSEC_PER_SEC) / rate;
+	if (consumed_ns >= total_elapsed)
+		*remainder_ns = 0;
+	else
+		*remainder_ns = total_elapsed - consumed_ns;
 }
 
 static __always_inline void build_rate_key(struct rate_key *key,
@@ -462,16 +500,25 @@ static __always_inline int apply_token_bucket(const struct rule_value *rule,
 
 	if (elapsed > 0) {
 		if (rule->threshold_pps != 0) {
-			__u64 refill_packets = (elapsed * (__u64)rule->threshold_pps) / NSEC_PER_SEC;
-			state->tokens_packets = min_u64(packet_burst, state->tokens_packets + refill_packets);
+			refill_bucket(&state->tokens_packets,
+				      &state->packet_remainder_ns,
+				      packet_burst,
+				      (__u64)rule->threshold_pps,
+				      elapsed);
 		}
 		if (rule->threshold_bps != 0) {
-			__u64 refill_bytes = (elapsed * (__u64)rule->threshold_bps) / (8ULL * NSEC_PER_SEC);
-			state->tokens_bytes = min_u64(byte_burst, state->tokens_bytes + refill_bytes);
+			refill_bucket(&state->tokens_bytes,
+				      &state->byte_remainder_ns,
+				      byte_burst,
+				      (__u64)rule->threshold_bps / 8ULL,
+				      elapsed);
 		}
 		if (rule->threshold_cps != 0) {
-			__u64 refill_syn = (elapsed * (__u64)rule->threshold_cps) / NSEC_PER_SEC;
-			state->tokens_syn = min_u64(syn_burst, state->tokens_syn + refill_syn);
+			refill_bucket(&state->tokens_syn,
+				      &state->syn_remainder_ns,
+				      syn_burst,
+				      (__u64)rule->threshold_cps,
+				      elapsed);
 		}
 		state->last_refill_ns = now;
 	}

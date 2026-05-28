@@ -14,7 +14,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
       "id": 1,
       "targets": [
-        { "expr": "sum(rate(anti_ddos_xdp_packets_total[1m]))", "legendFormat": "pps", "refId": "A" }
+        { "expr": "sum(rate(anti_ddos_xdp_packets_total{action=~\"0|1|6\"}[1m]))", "legendFormat": "pps", "refId": "A" }
       ],
       "title": "Traffic pps",
       "type": "timeseries"
@@ -25,7 +25,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
       "id": 2,
       "targets": [
-        { "expr": "sum(rate(anti_ddos_xdp_bytes_total[1m])) * 8", "legendFormat": "bps", "refId": "A" }
+        { "expr": "sum(rate(anti_ddos_xdp_bytes_total{action=~\"0|1|6\"}[1m])) * 8", "legendFormat": "bps", "refId": "A" }
       ],
       "title": "Traffic bps",
       "type": "timeseries"
@@ -36,9 +36,9 @@
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
       "id": 3,
       "targets": [
-        { "expr": "sum(rate(anti_ddos_xdp_packets_total{proto=\"6\"}[1m]))", "legendFormat": "tcp packets", "refId": "A" }
+        { "expr": "sum(rate(anti_ddos_xdp_packets_total{proto=\"6\",tcp_syn=\"1\",action=~\"0|1|6\"}[1m]))", "legendFormat": "syn cps", "refId": "A" }
       ],
-      "title": "TCP activity",
+      "title": "TCP SYN CPS",
       "type": "timeseries"
     },
     {

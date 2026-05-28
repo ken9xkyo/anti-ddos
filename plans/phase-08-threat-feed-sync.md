@@ -31,6 +31,24 @@
 | P08-T12 | Triển khai feed failure behavior | Không xóa rule đang enforce khi lỗi | Keep last valid, record `feed_runs`, alert candidate | P08-T02 |
 | P08-T13 | Thêm feed UI/metrics | Operator thấy last sync/errors/quota | Dashboard feed status và Prometheus feed metrics | Phase 06 |
 
+## Tiến độ
+
+| ID | Trạng thái | Ghi chú |
+|---|---|---|
+| P08-T01 | Done | `feed_sources` được mở rộng metadata/status và API hỗ trợ create/list/update với audit/RBAC. |
+| P08-T02 | Done | Scheduler chạy trong `control-api serve`, có per-source in-process lock và run status. |
+| P08-T03 | Done | HTTP fetch có timeout/retry, size cap, auth header qua credential ref và không log plaintext secret. |
+| P08-T04 | Done | Parser plaintext cho Spamhaus DROP/CIDR/comment. |
+| P08-T05 | Done | Parser plaintext Team Cymru/bogon IPv4 với minimum interval 4 giờ cho source loại Team Cymru. |
+| P08-T06 | Done | AbuseIPDB APIv2 blacklist plaintext client/parser với `Key` header và quota metadata. |
+| P08-T07 | Done | Internal HTTP JSON parser cho IP/CIDR, score, action, TTL, reason và metadata. |
+| P08-T08 | Done | Normalize/dedupe IPv4, reject invalid/IPv6 theo entry và giữ valid entries. |
+| P08-T09 | Done | Safe CIDR aggregation chỉ merge sibling cùng source/action/score/TTL/reason và không broaden qua whitelist. |
+| P08-T10 | Done | `feed_conflicts` active report suppress reputation entries khi overlap whitelist. |
+| P08-T11 | Done | Snapshot builder include manual blacklist plus active non-suppressed reputation entries. |
+| P08-T12 | Done | Feed failure ghi run/source error và giữ last valid reputation entries/snapshot. |
+| P08-T13 | Done | Dashboard/API/Prometheus expose feed status, run history, active entries và conflicts. |
+
 ## Tiêu chí chấp nhận
 
 - Scheduler sync enabled feeds theo interval cấu hình, default 1 giờ.

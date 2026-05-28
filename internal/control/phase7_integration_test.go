@@ -3,10 +3,13 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,8 +35,18 @@ func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatalf("idempotent migration run: %v", err)
 	}
 
+	var queryMu sync.Mutex
+	var queries []string
+	resetQueries := func() {
+		queryMu.Lock()
+		defer queryMu.Unlock()
+		queries = nil
+	}
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
+		queryMu.Lock()
+		queries = append(queries, query)
+		queryMu.Unlock()
 		value := "300000"
 		switch {
 		case strings.Contains(query, "xdp_bytes"):
@@ -99,6 +112,44 @@ func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	resetQueries()
+	if _, err := store.BuildDashboardOverview(ctx, NewPrometheusClient(prom.URL, nil), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	assertObservedQuery(t, &queryMu, &queries, `tcp_syn="1"`)
+	assertObservedQuery(t, &queryMu, &queries, `action=~"0|1|6"`)
+
+	evals, err := store.EvaluateAnomalies(ctx, NewPrometheusClient("", nil), "unconfigured prometheus")
+	if err != nil || len(evals) != 0 {
+		t.Fatalf("unconfigured prometheus should skip cleanly evals=%#v err=%v", evals, err)
+	}
+	badProm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "prometheus unavailable", http.StatusInternalServerError)
+	}))
+	defer badProm.Close()
+	if _, err := store.EvaluateAnomalies(ctx, NewPrometheusClient(badProm.URL, nil), "unhealthy prometheus"); err == nil {
+		t.Fatal("configured unhealthy prometheus should return an evaluator error")
+	}
+
+	manualRule, err := store.CreateRule(ctx, adminActor, RuleInput{
+		Reason:       "manual ttl regression rule",
+		ServiceID:    service.ID,
+		Name:         "manual-ttl-regression",
+		Priority:     1000,
+		Action:       "observe",
+		Mode:         "observe",
+		Dimension:    "source_service",
+		TTLSeconds:   900,
+		BurstPackets: 1,
+		Owner:        "sre",
+	}, "manual ttl regression rule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manualRule.ExpiresAt == nil {
+		t.Fatalf("manual ttl rule did not derive expires_at: %#v", manualRule)
+	}
+
 	baselineReq := BaselineProfileInput{
 		Reason:       "initial low confidence baseline",
 		ServiceID:    service.ID,
@@ -142,6 +193,48 @@ func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatalf("approve baseline status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
+		Reason:    "expired trusted source should not block auto enforce",
+		CIDR:      "198.51.100.10/32",
+		Scope:     "global",
+		Owner:     "sre",
+		ExpiresAt: time.Now().UTC().Add(-time.Minute),
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("create expired whitelist status=%d body=%s", resp.Code, resp.Body.String())
+	}
+
+	resetQueries()
+	concurrentProm := NewPrometheusClient(prom.URL, nil)
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			evals, err := store.EvaluateAnomalies(ctx, concurrentProm, "concurrent auto enforce evaluation")
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(evals) == 0 {
+				errs <- errors.New("expected anomaly evaluation")
+				return
+			}
+			errs <- nil
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertObservedQuery(t, &queryMu, &queries, `service_id="`+strconv.FormatUint(uint64(service.EBPFID), 10)+`"`)
+	assertObservedQuery(t, &queryMu, &queries, `tcp_syn="1"`)
+	assertObservedQuery(t, &queryMu, &queries, `action=~"0|1|6"`)
+
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "auto enforce evaluation"})
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"auto_enforced":true`) {
 		t.Fatalf("auto enforce evaluate status=%d body=%s", resp.Code, resp.Body.String())
@@ -153,8 +246,10 @@ func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
 	var autoRule Rule
 	for _, rule := range rules {
 		if rule.Owner == "system:auto-enforce" {
+			if autoRule.ID != "" && rule.Enabled {
+				t.Fatalf("concurrent auto-enforce created more than one active rule: %#v", rules)
+			}
 			autoRule = rule
-			break
 		}
 	}
 	if autoRule.ID == "" || autoRule.Action != "rate_limit" || autoRule.Mode != "enforce" || autoRule.Dimension != "source_service" {
@@ -186,22 +281,44 @@ func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatalf("rollback_from missing: %#v", rollback)
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE rules SET expires_at=now() - interval '1 second' WHERE id=$1`, autoRule.ID); err != nil {
+	var snapshotBeforeExpiry uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotBeforeExpiry); err != nil {
+		t.Fatal(err)
+	}
+	var auditBeforeExpiry int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='expire_rule'`).Scan(&auditBeforeExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE rules SET expires_at=now() - interval '1 second' WHERE id::text = ANY($1)`, []string{autoRule.ID, manualRule.ID}); err != nil {
 		t.Fatal(err)
 	}
 	expired, err := store.ExpireTTLRules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if expired == 0 {
-		t.Fatal("expected expired auto rule to be disabled")
+	if expired < 2 {
+		t.Fatalf("expected expired auto and manual rules to be disabled, got %d", expired)
+	}
+	var snapshotAfterExpiry uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotAfterExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotAfterExpiry <= snapshotBeforeExpiry {
+		t.Fatalf("ttl expiry did not create a new snapshot: before=%d after=%d", snapshotBeforeExpiry, snapshotAfterExpiry)
+	}
+	var auditAfterExpiry int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='expire_rule'`).Scan(&auditAfterExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if auditAfterExpiry < auditBeforeExpiry+2 {
+		t.Fatalf("ttl expiry audit missing: before=%d after=%d", auditBeforeExpiry, auditAfterExpiry)
 	}
 	rules, err = store.ListRules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, rule := range rules {
-		if rule.ID == autoRule.ID && rule.Enabled {
+		if (rule.ID == autoRule.ID || rule.ID == manualRule.ID) && rule.Enabled {
 			t.Fatalf("expired rule still enabled: %#v", rule)
 		}
 	}
@@ -239,4 +356,16 @@ func ingestSecurityEvent(t *testing.T, baseURL string, serviceID uint32, source 
 	if resp.Code != http.StatusOK {
 		t.Fatalf("event ingest status=%d body=%s", resp.Code, resp.Body.String())
 	}
+}
+
+func assertObservedQuery(t *testing.T, mu *sync.Mutex, queries *[]string, want string) {
+	t.Helper()
+	mu.Lock()
+	defer mu.Unlock()
+	for _, query := range *queries {
+		if strings.Contains(query, want) {
+			return
+		}
+	}
+	t.Fatalf("expected prometheus query containing %q, got %#v", want, *queries)
 }

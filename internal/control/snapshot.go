@@ -478,7 +478,15 @@ func snapshotBlacklist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntr
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
 WHERE b.enabled AND (b.expires_at IS NULL OR b.expires_at > now())
-ORDER BY b.ebpf_id`)
+UNION ALL
+SELECT r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
+FROM reputation_entries r
+JOIN feed_sources fs ON fs.id = r.source_id
+WHERE fs.enabled
+  AND r.status = 'active'
+  AND r.action = 'drop'
+  AND (r.expires_at IS NULL OR r.expires_at > now())
+ORDER BY 1`)
 	if err != nil {
 		return nil, err
 	}

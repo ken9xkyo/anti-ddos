@@ -252,8 +252,41 @@ type FeedSource struct {
 	LicenseNote           string          `json:"license_note,omitempty"`
 	QuotaMetadata         json.RawMessage `json:"quota_metadata,omitempty"`
 	Status                string          `json:"status"`
+	LastSuccessAt         *time.Time      `json:"last_success_at,omitempty"`
+	LastErrorAt           *time.Time      `json:"last_error_at,omitempty"`
+	LastError             string          `json:"last_error,omitempty"`
+	NextRunAt             *time.Time      `json:"next_run_at,omitempty"`
+	ActiveEntries         uint32          `json:"active_entries"`
+	ConflictCount         uint32          `json:"conflict_count"`
+	ParseErrorCount       uint32          `json:"parse_error_count"`
 	CreatedAt             time.Time       `json:"created_at"`
 	UpdatedAt             time.Time       `json:"updated_at"`
+}
+
+type FeedRun struct {
+	ID              string     `json:"id"`
+	SourceID        string     `json:"source_id"`
+	SourceName      string     `json:"source_name,omitempty"`
+	StartedAt       time.Time  `json:"started_at"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	Status          string     `json:"status"`
+	ItemsFetched    uint32     `json:"items_fetched"`
+	ItemsValid      uint32     `json:"items_valid"`
+	ParseErrors     uint32     `json:"parse_errors"`
+	Error           string     `json:"error,omitempty"`
+	SnapshotVersion uint32     `json:"snapshot_version,omitempty"`
+}
+
+type FeedConflict struct {
+	ID             string    `json:"id"`
+	SourceID       string    `json:"source_id"`
+	SourceName     string    `json:"source_name,omitempty"`
+	ReputationID   string    `json:"reputation_id"`
+	WhitelistID    string    `json:"whitelist_id"`
+	ReputationCIDR string    `json:"reputation_cidr"`
+	WhitelistCIDR  string    `json:"whitelist_cidr"`
+	Status         string    `json:"status"`
+	DetectedAt     time.Time `json:"detected_at"`
 }
 
 type AuditEvent struct {

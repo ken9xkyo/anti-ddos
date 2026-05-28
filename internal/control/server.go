@@ -30,6 +30,9 @@ func NewServer(store *Store, cfg Config, logger *slog.Logger) *Server {
 	if err != nil {
 		logger.Warn("control metrics disabled", "error", err)
 	}
+	if store != nil {
+		store.metrics = metrics
+	}
 	s := &Server{store: store, cfg: cfg, logger: logger, mux: http.NewServeMux(), metrics: metrics, prom: NewPrometheusClient(cfg.PrometheusURL, metrics)}
 	s.routes()
 	return s
@@ -62,6 +65,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/rules", s.handleRules)
 	s.mux.HandleFunc("/v1/blacklist", s.handleBlacklist)
 	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
+	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
+	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
+	s.mux.HandleFunc("/v1/feed-conflicts", s.handleFeedConflicts)
 	s.mux.HandleFunc("/v1/snapshots", s.handleSnapshots)
 	s.mux.HandleFunc("/v1/snapshots/build", s.handleBuildSnapshot)
 	s.mux.HandleFunc("/v1/snapshots/rollback", s.handleRollback)
@@ -339,6 +345,82 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/feed-sources/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(w, http.StatusNotFound, errors.New("feed source not found"))
+		return
+	}
+	id := parts[0]
+	if len(parts) == 2 && parts[1] == "sync" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		if err := requireOperator(actor); err != nil {
+			writeError(w, http.StatusForbidden, err)
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+			return
+		}
+		run, err := s.store.SyncFeedSource(r.Context(), id, actor, mutationReason(r.Header.Get("X-Audit-Reason"), req.Reason))
+		writeResult(w, run, err)
+		return
+	}
+	if len(parts) != 1 {
+		writeError(w, http.StatusNotFound, errors.New("feed source route not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		source, err := s.store.GetFeedSource(r.Context(), id)
+		writeResult(w, source, err)
+	case http.MethodPatch:
+		var req FeedSourceInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, source, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleFeedRuns(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireActor(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	runs, err := s.store.ListFeedRuns(r.Context(), limit)
+	writeResult(w, runs, err)
+}
+
+func (s *Server) handleFeedConflicts(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireActor(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	conflicts, err := s.store.ListFeedConflicts(r.Context())
+	writeResult(w, conflicts, err)
+}
+
 func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireActor(w, r); !ok {
 		return
@@ -598,6 +680,15 @@ func routeName(r *http.Request) string {
 		return "/v1/blacklist"
 	case path == "/v1/feed-sources":
 		return "/v1/feed-sources"
+	case strings.HasPrefix(path, "/v1/feed-sources/"):
+		if strings.HasSuffix(path, "/sync") {
+			return "/v1/feed-sources/{id}/sync"
+		}
+		return "/v1/feed-sources/{id}"
+	case path == "/v1/feed-runs":
+		return "/v1/feed-runs"
+	case path == "/v1/feed-conflicts":
+		return "/v1/feed-conflicts"
 	case strings.HasPrefix(path, "/v1/snapshots"):
 		return "/v1/snapshots"
 	case path == "/v1/audit":

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -23,6 +24,10 @@ type ControlMetrics struct {
 	securityEvents    *prometheus.CounterVec
 	eventRejects      *prometheus.CounterVec
 	prometheusQueries *prometheus.CounterVec
+	feedSyncSuccess   *prometheus.CounterVec
+	feedSyncErrors    *prometheus.CounterVec
+	feedEntries       *prometheus.GaugeVec
+	feedConflicts     *prometheus.GaugeVec
 }
 
 func NewControlMetrics() (*ControlMetrics, error) {
@@ -68,6 +73,22 @@ func NewControlMetrics() (*ControlMetrics, error) {
 		Name: "anti_ddos_control_prometheus_queries_total",
 		Help: "Prometheus query attempts proxied by the Control API.",
 	}, []string{"result"})
+	m.feedSyncSuccess = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_feed_sync_success_total",
+		Help: "Threat feed sync successes by bounded source name.",
+	}, []string{"source"})
+	m.feedSyncErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "anti_ddos_feed_sync_errors_total",
+		Help: "Threat feed sync errors by bounded source name and reason.",
+	}, []string{"source", "reason"})
+	m.feedEntries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_feed_entries_active",
+		Help: "Active threat feed reputation entries by bounded source name.",
+	}, []string{"source"})
+	m.feedConflicts = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "anti_ddos_feed_conflicts_active",
+		Help: "Active whitelist/feed conflicts by bounded source name.",
+	}, []string{"source"})
 
 	for _, collector := range []prometheus.Collector{
 		m.httpRequests,
@@ -80,6 +101,10 @@ func NewControlMetrics() (*ControlMetrics, error) {
 		m.securityEvents,
 		m.eventRejects,
 		m.prometheusQueries,
+		m.feedSyncSuccess,
+		m.feedSyncErrors,
+		m.feedEntries,
+		m.feedConflicts,
 	} {
 		if err := m.registry.Register(collector); err != nil {
 			return nil, err
@@ -163,7 +188,51 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 		}
 		metrics.agentStale.WithLabelValues(status, mode).Set(stale)
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	metrics.feedEntries.Reset()
+	metrics.feedConflicts.Reset()
+	rows, err = s.pool.Query(ctx, `SELECT name, active_entries, conflict_count FROM feed_sources`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var active, conflicts float64
+		if err := rows.Scan(&name, &active, &conflicts); err != nil {
+			return err
+		}
+		source := boundedMetricValue(name)
+		metrics.feedEntries.WithLabelValues(source).Set(active)
+		metrics.feedConflicts.WithLabelValues(source).Set(conflicts)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func boundedMetricValue(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 type metricResponseWriter struct {

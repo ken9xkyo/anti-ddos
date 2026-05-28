@@ -115,6 +115,42 @@ const data: DashboardData = {
     auto_enforced: true,
     status: 'auto_enforced',
     source: '198.51.100.10'
+  }],
+  feedSources: [{
+    id: 'f1',
+    name: 'spamhaus-drop',
+    type: 'spamhaus_drop',
+    required_for_production: true,
+    enabled: true,
+    interval_seconds: 3600,
+    status: 'healthy',
+    active_entries: 128,
+    conflict_count: 1,
+    parse_error_count: 0,
+    license_note: 'fair use',
+    next_run_at: new Date().toISOString()
+  }],
+  feedRuns: [{
+    id: 'fr1',
+    source_id: 'f1',
+    source_name: 'spamhaus-drop',
+    started_at: new Date().toISOString(),
+    status: 'success',
+    items_fetched: 130,
+    items_valid: 128,
+    parse_errors: 0,
+    snapshot_version: 8
+  }],
+  feedConflicts: [{
+    id: 'fc1',
+    source_id: 'f1',
+    source_name: 'spamhaus-drop',
+    reputation_id: 'rep1',
+    whitelist_id: 'w1',
+    reputation_cidr: '198.51.100.0/24',
+    whitelist_cidr: '198.51.100.10/32',
+    status: 'active',
+    detected_at: new Date().toISOString()
   }]
 };
 
@@ -164,5 +200,12 @@ describe('DashboardShell', () => {
     const table = screen.getByRole('table');
     expect(within(table).getByText('198.51.100.10')).toBeInTheDocument();
     expect(within(table).getByText('203.0.113.10:443')).toBeInTheDocument();
+  });
+
+  it('renders feed status and conflicts', () => {
+    renderShell(baseUser, 'reputation');
+    expect(screen.getAllByText('spamhaus-drop').length).toBeGreaterThan(0);
+    expect(screen.getByText('198.51.100.0/24')).toBeInTheDocument();
+    expect(screen.getByText('198.51.100.10/32')).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, DashboardOverview, Rule, SecurityEvent, Service, Session, User } from './types';
+import type { Agent, AnomalyEvaluation, BaselineProfile, DashboardData, DashboardOverview, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, Session, User } from './types';
 
 export class ApiClient {
   private token = localStorage.getItem('anti_ddos_token') ?? '';
@@ -27,16 +27,19 @@ export class ApiClient {
   }
 
   async dashboard(): Promise<DashboardData> {
-    const [overview, agents, services, rules, events, baselines, anomalies] = await Promise.all([
+    const [overview, agents, services, rules, events, baselines, anomalies, feedSources, feedRuns, feedConflicts] = await Promise.all([
       this.request<DashboardOverview>('/v1/dashboard/overview'),
       this.request<Agent[]>('/v1/dashboard/agents'),
       this.request<Service[]>('/v1/dashboard/services'),
       this.request<Rule[]>('/v1/dashboard/rules'),
       this.request<SecurityEvent[]>('/v1/security-events?limit=50'),
       this.request<BaselineProfile[]>('/v1/baselines'),
-      this.request<AnomalyEvaluation[]>('/v1/anomalies?limit=30')
+      this.request<AnomalyEvaluation[]>('/v1/anomalies?limit=30'),
+      this.request<FeedSource[]>('/v1/feed-sources'),
+      this.request<FeedRun[]>('/v1/feed-runs?limit=20'),
+      this.request<FeedConflict[]>('/v1/feed-conflicts')
     ]);
-    return { overview, agents, services, rules, events, baselines, anomalies };
+    return { overview, agents, services, rules, events, baselines, anomalies, feedSources, feedRuns, feedConflicts };
   }
 
   async investigate(target: string): Promise<{ target: string; events: SecurityEvent[] }> {

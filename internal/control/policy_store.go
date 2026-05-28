@@ -449,6 +449,9 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	enabled := boolDefault(input.Enabled, true)
 	matchExpr := defaultJSON(input.MatchExpr)
 	evidence := defaultJSON(input.Evidence)
+	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
+	}
 	var serviceID any
 	if strings.TrimSpace(input.ServiceID) != "" {
 		serviceID = strings.TrimSpace(input.ServiceID)
@@ -463,9 +466,6 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	}
 	defer tx.Rollback(ctx)
 	var rule Rule
-	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
-		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
-	}
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
     id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
     dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
@@ -683,15 +683,15 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	err = scanFeedSource(tx.QueryRow(ctx, `INSERT INTO feed_sources(
     id, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-RETURNING id::text, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status, created_at, updated_at`,
+RETURNING `+feedSourceColumns(),
 		id,
 		input.Name,
-		input.Type,
+		normalizeFeedType(input.Type),
 		input.URL,
 		input.CredentialRef,
 		input.RequiredForProduction,
 		enabled,
-		defaultInterval(input.IntervalSeconds),
+		effectiveFeedIntervalSeconds(FeedSource{Type: input.Type, IntervalSeconds: defaultInterval(input.IntervalSeconds)}),
 		input.LicenseNote,
 		quota,
 		defaultString(input.Status, "placeholder"),
@@ -706,8 +706,7 @@ RETURNING id::text, name, type, url, credential_ref, required_for_production, en
 }
 
 func (s *Store) ListFeedSources(ctx context.Context) ([]FeedSource, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status, created_at, updated_at
-FROM feed_sources ORDER BY name`)
+	rows, err := s.pool.Query(ctx, feedSourceSelectSQL()+` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -736,9 +735,26 @@ func scanFeedSource(row rowScanner, source *FeedSource) error {
 		&source.LicenseNote,
 		&source.QuotaMetadata,
 		&source.Status,
+		&source.LastSuccessAt,
+		&source.LastErrorAt,
+		&source.LastError,
+		&source.NextRunAt,
+		&source.ActiveEntries,
+		&source.ConflictCount,
+		&source.ParseErrorCount,
 		&source.CreatedAt,
 		&source.UpdatedAt,
 	)
+}
+
+func feedSourceColumns() string {
+	return `id::text, name, type, url, credential_ref, required_for_production, enabled, interval_seconds,
+       license_note, quota_metadata, status, last_success_at, last_error_at, last_error, next_run_at,
+       active_entries, conflict_count, parse_error_count, created_at, updated_at`
+}
+
+func feedSourceSelectSQL() string {
+	return `SELECT ` + feedSourceColumns() + ` FROM feed_sources`
 }
 
 func requireOperator(actor *Actor) error {

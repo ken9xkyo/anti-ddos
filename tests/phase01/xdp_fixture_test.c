@@ -810,6 +810,41 @@ int main(int argc, char **argv)
 			   XDP_REDIRECT, &key) != 0)
 		goto out;
 
+	if (upsert_rule(env.rule_config_a_fd, 106, ACTION_RATE_LIMIT, 1, 20,
+			RATE_DIM_SOURCE_SERVICE, 2, 0, 0, 1, 0) != 0)
+		goto out;
+	if (upsert_service_with_rule(env.service_allowlist_a_fd, "203.0.113.10",
+				     L4_TCP, 9096, 20, ACTION_REDIRECT, 3,
+				     NEIGHBOR_RESOLVED, 106) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9096);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 20;
+	key.rule_id = 106;
+	if (expect_rewrite(&env, "fractional refill first packet redirects", &pkt,
+			   XDP_REDIRECT, &key) != 0)
+		goto out;
+	pkt = make_tcp_syn_port(9096);
+	key = key_for(REASON_RATE_LIMIT, ACTION_DROP, L4_TCP);
+	key.service_id = 20;
+	key.rule_id = 106;
+	if (expect_decision(&env, "fractional refill immediate packet drops", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+	usleep(250000);
+	pkt = make_tcp_syn_port(9096);
+	if (expect_decision(&env, "fractional refill first half interval drops", &pkt,
+			    XDP_DROP, &key) != 0)
+		goto out;
+	usleep(250000);
+	pkt = make_tcp_syn_port(9096);
+	key = key_for(REASON_NONE, ACTION_REDIRECT, L4_TCP);
+	key.service_id = 20;
+	key.rule_id = 106;
+	if (expect_rewrite(&env, "fractional refill accumulated interval redirects",
+			   &pkt, XDP_REDIRECT, &key) != 0)
+		goto out;
+
 	if (upsert_rule(env.rule_config_a_fd, 101, ACTION_RATE_LIMIT, 0, 15,
 			RATE_DIM_SOURCE_SERVICE, 1, 0, 0, 1, 0) != 0)
 		goto out;
