@@ -2,3 +2,6 @@ skills-lock.json
 .agents
 *.bak
 build/
+web/dashboard/node_modules/
+web/dashboard/dist/
+web/dashboard/*.tsbuildinfo
