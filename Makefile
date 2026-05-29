@@ -31,7 +31,7 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
-.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify phase8-test phase8-postgres-test phase8-ui-test phase8-verify phase9-test phase9-postgres-test phase9-ui-test phase9-verify clean
+.PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify phase8-test phase8-postgres-test phase8-ui-test phase8-verify phase9-test phase9-postgres-test phase9-ui-test phase9-verify admin-dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test clean
 
 phase1-build: $(BPF_OBJ)
 
@@ -209,6 +209,25 @@ phase9-verify: phase9-test phase9-postgres-test phase9-ui-test
 	@printf -- '- Telegram mock server verified success, 4xx no-retry, 5xx retry, malformed response handling and dedupe without duplicate send.\n' >> $(PHASE9_REPORT)
 	@printf -- '- Producers created alert records for test alert, anomaly/manual alert, feed failure, neighbor/redirect failure and ISP escalation runbook payload.\n' >> $(PHASE9_REPORT)
 	@printf -- '- React/Vite dashboard tests verified Alerts tab, Telegram status, delivery log visibility, ISP manual runbook and viewer read-only behavior; production build succeeded.\n' >> $(PHASE9_REPORT)
+
+admin-dashboard-postgres-test:
+	scripts/lab/admin-dashboard-postgres-test.sh
+
+admin-dashboard-ui-test:
+	npm --prefix web/dashboard test -- --run
+	npm --prefix web/dashboard run build
+
+admin-dashboard-test:
+	go vet ./...
+	go test -race ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found; skipping optional lint gate"; \
+	fi
+	scripts/lab/admin-dashboard-postgres-test.sh
+	npm --prefix web/dashboard test -- --run
+	npm --prefix web/dashboard run build
 
 $(VMLINUX):
 	@mkdir -p $(BPF_BUILD_DIR)
