@@ -26,10 +26,11 @@ type controlState struct {
 }
 
 type controlAgentInterface struct {
-	Name    string `json:"name"`
-	Ifindex uint32 `json:"ifindex,omitempty"`
-	MAC     string `json:"mac,omitempty"`
-	Role    string `json:"role,omitempty"`
+	Name         string `json:"name"`
+	Ifindex      uint32 `json:"ifindex,omitempty"`
+	MAC          string `json:"mac,omitempty"`
+	Role         string `json:"role,omitempty"`
+	LinkSpeedBPS uint64 `json:"link_speed_bps,omitempty"`
 }
 
 type controlRegisterRequest struct {
@@ -48,9 +49,10 @@ type controlRegisterResponse struct {
 }
 
 type controlHeartbeatRequest struct {
-	Status              string `json:"status"`
-	ActivePolicyVersion uint32 `json:"active_policy_version"`
-	XDPMode             string `json:"xdp_mode,omitempty"`
+	Status              string                  `json:"status"`
+	ActivePolicyVersion uint32                  `json:"active_policy_version"`
+	XDPMode             string                  `json:"xdp_mode,omitempty"`
+	Interfaces          []controlAgentInterface `json:"interfaces,omitempty"`
 }
 
 type controlHeartbeatResponse struct {
@@ -74,7 +76,7 @@ func RunControlSync(ctx context.Context, cfg Config, runtime *Runtime, metrics *
 	if state.AgentID == "" {
 		resp, err := client.register(ctx, controlRegisterRequest{
 			Hostname:      hostname(),
-			Interfaces:    []controlAgentInterface{interfaceMetadata(cfg.WANIface)},
+			Interfaces:    hostInterfaces(cfg.WANIface),
 			KernelVersion: fileTrimmed("/proc/sys/kernel/osrelease"),
 			UbuntuVersion: ubuntuVersion(),
 			XDPMode:       cfg.XDPMode,
@@ -106,6 +108,7 @@ func RunControlSync(ctx context.Context, cfg Config, runtime *Runtime, metrics *
 				Status:              "online",
 				ActivePolicyVersion: active,
 				XDPMode:             cfg.XDPMode,
+				Interfaces:          hostInterfaces(cfg.WANIface),
 			})
 			if err != nil {
 				logger.Warn("control heartbeat failed", "error", RedactString(err.Error()))
@@ -273,6 +276,36 @@ func interfaceMetadata(name string) controlAgentInterface {
 		MAC:     iface.HardwareAddr.String(),
 		Role:    "wan",
 	}
+}
+
+func hostInterfaces(wanName string) []controlAgentInterface {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		if strings.TrimSpace(wanName) == "" {
+			return nil
+		}
+		return []controlAgentInterface{interfaceMetadata(wanName)}
+	}
+	out := make([]controlAgentInterface, 0, len(ifaces))
+	seen := make(map[string]struct{}, len(ifaces))
+	for _, iface := range ifaces {
+		meta := controlAgentInterface{
+			Name:    iface.Name,
+			Ifindex: uint32(iface.Index),
+			MAC:     iface.HardwareAddr.String(),
+		}
+		if iface.Name == wanName {
+			meta.Role = "wan"
+		}
+		out = append(out, meta)
+		seen[iface.Name] = struct{}{}
+	}
+	if strings.TrimSpace(wanName) != "" {
+		if _, ok := seen[wanName]; !ok {
+			out = append(out, interfaceMetadata(wanName))
+		}
+	}
+	return out
 }
 
 func fileTrimmed(path string) string {

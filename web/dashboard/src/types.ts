@@ -54,6 +54,14 @@ export interface ApplyStatus {
   reported_at: string;
 }
 
+export interface AgentInterface {
+  name: string;
+  ifindex?: number;
+  mac?: string;
+  role?: string;
+  link_speed_bps?: number;
+}
+
 export interface Service {
   id: string;
   ebpf_id: number;
@@ -173,6 +181,7 @@ export interface Agent {
   last_seen_at?: string;
   stale: boolean;
   map_utilization?: Record<string, unknown>;
+  interfaces?: AgentInterface[];
   latest_apply?: ApplyStatus;
 }
 

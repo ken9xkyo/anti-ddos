@@ -75,6 +75,14 @@ Evidence chính: `make phase4-verify` PASS; report ở `reports/phase-04-devmap-
 - Network namespace/VETH integration test xác nhận backend chỉ thấy traffic đã allowlist và MAC headers được rewrite đúng.
 - Prometheus scrape redirect/neighbor metrics và dashboard Phase 06 có đủ input hiển thị.
 
+## UI UAT bổ sung cho Services / Forwarding
+
+- Trước khi chạy compose với Agent sync, chạy `make phase1-build` để tạo `build/bpf/xdp_data_plane.bpf.o`; `control-api` mount read-only file này qua `ANTI_DDOS_XDP_OBJECT_HOST` vào `/run/anti-ddos/xdp_data_plane.bpf.o` để snapshot `object_checksum` khớp với Agent.
+- UI Services / Forwarding phải hiển thị rõ trạng thái không có service, trạng thái service disabled/enabled, metadata resolved ifindex/MAC và lỗi apply mới nhất gồm policy version, stage và reason; khi add/edit service, `Output interface` chọn từ danh sách interface host do Agent báo về, tự điền ifindex/MAC nếu có, mặc định tạo service disabled và chỉ cho enable khi resolved forwarding metadata đầy đủ.
+- UAT live chỉ tạo service tạm `phase4-e2e-<timestamp>` ở trạng thái disabled, kiểm tra search/filter/edit/delete rồi dọn lại; không enable service và không attach XDP vào NIC thật.
+- Auto test UI live chạy bằng `ANTI_DDOS_E2E_MUTATE_LIVE=1 ADMIN_DASHBOARD_URL=... ADMIN_DASHBOARD_USERNAME=... ADMIN_DASHBOARD_PASSWORD=... make phase4-ui-e2e`.
+- Active DEVMAP forwarding tiếp tục được kiểm chứng bằng `make phase4-verify` và VETH namespace lab, không bằng service live trên dashboard.
+
 ## Truy vết PRD
 
 - PRD-002: forwarding status, redirect counters và neighbor health trên metrics/dashboard.

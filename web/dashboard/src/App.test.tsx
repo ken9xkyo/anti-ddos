@@ -8,10 +8,14 @@ const data = dashboardFixture();
 const adminUser: User = { id: 'u3', username: 'admin', role: 'admin' };
 
 function renderShell(user: User, activeTab: Tab = 'overview') {
+  return renderShellWithData(user, data, activeTab);
+}
+
+function renderShellWithData(user: User, dashboardData: DashboardData, activeTab: Tab = 'overview') {
   return render(
     <DashboardShell
       user={user}
-      data={data}
+      data={dashboardData}
       activeTab={activeTab}
       setActiveTab={vi.fn()}
       loading={false}
@@ -47,6 +51,62 @@ describe('DashboardShell', () => {
     expect(screen.queryByRole('button', { name: /add service/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /edit api-https/i })).not.toBeInTheDocument();
     expect(screen.getByText('api-https')).toBeInTheDocument();
+  });
+
+  it('shows service empty state and apply failure details', () => {
+    renderShellWithData(viewerUser, {
+      ...data,
+      services: [],
+      overview: {
+        ...data.overview,
+        latest_apply_status: [{
+          agent_id: 'a1',
+          hostname: 'node-a',
+          policy_version: 9,
+          status: 'failed',
+          error_stage: 'validate',
+          error_reason: 'policy snapshot object_checksum mismatch',
+          reported_at: '2026-05-29T03:00:00Z'
+        }]
+      },
+      agents: [{
+        ...data.agents[0],
+        latest_apply: {
+          agent_id: 'a1',
+          hostname: 'node-a',
+          policy_version: 9,
+          status: 'failed',
+          error_stage: 'validate',
+          error_reason: 'policy snapshot object_checksum mismatch',
+          reported_at: '2026-05-29T03:00:00Z'
+        }
+      }]
+    }, 'services');
+
+    expect(screen.getByText('No protected services configured')).toBeInTheDocument();
+    expect(screen.getByText('Latest apply failure')).toBeInTheDocument();
+    expect(screen.getByText('validate: policy snapshot object_checksum mismatch')).toBeInTheDocument();
+  });
+
+  it('shows agent apply failure details', () => {
+    renderShellWithData(viewerUser, {
+      ...data,
+      agents: [{
+        ...data.agents[0],
+        latest_apply: {
+          agent_id: 'a1',
+          hostname: 'node-a',
+          policy_version: 9,
+          status: 'failed',
+          error_stage: 'validate',
+          error_reason: 'policy snapshot object_checksum mismatch',
+          reported_at: '2026-05-29T03:00:00Z'
+        }
+      }]
+    }, 'agents');
+
+    expect(screen.getByText('v9')).toBeInTheDocument();
+    expect(screen.getByText('validate: policy snapshot object_checksum mismatch')).toBeInTheDocument();
   });
 
   it('shows operator mutation entrypoints', () => {
@@ -151,13 +211,115 @@ describe('DashboardShell', () => {
         owner: 'platform',
         criticality: 'high',
         protection_mode: 'enforce',
-        enabled: true,
+        enabled: false,
         tags: [],
         resolved_next_hop_mac: '',
         resolved_src_mac: '',
         neighbor_resolution_status: 'unresolved'
       }
     }]);
+  });
+
+  it('selects output interface from reported host interfaces', async () => {
+    const onRefresh = vi.fn(async () => undefined);
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    const dashboardData: DashboardData = {
+      ...data,
+      agents: [{
+        ...data.agents[0],
+        interfaces: [{
+          name: 'backend0',
+          ifindex: 8,
+          mac: '02:00:00:00:00:08',
+          role: 'backend'
+        }]
+      }]
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        path: input.toString(),
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      return jsonResponse(data.services[0]);
+    }));
+    render(
+      <DashboardShell
+        user={operatorUser}
+        data={dashboardData}
+        activeTab="services"
+        setActiveTab={vi.fn()}
+        loading={false}
+        error=""
+        lastRefresh={new Date().toISOString()}
+        onRefresh={onRefresh}
+        onLogout={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /add service/i }));
+    expect(screen.getByRole('option', { name: /backend0.*ifindex 8/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
+    fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
+    fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443' } });
+    fireEvent.change(screen.getByLabelText(/output interface/i), { target: { value: 'backend0' } });
+    fireEvent.change(screen.getByLabelText(/^owner$/i), { target: { value: 'platform' } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'add edge API service' } });
+    fireEvent.click(screen.getByRole('button', { name: /save service/i }));
+
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    expect(calls[0].body).toMatchObject({
+      output_interface: 'backend0',
+      enabled: false,
+      resolved_ifindex: 8,
+      resolved_src_mac: '02:00:00:00:00:08'
+    });
+  });
+
+  it('requires resolved next-hop metadata before enabling a service', async () => {
+    const onRefresh = vi.fn(async () => undefined);
+    const fetchMock = vi.fn();
+    const dashboardData: DashboardData = {
+      ...data,
+      agents: [{
+        ...data.agents[0],
+        interfaces: [{
+          name: 'enp134s0f1',
+          ifindex: 7,
+          mac: '90:e2:ba:24:9b:b6',
+          role: 'backend'
+        }]
+      }]
+    };
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <DashboardShell
+        user={operatorUser}
+        data={dashboardData}
+        activeTab="services"
+        setActiveTab={vi.fn()}
+        loading={false}
+        error=""
+        lastRefresh={new Date().toISOString()}
+        onRefresh={onRefresh}
+        onLogout={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /add service/i }));
+    expect(screen.getByLabelText(/enabled/i)).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
+    fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
+    fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443' } });
+    fireEvent.change(screen.getByLabelText(/output interface/i), { target: { value: 'enp134s0f1' } });
+    fireEvent.change(screen.getByLabelText(/^owner$/i), { target: { value: 'platform' } });
+    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'add edge API service' } });
+    fireEvent.click(screen.getByLabelText(/enabled/i));
+    fireEvent.click(screen.getByRole('button', { name: /save service/i }));
+
+    expect(await screen.findByText('resolved next-hop MAC is required before enabling a service')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it('updates and deletes a protected service from row actions', async () => {

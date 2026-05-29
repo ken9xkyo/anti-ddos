@@ -4,7 +4,10 @@ skills-lock.json
 .env.*
 !.env.example
 *.bak
+__pycache__/
+*.pyc
 build/
 web/dashboard/node_modules/
 web/dashboard/dist/
 web/dashboard/*.tsbuildinfo
+.venv-e2e/

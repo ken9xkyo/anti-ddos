@@ -40,23 +40,9 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,'registered',now())`,
 WHERE id=$1`, id, req.KernelVersion, req.UbuntuVersion, req.XDPMode, req.DevmapSupport, req.AgentVersion); err != nil {
 			return AgentRegisterResponse{}, err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM agent_interfaces WHERE agent_id=$1`, id); err != nil {
-			return AgentRegisterResponse{}, err
-		}
 	}
-	for _, iface := range req.Interfaces {
-		if strings.TrimSpace(iface.Name) == "" {
-			continue
-		}
-		ifaceID, err := newUUID()
-		if err != nil {
-			return AgentRegisterResponse{}, err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO agent_interfaces(id, agent_id, name, ifindex, mac, role, link_speed_bps)
-VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			ifaceID, id, iface.Name, iface.Ifindex, iface.MAC, iface.Role, iface.LinkSpeedBPS); err != nil {
-			return AgentRegisterResponse{}, err
-		}
+	if err := replaceAgentInterfaces(ctx, tx, id, req.Interfaces); err != nil {
+		return AgentRegisterResponse{}, err
 	}
 	version, err := latestPolicyVersion(ctx, tx)
 	if err != nil {
@@ -73,16 +59,50 @@ func (s *Store) HeartbeatAgent(ctx context.Context, id string, req AgentHeartbea
 	if status == "" {
 		status = "online"
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE agents SET status=$2, active_policy_version=$3, xdp_mode=COALESCE(NULLIF($4,''), xdp_mode),
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AgentHeartbeatResponse{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE agents SET status=$2, active_policy_version=$3, xdp_mode=COALESCE(NULLIF($4,''), xdp_mode),
     last_seen_at=now(), updated_at=now(), metadata=jsonb_set(metadata, '{map_utilization}', COALESCE(NULLIF($5,'')::jsonb, '{}'::jsonb), true)
 WHERE id=$1`, id, status, req.ActivePolicyVersion, req.XDPMode, string(defaultJSON(req.MapUtilization))); err != nil {
 		return AgentHeartbeatResponse{}, err
 	}
-	version, err := s.LatestPolicyVersion(ctx)
+	if len(req.Interfaces) > 0 {
+		if err := replaceAgentInterfaces(ctx, tx, id, req.Interfaces); err != nil {
+			return AgentHeartbeatResponse{}, err
+		}
+	}
+	version, err := latestPolicyVersion(ctx, tx)
 	if err != nil {
 		return AgentHeartbeatResponse{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return AgentHeartbeatResponse{}, err
+	}
 	return AgentHeartbeatResponse{DesiredPolicyVersion: version}, nil
+}
+
+func replaceAgentInterfaces(ctx context.Context, tx pgx.Tx, agentID string, interfaces []AgentInterface) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_interfaces WHERE agent_id=$1`, agentID); err != nil {
+		return err
+	}
+	for _, iface := range interfaces {
+		if strings.TrimSpace(iface.Name) == "" {
+			continue
+		}
+		ifaceID, err := newUUID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO agent_interfaces(id, agent_id, name, ifindex, mac, role, link_speed_bps)
+VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			ifaceID, agentID, iface.Name, iface.Ifindex, iface.MAC, iface.Role, iface.LinkSpeedBPS); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) RecordAgentApply(ctx context.Context, agentID string, req AgentApplyRequest) error {

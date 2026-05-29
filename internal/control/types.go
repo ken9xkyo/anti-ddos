@@ -409,11 +409,12 @@ type AgentRegisterResponse struct {
 }
 
 type AgentHeartbeatRequest struct {
-	Status              string          `json:"status"`
-	ActivePolicyVersion uint32          `json:"active_policy_version"`
-	XDPMode             string          `json:"xdp_mode,omitempty"`
-	UptimeSeconds       uint64          `json:"uptime_seconds,omitempty"`
-	MapUtilization      json.RawMessage `json:"map_utilization,omitempty"`
+	Status              string           `json:"status"`
+	ActivePolicyVersion uint32           `json:"active_policy_version"`
+	XDPMode             string           `json:"xdp_mode,omitempty"`
+	UptimeSeconds       uint64           `json:"uptime_seconds,omitempty"`
+	MapUtilization      json.RawMessage  `json:"map_utilization,omitempty"`
+	Interfaces          []AgentInterface `json:"interfaces,omitempty"`
 }
 
 type AgentHeartbeatResponse struct {

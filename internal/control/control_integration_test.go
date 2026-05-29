@@ -172,9 +172,22 @@ func TestPhase05Integration(t *testing.T) {
 		Status:              "online",
 		ActivePolicyVersion: 0,
 		XDPMode:             "native",
+		Interfaces: []AgentInterface{{
+			Name:    "backend0",
+			Ifindex: 8,
+			MAC:     "02:00:00:00:00:08",
+			Role:    "backend",
+		}},
 	})
 	if heartbeatResp.Code != http.StatusOK {
 		t.Fatalf("heartbeat status = %d body=%s", heartbeatResp.Code, heartbeatResp.Body.String())
+	}
+	dashboardAgents, err := store.ListDashboardAgents(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboardAgents) != 1 || len(dashboardAgents[0].Interfaces) != 1 || dashboardAgents[0].Interfaces[0].Name != "backend0" {
+		t.Fatalf("dashboard agent interfaces = %#v", dashboardAgents)
 	}
 	fetchReq, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/agents/"+reg.AgentID+"/snapshot?active_version=0", nil)
 	fetchReq.Header.Set("Authorization", "Bearer agent-secret")

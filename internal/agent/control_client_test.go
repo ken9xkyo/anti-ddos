@@ -25,6 +25,9 @@ func TestControlClientRegisterHeartbeatFetchAck(t *testing.T) {
 			if req.Hostname == "" {
 				t.Fatal("register hostname missing")
 			}
+			if len(req.Interfaces) != 1 || req.Interfaces[0].Name != "wan0" {
+				t.Fatalf("register interfaces = %#v", req.Interfaces)
+			}
 			_ = json.NewEncoder(w).Encode(controlRegisterResponse{AgentID: "agent-1", DesiredPolicyVersion: 9})
 		case "/v1/agents/agent-1/heartbeat":
 			var req controlHeartbeatRequest
@@ -33,6 +36,9 @@ func TestControlClientRegisterHeartbeatFetchAck(t *testing.T) {
 			}
 			if req.ActivePolicyVersion != 8 {
 				t.Fatalf("heartbeat active version = %d", req.ActivePolicyVersion)
+			}
+			if len(req.Interfaces) != 1 || req.Interfaces[0].Name != "wan0" {
+				t.Fatalf("heartbeat interfaces = %#v", req.Interfaces)
 			}
 			_ = json.NewEncoder(w).Encode(controlHeartbeatResponse{DesiredPolicyVersion: 9})
 		case "/v1/agents/agent-1/snapshot":
@@ -54,14 +60,15 @@ func TestControlClientRegisterHeartbeatFetchAck(t *testing.T) {
 	defer server.Close()
 
 	client := controlClient{baseURL: server.URL, token: "shared", client: server.Client()}
-	register, err := client.register(context.Background(), controlRegisterRequest{Hostname: "node"})
+	ifaces := []controlAgentInterface{{Name: "wan0", Ifindex: 7, MAC: "02:00:00:00:00:01", Role: "wan"}}
+	register, err := client.register(context.Background(), controlRegisterRequest{Hostname: "node", Interfaces: ifaces})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if register.AgentID != "agent-1" || register.DesiredPolicyVersion != 9 {
 		t.Fatalf("register response = %#v", register)
 	}
-	heartbeat, err := client.heartbeat(context.Background(), "agent-1", controlHeartbeatRequest{ActivePolicyVersion: 8})
+	heartbeat, err := client.heartbeat(context.Background(), "agent-1", controlHeartbeatRequest{ActivePolicyVersion: 8, Interfaces: ifaces})
 	if err != nil {
 		t.Fatal(err)
 	}

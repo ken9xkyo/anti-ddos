@@ -413,7 +413,18 @@ ORDER BY bs.priority, bs.ebpf_id`)
 }
 
 func (s *Store) makePolicyService(req agent.ServiceResolveRequest, ifindex uint32, dstMAC, srcMAC string) (agent.PolicyService, error) {
-	if ifindex != 0 && strings.TrimSpace(dstMAC) != "" && strings.TrimSpace(srcMAC) != "" {
+	dstMAC = strings.TrimSpace(dstMAC)
+	srcMAC = strings.TrimSpace(srcMAC)
+	if ifindex != 0 || dstMAC != "" || srcMAC != "" {
+		if ifindex == 0 {
+			return agent.PolicyService{}, errors.New("resolved_ifindex is required when using resolved forwarding metadata")
+		}
+		if dstMAC == "" {
+			return agent.PolicyService{}, errors.New("resolved_next_hop_mac is required when using resolved forwarding metadata")
+		}
+		if srcMAC == "" {
+			return agent.PolicyService{}, errors.New("resolved_src_mac is required when using resolved forwarding metadata")
+		}
 		return agent.PolicyService{
 			ServiceID:          req.ServiceID,
 			ForwardingPolicyID: req.ForwardingPolicyID,

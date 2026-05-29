@@ -365,6 +365,30 @@ select {
   overflow-wrap: anywhere;
 }
 
+.apply-failure-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.apply-detail,
+.apply-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.apply-detail span,
+.apply-cell span {
+  overflow-wrap: anywhere;
+}
+
+.apply-error {
+  color: #991b1b;
+}
+
 .table-scroll {
   width: 100%;
   overflow-x: auto;
@@ -393,6 +417,11 @@ th {
 
 td {
   color: #1e293b;
+}
+
+.table-empty {
+  color: #64748b;
+  text-align: center;
 }
 
 .source-grid {

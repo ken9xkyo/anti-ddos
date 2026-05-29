@@ -35,6 +35,7 @@ Yeu cau: Docker Engine va Docker Compose plugin.
 cp .env.example .env
 # Sua cac gia tri change-me-* trong .env truoc khi dung ngoai lab local.
 
+make phase1-build
 docker compose build control-api admin-dashboard
 docker compose up -d
 ```
@@ -86,6 +87,7 @@ Neu chua co interface duoc phe duyet, dung cac lab script VETH thay vi Agent tre
 ## Kiem Thu
 
 ```bash
+make phase1-build
 docker compose config
 docker compose build control-api admin-dashboard
 go test ./...

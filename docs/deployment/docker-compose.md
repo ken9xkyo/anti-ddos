@@ -39,11 +39,20 @@ cp .env.example .env
 
 3. Sua cac gia tri `change-me-*` trong `.env`.
 
+4. Build BPF object de Control API container va Agent host cung tinh `object_checksum` tren cung artifact:
+
+```bash
+make phase1-build
+```
+
+Mac dinh compose mount read-only `${ANTI_DDOS_XDP_OBJECT_HOST:-./build/bpf/xdp_data_plane.bpf.o}` vao `/run/anti-ddos/xdp_data_plane.bpf.o` trong Control API container. Neu file nay thieu, compose se fail thay vi tao snapshot voi checksum khong khop Agent.
+
 Khong commit `.env`. Repo chi track `.env.example`.
 
 ## Khoi Dong Stack
 
 ```bash
+make phase1-build
 docker compose config
 docker compose build control-api admin-dashboard
 docker compose up -d
@@ -143,7 +152,28 @@ Doi port bang `.env` neu host da co service dung port tuong ung.
 - Khong dua raw token, DSN, password that vao repo.
 - Control API va Dashboard container chay non-root, drop capabilities va dung `no-new-privileges`.
 - PostgreSQL, Prometheus va Grafana dung named volume de giu du lieu qua restart.
-- `ANTI_DDOS_XDP_OBJECT` trong Control API container co the tro toi path khong ton tai; khi do snapshot metadata dung checksum `control-object-unavailable`. Agent host van dung object that tu `build/bpf/xdp_data_plane.bpf.o`.
+- `ANTI_DDOS_XDP_OBJECT` trong Control API container tro toi file duoc bind mount tu `ANTI_DDOS_XDP_OBJECT_HOST`. Chay `make phase1-build` truoc `docker compose up -d` de tranh Agent reject snapshot vi `object_checksum mismatch`.
+
+## Phase 4 Services / Forwarding UI E2E
+
+E2E nay tao mot protected service tam thoi dang disabled, sua, roi xoa qua dashboard. Test khong enable service va khong attach XDP vao NIC that. Neu can xac thuc mot host interface cu the trong dropdown, dat `ANTI_DDOS_E2E_OUTPUT_INTERFACE=<iface>` va `ANTI_DDOS_E2E_REQUIRE_OUTPUT_INTERFACE=1`.
+
+Dashboard mac dinh tao service disabled. Khi enable service live, form phai co du `resolved_ifindex`, `resolved_src_mac` va `resolved_next_hop_mac`; Control API khong fallback sang lookup netlink trong container khi metadata host da duoc Agent bao ve nhung con thieu next-hop MAC.
+
+```bash
+python3 -m venv .venv-e2e
+.venv-e2e/bin/python -m pip install -r requirements-e2e.txt
+.venv-e2e/bin/python -m playwright install chromium
+
+ANTI_DDOS_E2E_MUTATE_LIVE=1 \
+ADMIN_DASHBOARD_URL=http://127.0.0.1:8088 \
+ADMIN_DASHBOARD_USERNAME=admin \
+ADMIN_DASHBOARD_PASSWORD='<admin-password>' \
+PYTHON=.venv-e2e/bin/python \
+make phase4-ui-e2e
+```
+
+Credential chi truyen qua bien moi truong local. Khong commit password vao repo hoac script.
 
 ## Lenh Van Hanh
 

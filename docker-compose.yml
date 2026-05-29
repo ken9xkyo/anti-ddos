@@ -44,6 +44,13 @@ services:
       ANTI_DDOS_EVENT_SAMPLE_DENOM: ${ANTI_DDOS_EVENT_SAMPLE_DENOM:-1}
     ports:
       - "127.0.0.1:${CONTROL_API_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${ANTI_DDOS_XDP_OBJECT_HOST:-./build/bpf/xdp_data_plane.bpf.o}
+        target: /run/anti-ddos/xdp_data_plane.bpf.o
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - anti-ddos-mgmt
     security_opt:

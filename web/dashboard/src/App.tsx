@@ -23,7 +23,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { ApiClient } from './api';
-import type { Agent, Alert, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, ServiceInput, TelegramConfig, TelegramConfigInput, User } from './types';
+import type { Agent, Alert, AnomalyEvaluation, ApplyStatus, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, ServiceInput, TelegramConfig, TelegramConfigInput, User } from './types';
 import './styles.css';
 
 const api = new ApiClient();
@@ -195,7 +195,7 @@ export function DashboardShell({
       {data && activeTab === 'anomalies' ? <AnomaliesView anomalies={data.anomalies} baselines={data.baselines} /> : null}
       {data && activeTab === 'rules' ? <RulesView rules={data.rules} canMutate={canMutate} /> : null}
       {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} canMutate={canMutate} /> : null}
-      {data && activeTab === 'services' ? <ServicesView services={data.services} canMutate={canMutate} onRefresh={onRefresh} /> : null}
+      {data && activeTab === 'services' ? <ServicesView services={data.services} agents={data.agents} applyStatuses={data.overview.latest_apply_status} canMutate={canMutate} onRefresh={onRefresh} /> : null}
       {data && activeTab === 'agents' ? <AgentsView agents={data.agents} /> : null}
       {data && activeTab === 'events' ? <EventsView events={data.events} /> : null}
     </main>
@@ -515,7 +515,26 @@ type ServiceFormState = {
   neighbor_resolution_status: string;
 };
 
-function ServicesView({ services, canMutate, onRefresh }: { services: Service[]; canMutate: boolean; onRefresh: () => void | Promise<void> }) {
+type InterfaceOption = {
+  name: string;
+  label: string;
+  ifindex?: number;
+  mac?: string;
+};
+
+function ServicesView({
+  services,
+  agents,
+  applyStatuses,
+  canMutate,
+  onRefresh
+}: {
+  services: Service[];
+  agents: Agent[];
+  applyStatuses: ApplyStatus[];
+  canMutate: boolean;
+  onRefresh: () => void | Promise<void>;
+}) {
   const [query, setQuery] = useState('');
   const [protocolFilter, setProtocolFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
@@ -543,6 +562,12 @@ function ServicesView({ services, canMutate, onRefresh }: { services: Service[];
       return matchesText && matchesProtocol && matchesState;
     });
   }, [protocolFilter, query, services, stateFilter]);
+  const outputInterfaces = useMemo(() => outputInterfaceOptions(agents), [agents]);
+  const formOutputInterfaces = useMemo(
+    () => withCurrentOutputInterface(outputInterfaces, form.output_interface),
+    [form.output_interface, outputInterfaces]
+  );
+  const failedApplies = applyStatuses.filter((status) => status.status === 'failed');
 
   const openCreate = () => {
     setFormMode('create');
@@ -560,9 +585,36 @@ function ServicesView({ services, canMutate, onRefresh }: { services: Service[];
     setFormMode('');
     setEditingService(null);
   };
+  const selectOutputInterface = (name: string) => {
+    const selected = outputInterfaces.find((item) => item.name === name);
+    if (!name) {
+      setForm({
+        ...form,
+        output_interface: '',
+        resolved_ifindex: '',
+        resolved_src_mac: ''
+      });
+      return;
+    }
+    if (!selected) {
+      setForm({ ...form, output_interface: name });
+      return;
+    }
+    setForm({
+      ...form,
+      output_interface: name,
+      resolved_ifindex: selected.ifindex ? String(selected.ifindex) : '',
+      resolved_src_mac: selected.mac || ''
+    });
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!canMutate) return;
+    const metadataError = enabledServiceMetadataError(form);
+    if (metadataError) {
+      setResult(metadataError);
+      return;
+    }
     try {
       setWorking('service');
       const input = serviceInputFromForm(form);
@@ -633,6 +685,19 @@ function ServicesView({ services, canMutate, onRefresh }: { services: Service[];
         {result ? <div className={result.includes('failed') || result.includes('required') || result.includes('invalid') ? 'error-line inline-message' : 'success-line inline-message'}>{result}</div> : null}
       </div>
 
+      {failedApplies.length > 0 ? (
+        <div className="wide-panel apply-failure-panel">
+          <PanelHeader icon={<AlertTriangle size={18} />} title="Latest apply failure" />
+          {failedApplies.map((status) => (
+            <div className="apply-detail" key={`${status.agent_id}-${status.policy_version}`}>
+              <StatusPill state="warn" text={status.hostname || status.agent_id} />
+              <span>policy v{status.policy_version}</span>
+              <span>{status.error_stage || 'apply'}: {status.error_reason || status.status}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {formMode ? (
         <form className="wide-panel form-grid service-form" onSubmit={submit}>
           <PanelHeader icon={<Pencil size={18} />} title={formMode === 'edit' ? 'Edit service' : 'Add service'} />
@@ -658,7 +723,16 @@ function ServicesView({ services, canMutate, onRefresh }: { services: Service[];
           </label>
           <label>
             Output interface
-            <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
+            {formOutputInterfaces.length > 0 ? (
+              <select value={form.output_interface} onChange={(event) => selectOutputInterface(event.target.value)}>
+                <option value="">Select interface</option>
+                {formOutputInterfaces.map((item) => (
+                  <option key={item.name} value={item.name}>{item.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
+            )}
           </label>
           <label>
             Owner
@@ -745,7 +819,11 @@ function ServicesView({ services, canMutate, onRefresh }: { services: Service[];
 
       <TablePanel icon={<Router size={18} />} title={`Protected services (${filtered.length})`}>
         <thead><tr><th>Name</th><th>Backend</th><th>Protocol</th><th>Ports</th><th>Output</th><th>Owner</th><th>Mode</th><th>Neighbor</th><th>Apply</th><th>State</th><th>Actions</th></tr></thead>
-        <tbody>{filtered.map((service) => (
+        <tbody>{filtered.length === 0 ? (
+          <tr>
+            <td className="table-empty" colSpan={11}>{services.length === 0 ? 'No protected services configured' : 'No services match the current filters'}</td>
+          </tr>
+        ) : filtered.map((service) => (
           <tr key={service.id}>
             <td>{service.name}</td>
             <td>{service.backend_cidr}</td>
@@ -791,7 +869,7 @@ function emptyServiceForm(): ServiceFormState {
     owner: '',
     criticality: 'high',
     protection_mode: 'enforce',
-    enabled: true,
+    enabled: false,
     priority: '',
     tags: '',
     resolved_ifindex: '',
@@ -846,6 +924,58 @@ function serviceInputFromForm(form: ServiceFormState): ServiceInput {
   };
 }
 
+function enabledServiceMetadataError(form: ServiceFormState): string {
+  if (!form.enabled) {
+    return '';
+  }
+  if (!form.resolved_ifindex.trim()) {
+    return 'resolved ifindex is required before enabling a service';
+  }
+  if (!form.resolved_next_hop_mac.trim()) {
+    return 'resolved next-hop MAC is required before enabling a service';
+  }
+  if (!form.resolved_src_mac.trim()) {
+    return 'source MAC is required before enabling a service';
+  }
+  return '';
+}
+
+function outputInterfaceOptions(agents: Agent[]): InterfaceOption[] {
+  const seen = new Set<string>();
+  const out: InterfaceOption[] = [];
+  for (const agent of agents) {
+    for (const iface of agent.interfaces ?? []) {
+      const name = iface.name.trim();
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push({
+        name,
+        label: interfaceLabel(iface),
+        ifindex: iface.ifindex,
+        mac: iface.mac
+      });
+    }
+  }
+  return out.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function withCurrentOutputInterface(options: InterfaceOption[], current: string): InterfaceOption[] {
+  const name = current.trim();
+  if (!name || options.some((item) => item.name === name)) {
+    return options;
+  }
+  return [{ name, label: `${name} (not reported by agent)` }, ...options];
+}
+
+function interfaceLabel(iface: { name: string; ifindex?: number; mac?: string; role?: string }): string {
+  const details = [
+    iface.role,
+    iface.ifindex ? `ifindex ${iface.ifindex}` : '',
+    iface.mac
+  ].filter(Boolean);
+  return details.length > 0 ? `${iface.name} (${details.join(', ')})` : iface.name;
+}
+
 function parsePorts(value: string): number[] {
   const ports = splitList(value).map((item) => Number(item));
   if (ports.length === 0 || ports.some((port) => !Number.isInteger(port) || port <= 0 || port > 65535)) {
@@ -878,7 +1008,17 @@ function AgentsView({ agents }: { agents: Agent[] }) {
           <td>{agent.xdp_mode}</td>
           <td>{agent.active_policy_version}</td>
           <td>{agent.devmap_support ? <CheckCircle2 size={16} /> : <Ban size={16} />}</td>
-          <td>{agent.latest_apply?.status ?? 'pending'}</td>
+          <td>
+            {agent.latest_apply ? (
+              <div className="apply-cell">
+                <StatusPill state={agent.latest_apply.status === 'applied' ? 'ok' : agent.latest_apply.status === 'failed' ? 'warn' : 'off'} text={agent.latest_apply.status} />
+                <span>v{agent.latest_apply.policy_version}</span>
+                {agent.latest_apply.status === 'failed' ? (
+                  <span className="apply-error">{agent.latest_apply.error_stage || 'apply'}: {agent.latest_apply.error_reason || 'failed'}</span>
+                ) : null}
+              </div>
+            ) : 'pending'}
+          </td>
         </tr>
       ))}</tbody>
     </TablePanel>

@@ -45,6 +45,9 @@ export function dashboardFixture(): DashboardData {
       protection_mode: 'enforce',
       enabled: true,
       sync_status: 'pending',
+      resolved_ifindex: 7,
+      resolved_next_hop_mac: '02:00:00:00:00:02',
+      resolved_src_mac: '02:00:00:00:00:01',
       neighbor_resolution_status: 'resolved',
       apply_status: 'applied'
     }],
