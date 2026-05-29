@@ -62,7 +62,7 @@ ORDER BY pas.agent_id, pas.reported_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DashboardApplyStatus
+	out := make([]DashboardApplyStatus, 0)
 	for rows.Next() {
 		var item DashboardApplyStatus
 		if err := rows.Scan(&item.AgentID, &item.Hostname, &item.PolicyVersion, &item.Status, &item.ErrorStage, &item.ErrorReason, &item.ReportedAt); err != nil {
@@ -82,7 +82,7 @@ FROM agents ORDER BY hostname`)
 	}
 	defer rows.Close()
 	now := time.Now()
-	var agents []DashboardAgent
+	agents := make([]DashboardAgent, 0)
 	for rows.Next() {
 		var agent DashboardAgent
 		var mapUtil json.RawMessage
@@ -198,7 +198,7 @@ func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInt
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AgentInterface
+	out := make([]AgentInterface, 0)
 	for rows.Next() {
 		var iface AgentInterface
 		if err := rows.Scan(&iface.Name, &iface.Ifindex, &iface.MAC, &iface.Role, &iface.LinkSpeedBPS); err != nil {

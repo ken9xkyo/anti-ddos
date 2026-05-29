@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -7,19 +7,23 @@ import {
   Clock,
   Database,
   Gauge,
+  Pencil,
+  Plus,
   ListChecks,
   LockKeyhole,
   LogOut,
   RefreshCw,
   Router,
+  Save,
   Search,
   Send,
   Server,
   Shield,
+  Trash2,
   TrendingUp
 } from 'lucide-react';
 import { ApiClient } from './api';
-import type { Agent, Alert, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, TelegramConfig, User } from './types';
+import type { Agent, Alert, AnomalyEvaluation, BaselineProfile, DashboardData, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, ServiceInput, TelegramConfig, TelegramConfigInput, User } from './types';
 import './styles.css';
 
 const api = new ApiClient();
@@ -38,31 +42,28 @@ export default function App() {
     api.me().then(setUser).catch(() => undefined);
   }, []);
 
+  const loadDashboard = useCallback(async () => {
+    try {
+      setLoading(true);
+      const next = await api.dashboard();
+      setData(next);
+      setLastRefresh(new Date().toISOString());
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'load failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        setLoading(true);
-        const next = await api.dashboard();
-        if (!cancelled) {
-          setData(next);
-          setLastRefresh(new Date().toISOString());
-          setError('');
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'load failed');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    load();
-    const timer = window.setInterval(load, 3000);
+    loadDashboard();
+    const timer = window.setInterval(loadDashboard, 3000);
     return () => {
-      cancelled = true;
       window.clearInterval(timer);
     };
-  }, [user]);
+  }, [loadDashboard, user]);
 
   if (!user) {
     return <LoginView onLogin={setUser} error={error} setError={setError} />;
@@ -77,6 +78,7 @@ export default function App() {
       loading={loading}
       error={error}
       lastRefresh={lastRefresh}
+      onRefresh={loadDashboard}
       onLogout={() => {
         api.clearToken();
         setUser(null);
@@ -135,6 +137,7 @@ export function DashboardShell({
   loading,
   error,
   lastRefresh,
+  onRefresh,
   onLogout
 }: {
   user: User;
@@ -144,6 +147,7 @@ export function DashboardShell({
   loading: boolean;
   error: string;
   lastRefresh: string;
+  onRefresh: () => void | Promise<void>;
   onLogout: () => void;
 }) {
   const canMutate = user.role === 'admin' || user.role === 'operator';
@@ -167,7 +171,7 @@ export function DashboardShell({
             <Clock size={14} />
             {lastRefresh ? formatTime(lastRefresh) : 'pending'}
           </span>
-          <button type="button" className="icon-action" aria-label="refresh">
+          <button type="button" className="icon-action" aria-label="refresh" onClick={onRefresh} disabled={loading}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
           </button>
           <button type="button" className="icon-action" aria-label="logout" onClick={onLogout}>
@@ -187,11 +191,11 @@ export function DashboardShell({
       {error ? <div className="banner error"><AlertTriangle size={16} />{error}</div> : null}
       {!data ? <div className="empty-state">Loading dashboard data</div> : null}
       {data && activeTab === 'overview' ? <OverviewView data={data} canMutate={canMutate} /> : null}
-      {data && activeTab === 'alerts' ? <AlertsView alerts={data.alerts} config={data.telegramConfig} canMutate={canMutate} /> : null}
+      {data && activeTab === 'alerts' ? <AlertsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
       {data && activeTab === 'anomalies' ? <AnomaliesView anomalies={data.anomalies} baselines={data.baselines} /> : null}
       {data && activeTab === 'rules' ? <RulesView rules={data.rules} canMutate={canMutate} /> : null}
       {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} canMutate={canMutate} /> : null}
-      {data && activeTab === 'services' ? <ServicesView services={data.services} canMutate={canMutate} /> : null}
+      {data && activeTab === 'services' ? <ServicesView services={data.services} canMutate={canMutate} onRefresh={onRefresh} /> : null}
       {data && activeTab === 'agents' ? <AgentsView agents={data.agents} /> : null}
       {data && activeTab === 'events' ? <EventsView events={data.events} /> : null}
     </main>
@@ -220,15 +224,63 @@ function OverviewView({ data, canMutate }: { data: DashboardData; canMutate: boo
   );
 }
 
-function AlertsView({ alerts, config, canMutate }: { alerts: Alert[]; config: TelegramConfig; canMutate: boolean }) {
+type TelegramFormState = {
+  bot_token_ref: string;
+  chat_id: string;
+  parse_mode: string;
+  enabled: boolean;
+  reason: string;
+};
+
+function AlertsView({
+  alerts,
+  config,
+  user,
+  canMutate,
+  onRefresh
+}: {
+  alerts: Alert[];
+  config: TelegramConfig;
+  user: User;
+  canMutate: boolean;
+  onRefresh: () => void | Promise<void>;
+}) {
   const [working, setWorking] = useState('');
   const [result, setResult] = useState('');
+  const [telegramForm, setTelegramForm] = useState<TelegramFormState>(() => telegramFormFromConfig(config));
+  const canConfigureTelegram = user.role === 'admin';
+
+  useEffect(() => {
+    setTelegramForm(telegramFormFromConfig(config));
+  }, [config]);
+
   const runAction = async (action: 'test' | 'isp') => {
     if (!canMutate) return;
     try {
       setWorking(action);
       const alert = action === 'test' ? await api.testTelegram() : await api.evaluateIspEscalation();
       setResult(`${alert.type}: ${alert.status}`);
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'request failed');
+    } finally {
+      setWorking('');
+    }
+  };
+  const saveTelegramConfig = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canConfigureTelegram) return;
+    try {
+      setWorking('telegram');
+      const input: TelegramConfigInput = {
+        reason: telegramForm.reason,
+        bot_token_ref: telegramForm.bot_token_ref,
+        chat_id: telegramForm.chat_id,
+        parse_mode: telegramForm.parse_mode,
+        enabled: telegramForm.enabled
+      };
+      await api.configureTelegram(input);
+      setResult('telegram config saved');
+      await onRefresh();
     } catch (err) {
       setResult(err instanceof Error ? err.message : 'request failed');
     } finally {
@@ -244,6 +296,42 @@ function AlertsView({ alerts, config, canMutate }: { alerts: Alert[]; config: Te
           <StatusPill state={config.enabled && config.bot_token_present ? 'ok' : 'warn'} text={config.enabled ? 'enabled' : 'disabled'} />
           <span>{config.chat_id || 'chat not configured'} · {config.bot_token_present ? 'token present' : 'token missing'}</span>
         </div>
+        {canConfigureTelegram ? (
+          <form className="form-grid" onSubmit={saveTelegramConfig}>
+            <label>
+              Bot token ref
+              <input value={telegramForm.bot_token_ref} onChange={(event) => setTelegramForm({ ...telegramForm, bot_token_ref: event.target.value })} placeholder="env://TELEGRAM_TOKEN" />
+            </label>
+            <label>
+              Chat ID
+              <input value={telegramForm.chat_id} onChange={(event) => setTelegramForm({ ...telegramForm, chat_id: event.target.value })} />
+            </label>
+            <label>
+              Parse mode
+              <select value={telegramForm.parse_mode} onChange={(event) => setTelegramForm({ ...telegramForm, parse_mode: event.target.value })}>
+                <option value="">Plain text</option>
+                <option value="HTML">HTML</option>
+                <option value="MarkdownV2">MarkdownV2</option>
+                <option value="Markdown">Markdown</option>
+              </select>
+            </label>
+            <label>
+              Reason
+              <input value={telegramForm.reason} onChange={(event) => setTelegramForm({ ...telegramForm, reason: event.target.value })} placeholder="configure alert channel" />
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={telegramForm.enabled} onChange={(event) => setTelegramForm({ ...telegramForm, enabled: event.target.checked })} />
+              Enabled
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="primary-action" disabled={working !== ''}>
+                <Save size={15} />{working === 'telegram' ? 'Saving' : 'Save config'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <p className="muted">Telegram configuration changes require admin role.</p>
+        )}
         <div className="button-row">
           <button type="button" className="secondary-action" disabled={!canMutate || working !== ''} onClick={() => runAction('test')}>
             <Send size={15} />{working === 'test' ? 'Testing' : 'Test alert'}
@@ -289,6 +377,16 @@ function AlertsView({ alerts, config, canMutate }: { alerts: Alert[]; config: Te
       </div>
     </section>
   );
+}
+
+function telegramFormFromConfig(config: TelegramConfig): TelegramFormState {
+  return {
+    bot_token_ref: config.bot_token_ref,
+    chat_id: config.chat_id,
+    parse_mode: config.parse_mode ?? '',
+    enabled: config.enabled,
+    reason: 'update Telegram alert config'
+  };
 }
 
 function AnomaliesView({ anomalies, baselines }: { anomalies: AnomalyEvaluation[]; baselines: BaselineProfile[] }) {
@@ -397,23 +495,376 @@ function ReputationView({ sources, runs, conflicts, canMutate }: { sources: Feed
   );
 }
 
-function ServicesView({ services, canMutate }: { services: Service[]; canMutate: boolean }) {
+type ServiceFormState = {
+  reason: string;
+  name: string;
+  description: string;
+  backend_cidr: string;
+  protocol: string;
+  allowed_ports: string;
+  output_interface: string;
+  owner: string;
+  criticality: string;
+  protection_mode: string;
+  enabled: boolean;
+  priority: string;
+  tags: string;
+  resolved_ifindex: string;
+  resolved_next_hop_mac: string;
+  resolved_src_mac: string;
+  neighbor_resolution_status: string;
+};
+
+function ServicesView({ services, canMutate, onRefresh }: { services: Service[]; canMutate: boolean; onRefresh: () => void | Promise<void> }) {
+  const [query, setQuery] = useState('');
+  const [protocolFilter, setProtocolFilter] = useState('all');
+  const [stateFilter, setStateFilter] = useState('all');
+  const [formMode, setFormMode] = useState<'create' | 'edit' | ''>('');
+  const [editingService, setEditingService] = useState<Service | null>(null);
+  const [form, setForm] = useState<ServiceFormState>(() => emptyServiceForm());
+  const [deleteTarget, setDeleteTarget] = useState<Service | null>(null);
+  const [deleteReason, setDeleteReason] = useState('remove protected service');
+  const [working, setWorking] = useState('');
+  const [result, setResult] = useState('');
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return services.filter((service) => {
+      const matchesText = !needle || [
+        service.name,
+        service.backend_cidr,
+        service.output_interface,
+        service.owner,
+        service.criticality,
+        service.allowed_ports.join(',')
+      ].some((value) => value.toLowerCase().includes(needle));
+      const matchesProtocol = protocolFilter === 'all' || service.protocol === protocolFilter;
+      const matchesState = stateFilter === 'all' || (stateFilter === 'enabled' ? service.enabled : !service.enabled);
+      return matchesText && matchesProtocol && matchesState;
+    });
+  }, [protocolFilter, query, services, stateFilter]);
+
+  const openCreate = () => {
+    setFormMode('create');
+    setEditingService(null);
+    setForm(emptyServiceForm());
+    setResult('');
+  };
+  const openEdit = (service: Service) => {
+    setFormMode('edit');
+    setEditingService(service);
+    setForm(serviceFormFromService(service));
+    setResult('');
+  };
+  const closeForm = () => {
+    setFormMode('');
+    setEditingService(null);
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canMutate) return;
+    try {
+      setWorking('service');
+      const input = serviceInputFromForm(form);
+      if (formMode === 'edit' && editingService) {
+        await api.updateService(editingService.id, input);
+        setResult(`${input.name} updated`);
+      } else {
+        await api.createService(input);
+        setResult(`${input.name} created`);
+      }
+      closeForm();
+      await onRefresh();
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'request failed');
+    } finally {
+      setWorking('');
+    }
+  };
+  const confirmDelete = async () => {
+    if (!deleteTarget || !canMutate) return;
+    try {
+      setWorking('delete');
+      await api.deleteService(deleteTarget.id, deleteReason);
+      setResult(`${deleteTarget.name} deleted`);
+      setDeleteTarget(null);
+      await onRefresh();
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'request failed');
+    } finally {
+      setWorking('');
+    }
+  };
+
   return (
-    <TablePanel icon={<Router size={18} />} title="Services / Forwarding" action={canMutate ? 'Add service' : undefined}>
-      <thead><tr><th>Name</th><th>Backend</th><th>Protocol</th><th>Ports</th><th>Output</th><th>Neighbor</th><th>Apply</th></tr></thead>
-      <tbody>{services.map((service) => (
-        <tr key={service.id}>
-          <td>{service.name}</td>
-          <td>{service.backend_cidr}</td>
-          <td>{service.protocol}</td>
-          <td>{service.allowed_ports.join(', ') || '0'}</td>
-          <td>{service.output_interface}</td>
-          <td><StatusPill state={service.neighbor_resolution_status === 'resolved' ? 'ok' : 'warn'} text={service.neighbor_resolution_status} /></td>
-          <td>{service.apply_status ?? service.sync_status}</td>
-        </tr>
-      ))}</tbody>
-    </TablePanel>
+    <section className="stacked-view">
+      <div className="wide-panel">
+        <PanelHeader icon={<Router size={18} />} title="Services / Forwarding" />
+        <div className="filter-row">
+          <label>
+            Search
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="name, owner, backend, output" />
+          </label>
+          <label>
+            Protocol
+            <select value={protocolFilter} onChange={(event) => setProtocolFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+              <option value="icmp">ICMP</option>
+            </select>
+          </label>
+          <label>
+            State
+            <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          {canMutate ? (
+            <div className="filter-actions">
+              <button type="button" className="primary-action" onClick={openCreate}>
+                <Plus size={15} />Add service
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {result ? <div className={result.includes('failed') || result.includes('required') || result.includes('invalid') ? 'error-line inline-message' : 'success-line inline-message'}>{result}</div> : null}
+      </div>
+
+      {formMode ? (
+        <form className="wide-panel form-grid service-form" onSubmit={submit}>
+          <PanelHeader icon={<Pencil size={18} />} title={formMode === 'edit' ? 'Edit service' : 'Add service'} />
+          <label>
+            Name
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
+          <label>
+            Backend CIDR
+            <input value={form.backend_cidr} onChange={(event) => setForm({ ...form, backend_cidr: event.target.value })} placeholder="203.0.113.10/32" />
+          </label>
+          <label>
+            Protocol
+            <select value={form.protocol} onChange={(event) => setForm({ ...form, protocol: event.target.value })}>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+              <option value="icmp">ICMP</option>
+            </select>
+          </label>
+          <label>
+            Allowed ports
+            <input value={form.allowed_ports} onChange={(event) => setForm({ ...form, allowed_ports: event.target.value })} placeholder="443, 8443" disabled={form.protocol === 'icmp'} />
+          </label>
+          <label>
+            Output interface
+            <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
+          </label>
+          <label>
+            Owner
+            <input value={form.owner} onChange={(event) => setForm({ ...form, owner: event.target.value })} />
+          </label>
+          <label>
+            Criticality
+            <input value={form.criticality} onChange={(event) => setForm({ ...form, criticality: event.target.value })} placeholder="high" />
+          </label>
+          <label>
+            Protection mode
+            <select value={form.protection_mode} onChange={(event) => setForm({ ...form, protection_mode: event.target.value })}>
+              <option value="observe">Observe</option>
+              <option value="enforce">Enforce</option>
+            </select>
+          </label>
+          <label>
+            Priority
+            <input value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} inputMode="numeric" />
+          </label>
+          <label>
+            Neighbor status
+            <select value={form.neighbor_resolution_status} onChange={(event) => setForm({ ...form, neighbor_resolution_status: event.target.value })}>
+              <option value="unresolved">Unresolved</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
+          <label className="wide-field">
+            Description
+            <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+          </label>
+          <label>
+            Tags
+            <input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="prod, edge" />
+          </label>
+          <label>
+            Resolved ifindex
+            <input value={form.resolved_ifindex} onChange={(event) => setForm({ ...form, resolved_ifindex: event.target.value })} inputMode="numeric" />
+          </label>
+          <label>
+            Next-hop MAC
+            <input value={form.resolved_next_hop_mac} onChange={(event) => setForm({ ...form, resolved_next_hop_mac: event.target.value })} />
+          </label>
+          <label>
+            Source MAC
+            <input value={form.resolved_src_mac} onChange={(event) => setForm({ ...form, resolved_src_mac: event.target.value })} />
+          </label>
+          <label className="wide-field">
+            Reason
+            <input value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
+          </label>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
+            Enabled
+          </label>
+          <div className="form-actions">
+            <button type="submit" className="primary-action" disabled={working !== ''}>
+              <Save size={15} />{working === 'service' ? 'Saving' : 'Save service'}
+            </button>
+            <button type="button" className="secondary-action" onClick={closeForm} disabled={working !== ''}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="wide-panel">
+          <PanelHeader icon={<Trash2 size={18} />} title={`Delete ${deleteTarget.name}`} />
+          <label>
+            Reason
+            <input value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} />
+          </label>
+          <div className="button-row">
+            <button type="button" className="danger-action" disabled={working !== ''} onClick={confirmDelete}>
+              <Trash2 size={15} />{working === 'delete' ? 'Deleting' : 'Confirm delete'}
+            </button>
+            <button type="button" className="secondary-action" onClick={() => setDeleteTarget(null)} disabled={working !== ''}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <TablePanel icon={<Router size={18} />} title={`Protected services (${filtered.length})`}>
+        <thead><tr><th>Name</th><th>Backend</th><th>Protocol</th><th>Ports</th><th>Output</th><th>Owner</th><th>Mode</th><th>Neighbor</th><th>Apply</th><th>State</th><th>Actions</th></tr></thead>
+        <tbody>{filtered.map((service) => (
+          <tr key={service.id}>
+            <td>{service.name}</td>
+            <td>{service.backend_cidr}</td>
+            <td>{service.protocol}</td>
+            <td>{service.allowed_ports.join(', ') || '0'}</td>
+            <td>{service.output_interface}</td>
+            <td>{service.owner}</td>
+            <td>{service.protection_mode}</td>
+            <td><StatusPill state={service.neighbor_resolution_status === 'resolved' ? 'ok' : 'warn'} text={service.neighbor_resolution_status} /></td>
+            <td>{service.apply_status ?? service.sync_status}</td>
+            <td><StatusPill state={service.enabled ? 'ok' : 'off'} text={service.enabled ? 'enabled' : 'disabled'} /></td>
+            <td>
+              {canMutate ? (
+                <div className="row-actions">
+                  <button type="button" className="icon-action" aria-label={`edit ${service.name}`} onClick={() => openEdit(service)}>
+                    <Pencil size={15} />
+                  </button>
+                  <button type="button" className="icon-action" aria-label={`delete ${service.name}`} onClick={() => {
+                    setDeleteTarget(service);
+                    setDeleteReason(`delete ${service.name}`);
+                  }}>
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ) : <span className="muted">read only</span>}
+            </td>
+          </tr>
+        ))}</tbody>
+      </TablePanel>
+    </section>
   );
+}
+
+function emptyServiceForm(): ServiceFormState {
+  return {
+    reason: 'update protected service',
+    name: '',
+    description: '',
+    backend_cidr: '',
+    protocol: 'tcp',
+    allowed_ports: '',
+    output_interface: '',
+    owner: '',
+    criticality: 'high',
+    protection_mode: 'enforce',
+    enabled: true,
+    priority: '',
+    tags: '',
+    resolved_ifindex: '',
+    resolved_next_hop_mac: '',
+    resolved_src_mac: '',
+    neighbor_resolution_status: 'unresolved'
+  };
+}
+
+function serviceFormFromService(service: Service): ServiceFormState {
+  return {
+    reason: `update ${service.name}`,
+    name: service.name,
+    description: service.description ?? '',
+    backend_cidr: service.backend_cidr,
+    protocol: service.protocol,
+    allowed_ports: service.allowed_ports.join(', '),
+    output_interface: service.output_interface,
+    owner: service.owner,
+    criticality: service.criticality,
+    protection_mode: service.protection_mode,
+    enabled: service.enabled,
+    priority: service.priority ? String(service.priority) : '',
+    tags: (service.tags ?? []).join(', '),
+    resolved_ifindex: service.resolved_ifindex ? String(service.resolved_ifindex) : '',
+    resolved_next_hop_mac: service.resolved_next_hop_mac ?? '',
+    resolved_src_mac: service.resolved_src_mac ?? '',
+    neighbor_resolution_status: service.neighbor_resolution_status || 'unresolved'
+  };
+}
+
+function serviceInputFromForm(form: ServiceFormState): ServiceInput {
+  const protocol = form.protocol.toLowerCase();
+  return {
+    reason: form.reason.trim(),
+    name: form.name.trim(),
+    description: form.description.trim(),
+    backend_cidr: form.backend_cidr.trim(),
+    protocol,
+    allowed_ports: protocol === 'icmp' ? [] : parsePorts(form.allowed_ports),
+    output_interface: form.output_interface.trim(),
+    owner: form.owner.trim(),
+    criticality: form.criticality.trim(),
+    protection_mode: form.protection_mode,
+    enabled: form.enabled,
+    priority: optionalNumber(form.priority),
+    tags: splitList(form.tags),
+    resolved_ifindex: optionalNumber(form.resolved_ifindex),
+    resolved_next_hop_mac: form.resolved_next_hop_mac.trim(),
+    resolved_src_mac: form.resolved_src_mac.trim(),
+    neighbor_resolution_status: form.neighbor_resolution_status
+  };
+}
+
+function parsePorts(value: string): number[] {
+  const ports = splitList(value).map((item) => Number(item));
+  if (ports.length === 0 || ports.some((port) => !Number.isInteger(port) || port <= 0 || port > 65535)) {
+    throw new Error('allowed ports must be comma-separated values from 1 to 65535');
+  }
+  return ports;
+}
+
+function splitList(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function optionalNumber(value: string): number | undefined {
+  if (value.trim() === '') return undefined;
+  const next = Number(value);
+  if (!Number.isInteger(next) || next < 0) {
+    throw new Error('numeric fields must be non-negative integers');
+  }
+  return next;
 }
 
 function AgentsView({ agents }: { agents: Agent[] }) {

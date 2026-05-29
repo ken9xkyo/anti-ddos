@@ -263,7 +263,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var users []User
+	users := make([]User, 0)
 	for rows.Next() {
 		var user User
 		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
@@ -324,7 +324,7 @@ LIMIT $1`, limit)
 		return nil, err
 	}
 	defer rows.Close()
-	var events []AuditEvent
+	events := make([]AuditEvent, 0)
 	for rows.Next() {
 		var event AuditEvent
 		if err := rows.Scan(

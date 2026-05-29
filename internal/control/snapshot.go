@@ -186,7 +186,7 @@ FROM policy_snapshots ORDER BY version DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SnapshotMetadata
+	out := make([]SnapshotMetadata, 0)
 	for rows.Next() {
 		meta, err := scanSnapshot(rows, includeSnapshot)
 		if err != nil {
@@ -336,7 +336,7 @@ ORDER BY fp.priority, fp.ebpf_id`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []agent.PolicyService
+	out := make([]agent.PolicyService, 0)
 	for rows.Next() {
 		var policyID, serviceID, port, ifindex, devmapKey, priority uint32
 		var serviceUUID, proto, target, outputInterface, dstMAC, srcMAC string
@@ -376,7 +376,7 @@ ORDER BY bs.priority, bs.ebpf_id`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []agent.PolicyService
+	out := make([]agent.PolicyService, 0)
 	for rows.Next() {
 		var uuid, cidr, proto, outputInterface, dstMAC, srcMAC string
 		var serviceID, ifindex, priority uint32
@@ -449,7 +449,7 @@ ORDER BY w.priority, w.ebpf_id`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []agent.PolicyCIDREntry
+	out := make([]agent.PolicyCIDREntry, 0)
 	for rows.Next() {
 		var entry agent.PolicyCIDREntry
 		var scope string
@@ -491,7 +491,7 @@ ORDER BY 1`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []agent.PolicyCIDREntry
+	out := make([]agent.PolicyCIDREntry, 0)
 	for rows.Next() {
 		var entry agent.PolicyCIDREntry
 		var expires *time.Time
@@ -520,7 +520,7 @@ ORDER BY r.priority, r.ebpf_id`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []agent.PolicyRule
+	out := make([]agent.PolicyRule, 0)
 	for rows.Next() {
 		var rule agent.PolicyRule
 		var action, mode, dimension string

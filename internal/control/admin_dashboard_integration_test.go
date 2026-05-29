@@ -120,6 +120,8 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
 	operatorToken := login(t, server.URL, "operator", "operator password phrase")
 
+	requireEmptyDashboardArrays(t, server.URL, viewerToken)
+
 	service := createDashboardService(t, server.URL, adminToken)
 	baseline := createDashboardBaseline(t, server.URL, adminToken, service.ID)
 	rule := createDashboardRule(t, server.URL, adminToken, service.ID)
@@ -433,6 +435,34 @@ func requireBodyContains(t *testing.T, resp *testHTTPResponse, want string) {
 	t.Helper()
 	if !strings.Contains(resp.Body.String(), want) {
 		t.Fatalf("response body missing %q: %s", want, resp.Body.String())
+	}
+}
+
+func requireEmptyDashboardArrays(t *testing.T, baseURL, token string) {
+	t.Helper()
+	resp := authedJSON(t, http.MethodGet, baseURL+"/v1/dashboard/overview", token, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	for _, want := range []string{`"top_sources":[]`, `"top_ports":[]`, `"by_decision":[]`, `"latest_apply_status":[]`} {
+		requireBodyContains(t, resp, want)
+	}
+
+	for _, path := range []string{
+		"/v1/dashboard/agents",
+		"/v1/dashboard/services",
+		"/v1/dashboard/rules",
+		"/v1/security-events?limit=50",
+		"/v1/baselines",
+		"/v1/anomalies?limit=30",
+		"/v1/feed-sources",
+		"/v1/feed-runs?limit=20",
+		"/v1/feed-conflicts",
+		"/v1/alerts?limit=30",
+	} {
+		resp := authedJSON(t, http.MethodGet, baseURL+path, token, nil)
+		requireHTTPStatus(t, resp, http.StatusOK)
+		if strings.TrimSpace(resp.Body.String()) != "[]" {
+			t.Fatalf("%s returned non-empty-array body: %s", path, resp.Body.String())
+		}
 	}
 }
 

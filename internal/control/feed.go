@@ -639,7 +639,7 @@ LIMIT $1`, limit)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []FeedRun
+	out := make([]FeedRun, 0)
 	for rows.Next() {
 		var run FeedRun
 		if err := rows.Scan(&run.ID, &run.SourceID, &run.SourceName, &run.StartedAt, &run.FinishedAt, &run.Status, &run.ItemsFetched, &run.ItemsValid, &run.ParseErrors, &run.Error, &run.SnapshotVersion); err != nil {
@@ -663,7 +663,7 @@ ORDER BY c.detected_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []FeedConflict
+	out := make([]FeedConflict, 0)
 	for rows.Next() {
 		var conflict FeedConflict
 		if err := rows.Scan(&conflict.ID, &conflict.SourceID, &conflict.SourceName, &conflict.ReputationID, &conflict.WhitelistID, &conflict.ReputationCIDR, &conflict.WhitelistCIDR, &conflict.Status, &conflict.DetectedAt); err != nil {
@@ -681,7 +681,7 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []feedWhitelist
+	out := make([]feedWhitelist, 0)
 	for rows.Next() {
 		var item feedWhitelist
 		var raw string
@@ -699,7 +699,7 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 }
 
 func matchingWhitelists(prefix netip.Prefix, whitelist []feedWhitelist) []conflictMatch {
-	var out []conflictMatch
+	out := make([]conflictMatch, 0)
 	for _, item := range whitelist {
 		if prefixesOverlap(prefix, item.Prefix) {
 			out = append(out, conflictMatch{WhitelistID: item.ID})

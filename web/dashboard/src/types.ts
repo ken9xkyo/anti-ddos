@@ -58,6 +58,7 @@ export interface Service {
   id: string;
   ebpf_id: number;
   name: string;
+  description?: string;
   backend_cidr: string;
   protocol: string;
   allowed_ports: number[];
@@ -66,10 +67,35 @@ export interface Service {
   criticality: string;
   protection_mode: string;
   enabled: boolean;
+  priority?: number;
+  tags?: string[];
   sync_status: string;
+  resolved_ifindex?: number;
+  resolved_next_hop_mac?: string;
+  resolved_src_mac?: string;
   neighbor_resolution_status: string;
   counters?: Record<string, number>;
   apply_status?: string;
+}
+
+export interface ServiceInput {
+  reason: string;
+  name: string;
+  description?: string;
+  backend_cidr: string;
+  protocol: string;
+  allowed_ports: number[];
+  output_interface: string;
+  owner: string;
+  criticality: string;
+  protection_mode: string;
+  enabled?: boolean;
+  priority?: number;
+  tags?: string[];
+  resolved_ifindex?: number;
+  resolved_next_hop_mac?: string;
+  resolved_src_mac?: string;
+  neighbor_resolution_status?: string;
 }
 
 export interface Rule {
@@ -224,6 +250,14 @@ export interface TelegramConfig {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface TelegramConfigInput {
+  reason: string;
+  bot_token_ref: string;
+  chat_id: string;
+  parse_mode?: string;
+  enabled?: boolean;
 }
 
 export interface AlertDelivery {

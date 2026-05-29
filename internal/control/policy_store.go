@@ -179,7 +179,7 @@ FROM backend_services WHERE deleted_at IS NULL ORDER BY name`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Service
+	out := make([]Service, 0)
 	for rows.Next() {
 		var service Service
 		if err := scanService(rows, &service); err != nil {
@@ -299,7 +299,7 @@ FROM forwarding_policies ORDER BY created_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ForwardingPolicy
+	out := make([]ForwardingPolicy, 0)
 	for rows.Next() {
 		var policy ForwardingPolicy
 		if err := scanForwardingPolicy(rows, &policy); err != nil {
@@ -397,7 +397,7 @@ FROM whitelist_entries ORDER BY priority, created_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []WhitelistEntry
+	out := make([]WhitelistEntry, 0)
 	for rows.Next() {
 		var entry WhitelistEntry
 		if err := scanWhitelistEntry(rows, &entry); err != nil {
@@ -515,7 +515,7 @@ FROM rules ORDER BY priority, created_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Rule
+	out := make([]Rule, 0)
 	for rows.Next() {
 		var rule Rule
 		if err := scanRule(rows, &rule); err != nil {
@@ -621,7 +621,7 @@ FROM manual_blacklist_entries ORDER BY created_at DESC`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []BlacklistEntry
+	out := make([]BlacklistEntry, 0)
 	for rows.Next() {
 		var entry BlacklistEntry
 		if err := scanBlacklistEntry(rows, &entry); err != nil {
@@ -711,7 +711,7 @@ func (s *Store) ListFeedSources(ctx context.Context) ([]FeedSource, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []FeedSource
+	out := make([]FeedSource, 0)
 	for rows.Next() {
 		var source FeedSource
 		if err := scanFeedSource(rows, &source); err != nil {

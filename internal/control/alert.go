@@ -299,7 +299,7 @@ LIMIT $1`, limit)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Alert
+	out := make([]Alert, 0)
 	for rows.Next() {
 		alert, err := scanAlert(rows)
 		if err != nil {
@@ -329,7 +329,7 @@ ORDER BY created_at`, strings.TrimSpace(alertID))
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AlertDelivery
+	out := make([]AlertDelivery, 0)
 	for rows.Next() {
 		delivery, err := scanAlertDelivery(rows)
 		if err != nil {

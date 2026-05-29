@@ -113,7 +113,7 @@ FROM security_events ` + where + fmt.Sprintf(` ORDER BY event_time DESC LIMIT $%
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SecurityEvent
+	out := make([]SecurityEvent, 0)
 	for rows.Next() {
 		event, err := scanSecurityEvent(rows)
 		if err != nil {
@@ -280,7 +280,7 @@ LIMIT $%d`, keyExpr, where, len(queryArgs))
 		return nil, err
 	}
 	defer rows.Close()
-	var out []SecurityEventTop
+	out := make([]SecurityEventTop, 0)
 	for rows.Next() {
 		var item SecurityEventTop
 		if err := rows.Scan(&item.Key, &item.Count, &item.Packets, &item.Bytes); err != nil {
@@ -333,7 +333,7 @@ func scanSecurityEvent(row rowScanner) (SecurityEvent, error) {
 }
 
 func matchingCIDRs(target string, entries []WhitelistEntry) []WhitelistEntry {
-	var out []WhitelistEntry
+	out := make([]WhitelistEntry, 0)
 	for _, entry := range entries {
 		if cidrMatches(target, entry.CIDR) {
 			out = append(out, entry)
@@ -343,7 +343,7 @@ func matchingCIDRs(target string, entries []WhitelistEntry) []WhitelistEntry {
 }
 
 func matchingBlacklistCIDRs(target string, entries []BlacklistEntry) []BlacklistEntry {
-	var out []BlacklistEntry
+	out := make([]BlacklistEntry, 0)
 	for _, entry := range entries {
 		if cidrMatches(target, entry.CIDR) {
 			out = append(out, entry)

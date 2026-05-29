@@ -95,7 +95,7 @@ ORDER BY bs.name, bp.time_window, bp.protocol, bp.port`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []BaselineProfile
+	out := make([]BaselineProfile, 0)
 	for rows.Next() {
 		var profile BaselineProfile
 		if err := scanBaselineProfile(rows, &profile); err != nil {
@@ -196,7 +196,7 @@ func (s *Store) EvaluateAnomalies(ctx context.Context, prom *PrometheusClient, r
 	if err != nil {
 		return nil, err
 	}
-	var out []AnomalyEvaluation
+	out := make([]AnomalyEvaluation, 0)
 	for _, service := range services {
 		if !service.Enabled {
 			continue
@@ -243,7 +243,7 @@ LIMIT $1`, limit)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AnomalyEvaluation
+	out := make([]AnomalyEvaluation, 0)
 	for rows.Next() {
 		eval, err := scanAnomalyEvaluation(rows)
 		if err != nil {

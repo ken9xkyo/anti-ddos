@@ -86,6 +86,28 @@ func TestPhase05Integration(t *testing.T) {
 	if service.EBPFID == 0 {
 		t.Fatalf("service missing ebpf_id: %#v", service)
 	}
+	retiredReq := serviceReq
+	retiredReq.Reason = "publish temporary service"
+	retiredReq.Name = "retired-api"
+	retiredReq.BackendCIDR = "203.0.113.11/32"
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", adminToken, retiredReq)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("create retired service status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var retired Service
+	if err := json.Unmarshal(resp.Body.Bytes(), &retired); err != nil {
+		t.Fatal(err)
+	}
+	deleteReq, err := http.NewRequest(http.MethodDelete, server.URL+"/v1/services/"+retired.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteReq.Header.Set("X-Audit-Reason", "retire temporary service")
+	resp = doTestHTTP(t, deleteReq)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("delete service status = %d body=%s", resp.Code, resp.Body.String())
+	}
 
 	whitelistReq := WhitelistInput{Reason: "allow trusted monitor", CIDR: "198.51.100.10/32", Scope: "global", Owner: "sre", Priority: 10}
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, whitelistReq)
@@ -182,14 +204,20 @@ func TestPhase05Integration(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("expected audit events")
 	}
-	var sawServiceReason bool
+	var sawServiceReason, sawDeleteReason bool
 	for _, event := range events {
 		if event.EntityType == "backend_service" && event.Reason == "publish HTTPS service" {
 			sawServiceReason = true
 		}
+		if event.EntityType == "backend_service" && event.Action == "disable_service" && event.Reason == "retire temporary service" {
+			sawDeleteReason = true
+		}
 	}
 	if !sawServiceReason {
 		t.Fatalf("service audit reason missing in events: %#v", events)
+	}
+	if !sawDeleteReason {
+		t.Fatalf("service delete audit reason missing in events: %#v", events)
 	}
 }
 
