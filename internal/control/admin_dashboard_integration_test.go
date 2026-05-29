@@ -135,6 +135,8 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 		Owner:  "sre",
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
+	var whitelist WhitelistEntry
+	decodeTestBody(t, resp, &whitelist)
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, FeedSourceInput{
 		Reason:                "configure dashboard feed",
@@ -249,6 +251,95 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 		})
 	}
 
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", adminToken, map[string]string{
+		"reason":   "create console user",
+		"username": "console-user",
+		"password": "temporary password phrase",
+		"role":     RoleViewer,
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var consoleUser User
+	decodeTestBody(t, resp, &consoleUser)
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/users/"+consoleUser.ID, adminToken, UserUpdateInput{
+		Reason: "promote console user",
+		Role:   RoleOperator,
+		Status: StatusActive,
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users/"+consoleUser.ID+"/password-reset", adminToken, PasswordResetInput{
+		Reason:   "reset console user",
+		Password: "replacement password phrase",
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	replacementToken := login(t, server.URL, "console-user", "replacement password phrase")
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users/"+consoleUser.ID+"/sessions/revoke", adminToken, map[string]string{"reason": "revoke console sessions"})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/me", replacementToken, nil)
+	requireHTTPStatus(t, resp, http.StatusUnauthorized)
+
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/rules/"+rule.ID, operatorToken, RuleInput{
+		Reason:       "tighten dashboard rule",
+		ServiceID:    service.ID,
+		Name:         rule.Name,
+		Action:       "rate_limit",
+		Mode:         "enforce",
+		Dimension:    "source_service",
+		ThresholdPPS: 400,
+		ThresholdBPS: 400000,
+		ThresholdCPS: 40,
+		TTLSeconds:   900,
+		BurstPackets: 2,
+		Confidence:   0.9,
+		Enabled:      boolPtr(true),
+		Owner:        "soc",
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	deleteReq, _ := http.NewRequest(http.MethodDelete, server.URL+"/v1/rules/"+rule.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("X-Audit-Reason", "disable dashboard rule")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"enabled":false`)
+
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/whitelist/"+whitelist.ID, operatorToken, WhitelistInput{
+		Reason:  "extend trusted customer source",
+		CIDR:    "192.0.2.10/32",
+		Scope:   "global",
+		Label:   "trusted-customer",
+		Owner:   "sre",
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/whitelist/"+whitelist.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("X-Audit-Reason", "disable trusted customer source")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"enabled":false`)
+
+	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/feed-sources/"+source.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("X-Audit-Reason", "disable dashboard feed")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"enabled":false`)
+
+	snapshots, err := store.ListSnapshots(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) < 2 {
+		t.Fatalf("expected at least two snapshots, got %d", len(snapshots))
+	}
+	latest, previous := snapshots[0].Version, snapshots[1].Version
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/"+uint32String(latest), viewerToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"snapshot":`)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/diff?from="+uint32String(previous)+"&to="+uint32String(latest), viewerToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"from_version":`)
+	requireBodyContains(t, resp, `"rules":`)
+
 	overview, err := store.BuildDashboardOverview(ctx, NewPrometheusClient("", nil), time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +382,12 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, audit := range audits {
-		if strings.Contains(string(audit.After), "abcdefghijklmnopqrstuvwxyz") || strings.Contains(string(audit.Before), "abcdefghijklmnopqrstuvwxyz") {
+		if strings.Contains(string(audit.After), "abcdefghijklmnopqrstuvwxyz") ||
+			strings.Contains(string(audit.Before), "abcdefghijklmnopqrstuvwxyz") ||
+			strings.Contains(string(audit.After), "replacement password phrase") ||
+			strings.Contains(string(audit.Before), "replacement password phrase") ||
+			strings.Contains(string(audit.After), "temporary password phrase") ||
+			strings.Contains(string(audit.Before), "temporary password phrase") {
 			t.Fatalf("telegram token leaked in audit: %#v", audit)
 		}
 	}

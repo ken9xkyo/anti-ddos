@@ -4,6 +4,29 @@ export interface User {
   id: string;
   username: string;
   role: Role;
+  status?: string;
+  force_password_change?: boolean;
+  created_at?: string;
+  last_login_at?: string;
+}
+
+export interface UserUpdateInput {
+  reason: string;
+  role?: Role;
+  status?: string;
+  force_password_change?: boolean;
+}
+
+export interface PasswordResetInput {
+  reason: string;
+  password: string;
+  force_password_change?: boolean;
+}
+
+export interface OwnPasswordInput {
+  reason: string;
+  current_password: string;
+  new_password: string;
 }
 
 export interface Session {
@@ -114,10 +137,14 @@ export interface Rule {
   action: string;
   mode: string;
   priority: number;
+  match_expr?: Record<string, unknown>;
   threshold_pps?: number;
   threshold_bps?: number;
   threshold_cps?: number;
   dimension?: string;
+  burst_packets?: number;
+  burst_bytes?: number;
+  sample_denom?: number;
   ttl_seconds?: number;
   expires_at?: string;
   confidence?: number;
@@ -126,6 +153,57 @@ export interface Rule {
   owner: string;
   ttl_remaining_seconds?: number;
   counters?: Record<string, number>;
+}
+
+export interface RuleInput {
+  reason: string;
+  service_id?: string;
+  name: string;
+  priority?: number;
+  match_expr?: Record<string, unknown>;
+  action: string;
+  mode: string;
+  threshold_pps?: number;
+  threshold_bps?: number;
+  threshold_cps?: number;
+  dimension?: string;
+  burst_packets?: number;
+  burst_bytes?: number;
+  sample_denom?: number;
+  ttl_seconds?: number;
+  expires_at?: string;
+  evidence?: Record<string, unknown>;
+  confidence?: number;
+  enabled?: boolean;
+  owner: string;
+}
+
+export interface WhitelistInput {
+  reason: string;
+  cidr: string;
+  scope: string;
+  service_id?: string;
+  label?: string;
+  owner: string;
+  priority?: number;
+  expires_at?: string;
+  enabled?: boolean;
+}
+
+export interface WhitelistEntry {
+  id: string;
+  ebpf_id: number;
+  cidr: string;
+  scope: string;
+  service_id?: string;
+  label?: string;
+  reason?: string;
+  owner: string;
+  priority: number;
+  expires_at?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BaselineProfile {
@@ -223,6 +301,22 @@ export interface FeedSource {
   active_entries: number;
   conflict_count: number;
   parse_error_count: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface FeedSourceInput {
+  reason: string;
+  name: string;
+  type: string;
+  url?: string;
+  credential_ref?: string;
+  required_for_production?: boolean;
+  enabled?: boolean;
+  interval_seconds?: number;
+  license_note?: string;
+  quota_metadata?: Record<string, unknown>;
+  status?: string;
 }
 
 export interface FeedRun {
@@ -294,6 +388,65 @@ export interface Alert {
   status: string;
   created_at: string;
   deliveries?: AlertDelivery[];
+}
+
+export interface SnapshotMetadata {
+  version: number;
+  checksum: string;
+  object_checksum: string;
+  rollback_from?: number;
+  created_by?: string;
+  created_at: string;
+  snapshot?: Record<string, unknown>;
+}
+
+export interface SnapshotDiffValue {
+  from: string;
+  to: string;
+  changed: boolean;
+}
+
+export interface SnapshotDiffItem {
+  key: string;
+  item: Record<string, unknown>;
+}
+
+export interface SnapshotDiffChange {
+  key: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+export interface SnapshotCollectionDiff {
+  added: SnapshotDiffItem[];
+  removed: SnapshotDiffItem[];
+  changed: SnapshotDiffChange[];
+  unchanged: number;
+}
+
+export interface SnapshotDiff {
+  from_version: number;
+  to_version: number;
+  object_checksum: SnapshotDiffValue;
+  runtime?: SnapshotDiffChange;
+  services: SnapshotCollectionDiff;
+  whitelist_v4: SnapshotCollectionDiff;
+  blacklist_v4: SnapshotCollectionDiff;
+  rules: SnapshotCollectionDiff;
+}
+
+export interface AuditEvent {
+  id: string;
+  created_at: string;
+  actor_id?: string;
+  actor_username?: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  reason?: string;
+  request_id?: string;
 }
 
 export interface DashboardData {

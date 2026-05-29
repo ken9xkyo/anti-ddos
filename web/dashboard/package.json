@@ -9,9 +9,15 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^9.0.1",
+    "@mui/x-charts": "^9.3.0",
+    "@mui/x-data-grid": "^9.3.0",
     "lucide-react": "0.468.0",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-is": "18.3.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.6.3",
@@ -23,5 +29,8 @@
     "typescript": "5.7.2",
     "vite": "5.4.11",
     "vitest": "2.1.8"
+  },
+  "overrides": {
+    "react-is": "18.3.1"
   }
 }

@@ -622,6 +622,11 @@ RETURNING `+feedSourceColumns(),
 	if err := insertAudit(ctx, tx, actor, "update_feed_source", "feed_source", source.ID, before, source, reason, ""); err != nil {
 		return FeedSource{}, err
 	}
+	if before.Enabled != source.Enabled {
+		if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+			return FeedSource{}, err
+		}
+	}
 	return source, tx.Commit(ctx)
 }
 

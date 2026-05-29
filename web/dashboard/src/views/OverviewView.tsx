@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   TrendingUp
 } from 'lucide-react';
+import { BarChart } from '@mui/x-charts/BarChart';
 import { MetricPanel, PanelHeader, StatusPill, TablePanel, TopList, EmptyTableRow } from '../components';
 import { compactValue, formatDateTime, numberValue, percentValue } from '../format';
 import type { DashboardData } from '../types';
@@ -18,6 +19,8 @@ export function OverviewView({ data }: { data: DashboardData }) {
   const latestAlert = data.alerts[0];
   const failedApplies = data.overview.latest_apply_status.filter((status) => status.status === 'failed');
   const agentHealthy = data.overview.agents.total - data.overview.agents.stale;
+  const trafficSeries = [data.overview.traffic.pps, data.overview.traffic.bps / 1000, data.overview.traffic.cps];
+  const decisionKeys = Object.keys(data.overview.decision_rates).filter((key) => data.overview.decision_rates[key] !== undefined);
   return (
     <section className="content-stack">
       <div className="metric-grid">
@@ -29,6 +32,27 @@ export function OverviewView({ data }: { data: DashboardData }) {
         <MetricPanel icon={<CheckCircle2 size={18} />} label="Redirect rate" value={compactValue(data.overview.decision_rates.redirect)} detail="packets/s" tone="ok" />
         <MetricPanel icon={<AlertTriangle size={18} />} label="Not allowed" value={compactValue(data.overview.decision_rates.not_allowed_service)} detail="service misses/s" tone={(data.overview.decision_rates.not_allowed_service || 0) > 0 ? 'warn' : undefined} />
         <MetricPanel icon={<TrendingUp size={18} />} label="Anomaly score" value={numberValue(latestAnomaly?.score)} detail={latestAnomaly?.status ?? 'no active signal'} tone={latestAnomaly?.auto_enforced ? 'warn' : undefined} />
+      </div>
+
+      <div className="overview-grid">
+        <section className="wide-panel chart-panel">
+          <PanelHeader icon={<Activity size={18} />} title="Traffic Shape" eyebrow="pps, kbps, cps" />
+          <BarChart
+            xAxis={[{ data: ['PPS', 'Kbps', 'CPS'], scaleType: 'band' }]}
+            series={[{ data: trafficSeries, color: '#5aa7ff' }]}
+            height={220}
+            skipAnimation
+          />
+        </section>
+        <section className="wide-panel chart-panel">
+          <PanelHeader icon={<ShieldAlert size={18} />} title="Decision Rates" eyebrow="packets/s by action" />
+          <BarChart
+            xAxis={[{ data: decisionKeys.length ? decisionKeys : ['none'], scaleType: 'band' }]}
+            series={[{ data: decisionKeys.length ? decisionKeys.map((key) => data.overview.decision_rates[key] || 0) : [0], color: '#66d19e' }]}
+            height={220}
+            skipAnimation
+          />
+        </section>
       </div>
 
       <div className="overview-grid">

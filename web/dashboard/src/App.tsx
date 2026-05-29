@@ -1,7 +1,9 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { CssBaseline, ThemeProvider } from '@mui/material';
 import { LockKeyhole, Shield } from 'lucide-react';
 import { api } from './client';
 import { DashboardShell } from './DashboardShell';
+import { opsTheme } from './muiTheme';
 import type { Tab } from './navigation';
 import type { DashboardData, User } from './types';
 import './styles.css';
@@ -45,25 +47,33 @@ export default function App() {
   }, [loadDashboard, user]);
 
   if (!user) {
-    return <LoginView onLogin={setUser} error={error} setError={setError} />;
+    return (
+      <ThemeProvider theme={opsTheme}>
+        <CssBaseline />
+        <LoginView onLogin={setUser} error={error} setError={setError} />
+      </ThemeProvider>
+    );
   }
 
   return (
-    <DashboardShell
-      user={user}
-      data={data}
-      activeTab={activeTab}
-      setActiveTab={setActiveTab}
-      loading={loading}
-      error={error}
-      lastRefresh={lastRefresh}
-      onRefresh={loadDashboard}
-      onLogout={() => {
-        api.clearToken();
-        setUser(null);
-        setData(null);
-      }}
-    />
+    <ThemeProvider theme={opsTheme}>
+      <CssBaseline />
+      <DashboardShell
+        user={user}
+        data={data}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        loading={loading}
+        error={error}
+        lastRefresh={lastRefresh}
+        onRefresh={loadDashboard}
+        onLogout={() => {
+          api.clearToken();
+          setUser(null);
+          setData(null);
+        }}
+      />
+    </ThemeProvider>
   );
 }
 

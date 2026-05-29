@@ -1,4 +1,32 @@
-import type { Agent, Alert, AnomalyEvaluation, BaselineProfile, DashboardData, DashboardOverview, FeedConflict, FeedRun, FeedSource, Rule, SecurityEvent, Service, ServiceInput, Session, TelegramConfig, TelegramConfigInput, User } from './types';
+import type {
+  Agent,
+  Alert,
+  AnomalyEvaluation,
+  AuditEvent,
+  BaselineProfile,
+  DashboardData,
+  DashboardOverview,
+  FeedConflict,
+  FeedRun,
+  FeedSource,
+  FeedSourceInput,
+  OwnPasswordInput,
+  PasswordResetInput,
+  Rule,
+  RuleInput,
+  SecurityEvent,
+  Service,
+  ServiceInput,
+  Session,
+  SnapshotDiff,
+  SnapshotMetadata,
+  TelegramConfig,
+  TelegramConfigInput,
+  User,
+  UserUpdateInput,
+  WhitelistEntry,
+  WhitelistInput
+} from './types';
 
 export class ApiClient {
   private token = localStorage.getItem('anti_ddos_token') ?? '';
@@ -24,6 +52,13 @@ export class ApiClient {
 
   async me(): Promise<User> {
     return this.request<User>('/v1/me');
+  }
+
+  async changeOwnPassword(input: OwnPasswordInput): Promise<User> {
+    return this.request<User>('/v1/me/password', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
   }
 
   async dashboard(): Promise<DashboardData> {
@@ -61,6 +96,38 @@ export class ApiClient {
     return this.request(`/v1/security-events/investigate?target=${encodeURIComponent(target)}&limit=50`);
   }
 
+  async users(): Promise<User[]> {
+    return asArray(await this.request<User[] | null>('/v1/users'));
+  }
+
+  async createUser(input: { reason: string; username: string; password: string; role: string }): Promise<User> {
+    return this.request<User>('/v1/users', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateUser(id: string, input: UserUpdateInput): Promise<User> {
+    return this.request<User>(`/v1/users/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async resetUserPassword(id: string, input: PasswordResetInput): Promise<User> {
+    return this.request<User>(`/v1/users/${encodeURIComponent(id)}/password-reset`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async revokeUserSessions(id: string, reason: string): Promise<User> {
+    return this.request<User>(`/v1/users/${encodeURIComponent(id)}/sessions/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
   async createService(input: ServiceInput): Promise<Service> {
     return this.request<Service>('/v1/services', {
       method: 'POST',
@@ -80,6 +147,111 @@ export class ApiClient {
       method: 'DELETE',
       headers: { 'X-Audit-Reason': reason }
     });
+  }
+
+  async rules(): Promise<Rule[]> {
+    return asArray(await this.request<Rule[] | null>('/v1/rules'));
+  }
+
+  async createRule(input: RuleInput): Promise<Rule> {
+    return this.request<Rule>('/v1/rules', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateRule(id: string, input: RuleInput): Promise<Rule> {
+    return this.request<Rule>(`/v1/rules/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async disableRule(id: string, reason: string): Promise<Rule> {
+    return this.request<Rule>(`/v1/rules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
+    });
+  }
+
+  async whitelist(): Promise<WhitelistEntry[]> {
+    return asArray(await this.request<WhitelistEntry[] | null>('/v1/whitelist'));
+  }
+
+  async createWhitelist(input: WhitelistInput): Promise<WhitelistEntry> {
+    return this.request<WhitelistEntry>('/v1/whitelist', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateWhitelist(id: string, input: WhitelistInput): Promise<WhitelistEntry> {
+    return this.request<WhitelistEntry>(`/v1/whitelist/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async disableWhitelist(id: string, reason: string): Promise<WhitelistEntry> {
+    return this.request<WhitelistEntry>(`/v1/whitelist/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
+    });
+  }
+
+  async feedSources(): Promise<FeedSource[]> {
+    return asArray(await this.request<FeedSource[] | null>('/v1/feed-sources'));
+  }
+
+  async createFeedSource(input: FeedSourceInput): Promise<FeedSource> {
+    return this.request<FeedSource>('/v1/feed-sources', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateFeedSource(id: string, input: FeedSourceInput): Promise<FeedSource> {
+    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async disableFeedSource(id: string, reason: string): Promise<FeedSource> {
+    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
+    });
+  }
+
+  async syncFeedSource(id: string, reason: string): Promise<FeedRun> {
+    return this.request<FeedRun>(`/v1/feed-sources/${encodeURIComponent(id)}/sync`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  async snapshots(includeSnapshot = false): Promise<SnapshotMetadata[]> {
+    return asArray(await this.request<SnapshotMetadata[] | null>(`/v1/snapshots?include_snapshot=${includeSnapshot ? 'true' : 'false'}`));
+  }
+
+  async snapshot(version: number): Promise<SnapshotMetadata> {
+    return this.request<SnapshotMetadata>(`/v1/snapshots/${encodeURIComponent(String(version))}`);
+  }
+
+  async snapshotDiff(from: number, to: number): Promise<SnapshotDiff> {
+    return this.request<SnapshotDiff>(`/v1/snapshots/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`);
+  }
+
+  async rollbackSnapshot(targetVersion: number, reason: string): Promise<SnapshotMetadata> {
+    return this.request<SnapshotMetadata>('/v1/snapshots/rollback', {
+      method: 'POST',
+      body: JSON.stringify({ target_version: targetVersion, reason })
+    });
+  }
+
+  async audit(limit = 100): Promise<AuditEvent[]> {
+    return asArray(await this.request<AuditEvent[] | null>(`/v1/audit?limit=${limit}`));
   }
 
   async configureTelegram(input: TelegramConfigInput): Promise<TelegramConfig> {

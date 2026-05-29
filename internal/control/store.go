@@ -290,6 +290,9 @@ func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string)
 	if err != nil {
 		return User{}, err
 	}
+	if err := ensureActiveAdminRemains(ctx, tx, before, before.Role, StatusRevoked); err != nil {
+		return User{}, err
+	}
 	var after User
 	if err := tx.QueryRow(ctx, `UPDATE app_users SET status = 'revoked', updated_at = now() WHERE id = $1
 RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`, id).Scan(

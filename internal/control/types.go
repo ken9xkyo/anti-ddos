@@ -36,6 +36,25 @@ type User struct {
 	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
 }
 
+type UserUpdateInput struct {
+	Reason              string `json:"reason"`
+	Role                string `json:"role,omitempty"`
+	Status              string `json:"status,omitempty"`
+	ForcePasswordChange *bool  `json:"force_password_change,omitempty"`
+}
+
+type PasswordResetInput struct {
+	Reason              string `json:"reason"`
+	Password            string `json:"password"`
+	ForcePasswordChange *bool  `json:"force_password_change,omitempty"`
+}
+
+type OwnPasswordInput struct {
+	Reason          string `json:"reason"`
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 type Session struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -383,6 +402,41 @@ type SnapshotMetadata struct {
 	CreatedBy      string          `json:"created_by,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	Snapshot       json.RawMessage `json:"snapshot,omitempty"`
+}
+
+type SnapshotDiffValue struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Changed bool   `json:"changed"`
+}
+
+type SnapshotDiffItem struct {
+	Key  string          `json:"key"`
+	Item json.RawMessage `json:"item"`
+}
+
+type SnapshotDiffChange struct {
+	Key    string          `json:"key"`
+	Before json.RawMessage `json:"before"`
+	After  json.RawMessage `json:"after"`
+}
+
+type SnapshotCollectionDiff struct {
+	Added     []SnapshotDiffItem   `json:"added"`
+	Removed   []SnapshotDiffItem   `json:"removed"`
+	Changed   []SnapshotDiffChange `json:"changed"`
+	Unchanged uint32               `json:"unchanged"`
+}
+
+type SnapshotDiff struct {
+	FromVersion    uint32                 `json:"from_version"`
+	ToVersion      uint32                 `json:"to_version"`
+	ObjectChecksum SnapshotDiffValue      `json:"object_checksum"`
+	Runtime        *SnapshotDiffChange    `json:"runtime,omitempty"`
+	Services       SnapshotCollectionDiff `json:"services"`
+	WhitelistV4    SnapshotCollectionDiff `json:"whitelist_v4"`
+	BlacklistV4    SnapshotCollectionDiff `json:"blacklist_v4"`
+	Rules          SnapshotCollectionDiff `json:"rules"`
 }
 
 type AgentInterface struct {

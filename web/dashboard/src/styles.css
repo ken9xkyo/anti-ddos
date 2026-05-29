@@ -719,6 +719,144 @@ td {
   color: #991b1b;
 }
 
+.mui-grid-shell {
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(23, 32, 51, 0.38);
+}
+
+.drawer-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.admin-drawer {
+  position: relative;
+  z-index: 1;
+  width: min(620px, 100vw);
+  min-height: 100%;
+  max-height: 100vh;
+  overflow: auto;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 18px;
+  padding: 20px;
+  background: #ffffff;
+  color: #172033;
+  box-shadow: -20px 0 36px rgba(23, 32, 51, 0.18);
+}
+
+.drawer-actions {
+  padding-top: 12px;
+  border-top: 1px solid #d8e1ea;
+}
+
+.json-textarea-field {
+  display: grid;
+  gap: 6px;
+  color: #526173;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.json-textarea-field textarea {
+  width: 100%;
+  min-height: 104px;
+  resize: vertical;
+  border: 1px solid #b9c5d2;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #172033;
+  background: #ffffff;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.json-textarea-field textarea:focus {
+  border-color: #2f6fed;
+  outline: 2px solid rgba(47, 111, 237, 0.18);
+}
+
+.confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 51, 0.42);
+}
+
+.confirm-dialog {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px;
+  padding: 20px;
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 24px 48px rgba(23, 32, 51, 0.2);
+}
+
+.confirm-content {
+  display: grid;
+  gap: 12px;
+}
+
+.snapshot-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.snapshot-toolbar .MuiTextField-root {
+  min-width: 140px;
+}
+
+.snapshot-diff {
+  display: grid;
+  gap: 14px;
+}
+
+.diff-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.diff-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.diff-card h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.chart-panel {
+  min-height: 288px;
+  overflow: hidden;
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }
@@ -739,7 +877,8 @@ td {
   }
 
   .overview-grid,
-  .two-column-grid {
+  .two-column-grid,
+  .diff-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -804,5 +943,10 @@ td {
   .empty-state {
     margin-left: 16px;
     margin-right: 16px;
+  }
+
+  .admin-drawer {
+    width: 100vw;
+    padding: 16px;
   }
 }

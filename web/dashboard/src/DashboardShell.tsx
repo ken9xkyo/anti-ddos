@@ -15,6 +15,10 @@ import { DetectionView } from './views/DetectionView';
 import { ReputationView } from './views/ReputationView';
 import { FleetView } from './views/FleetView';
 import { InvestigationView } from './views/InvestigationView';
+import { RulesAdminView } from './views/RulesAdminView';
+import { WhitelistAdminView } from './views/WhitelistAdminView';
+import { SnapshotsView } from './views/SnapshotsView';
+import { AccessView } from './views/AccessView';
 import type { DashboardData, User } from './types';
 
 export function DashboardShell({
@@ -97,8 +101,12 @@ export function DashboardShell({
         {data && activeTab === 'overview' ? <OverviewView data={data} /> : null}
         {data && activeTab === 'incidents' ? <IncidentsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
         {data && activeTab === 'services' ? <ServicesView services={data.services} agents={data.agents} applyStatuses={data.overview.latest_apply_status} canMutate={canMutate} onRefresh={onRefresh} /> : null}
+        {data && activeTab === 'rules' ? <RulesAdminView services={data.services} canMutate={canMutate} /> : null}
+        {data && activeTab === 'whitelist' ? <WhitelistAdminView services={data.services} canMutate={canMutate} /> : null}
         {data && activeTab === 'detection' ? <DetectionView anomalies={data.anomalies} baselines={data.baselines} rules={data.rules} /> : null}
-        {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} /> : null}
+        {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
+        {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}
+        {data && activeTab === 'access' ? <AccessView currentUser={user} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}
         {data && activeTab === 'investigation' ? <InvestigationView events={data.events} /> : null}
       </section>

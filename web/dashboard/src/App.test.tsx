@@ -29,6 +29,7 @@ function renderShellWithData(user: User, dashboardData: DashboardData, activeTab
 
 describe('DashboardShell', () => {
   beforeEach(() => {
+    cleanupChartArtifacts();
     localStorage.clear();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -37,6 +38,7 @@ describe('DashboardShell', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    cleanupChartArtifacts();
   });
 
   it('renders overview freshness and Prometheus unconfigured state', () => {
@@ -109,7 +111,7 @@ describe('DashboardShell', () => {
     expect(screen.getByText('validate: policy snapshot object_checksum mismatch')).toBeInTheDocument();
   });
 
-  it('shows operator service mutation entrypoints without rule CRUD in v2', () => {
+  it('shows operator service actions and keeps Detection observe-only', () => {
     renderShell(operatorUser, 'services');
     expect(screen.getByRole('button', { name: /add service/i })).toBeInTheDocument();
     renderShell(operatorUser, 'detection');
@@ -190,12 +192,12 @@ describe('DashboardShell', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /add service/i }));
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'edge-api' } });
     fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
     fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443, 8443' } });
     fireEvent.change(screen.getByLabelText(/output interface/i), { target: { value: 'backend1' } });
-    fireEvent.change(screen.getByLabelText(/^owner$/i), { target: { value: 'platform' } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'add edge API service' } });
+    fireEvent.change(screen.getByLabelText(/^owner/i), { target: { value: 'platform' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'add edge API service' } });
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
@@ -260,12 +262,12 @@ describe('DashboardShell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add service/i }));
     expect(screen.getByRole('option', { name: /backend0.*ifindex 8/i })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'edge-api' } });
     fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
     fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443' } });
     fireEvent.change(screen.getByLabelText(/output interface/i), { target: { value: 'backend0' } });
-    fireEvent.change(screen.getByLabelText(/^owner$/i), { target: { value: 'platform' } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'add edge API service' } });
+    fireEvent.change(screen.getByLabelText(/^owner/i), { target: { value: 'platform' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'add edge API service' } });
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
@@ -317,12 +319,12 @@ describe('DashboardShell', () => {
     fireEvent.click(screen.getByRole('button', { name: /add service/i }));
     expect(screen.getByLabelText(/enabled/i)).not.toBeChecked();
     expect(screen.queryByLabelText(/next-hop mac/i)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'edge-api' } });
     fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
     fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443' } });
     fireEvent.change(screen.getByLabelText(/output interface/i), { target: { value: 'enp134s0f1' } });
-    fireEvent.change(screen.getByLabelText(/^owner$/i), { target: { value: 'platform' } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'add edge API service' } });
+    fireEvent.change(screen.getByLabelText(/^owner/i), { target: { value: 'platform' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'add edge API service' } });
     fireEvent.click(screen.getByLabelText(/enabled/i));
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
 
@@ -368,12 +370,12 @@ describe('DashboardShell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit api-https/i }));
     fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443, 9443' } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'open service maintenance port' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'open service maintenance port' } });
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole('button', { name: /disable api-https/i }));
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'retire service' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'retire service' } });
     fireEvent.click(screen.getByRole('button', { name: /confirm disable/i }));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2));
 
@@ -422,7 +424,7 @@ describe('DashboardShell', () => {
 
     fireEvent.change(screen.getByLabelText(/bot token ref/i), { target: { value: 'env://ADMIN_DASHBOARD_TELEGRAM_TOKEN' } });
     fireEvent.change(screen.getByLabelText(/chat id/i), { target: { value: '5678' } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'configure alert channel' } });
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'configure alert channel' } });
     fireEvent.click(screen.getByRole('button', { name: /save config/i }));
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
@@ -437,6 +439,303 @@ describe('DashboardShell', () => {
         enabled: true
       }
     }]);
+  });
+
+  it('keeps viewer read-only in rule management', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (input.toString() === '/v1/rules') {
+        return jsonResponse(data.rules);
+      }
+      throw new Error(`unexpected request ${input.toString()}`);
+    }));
+
+    renderShell(viewerUser, 'rules');
+
+    expect(await screen.findByText('drop-suspect')).toBeInTheDocument();
+    expect(screen.queryByText(/add rule/i)).not.toBeInTheDocument();
+    expect(screen.getByText('read only')).toBeInTheDocument();
+  });
+
+  it('runs rule create, edit and soft-disable workflows', async () => {
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      if (path === '/v1/rules' && !init?.method) return jsonResponse(data.rules);
+      if (path === '/v1/rules' && init?.method === 'POST') return jsonResponse({ ...data.rules[0], id: 'r2', name: 'edge-rate-limit' });
+      if (path === '/v1/rules/r1' && init?.method === 'PATCH') return jsonResponse({ ...data.rules[0], threshold_pps: 1500 });
+      if (path === '/v1/rules/r1' && init?.method === 'DELETE') return jsonResponse({ ...data.rules[0], enabled: false });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'rules');
+    expect(await screen.findByText('drop-suspect')).toBeInTheDocument();
+
+    clickButtonByText(/add rule/i);
+    await fillField(/^name/i, 'edge-rate-limit');
+    await fillField(/^pps$/i, '1200');
+    await fillField(/^owner/i, 'soc');
+    await fillField(/^reason/i, 'create edge rate limit');
+    clickButtonByText(/save rule/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/rules' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await fillField(/^pps$/i, '1500');
+    await fillField(/^reason/i, 'tune rule threshold');
+    clickButtonByText(/save rule/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/rules/r1' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^disable$/i);
+    await fillField(/^reason/i, 'retire rule');
+    clickButtonByText(/disable rule/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/rules/r1' && call.method === 'DELETE')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/rules' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'create edge rate limit',
+      name: 'edge-rate-limit',
+      action: 'rate_limit',
+      threshold_pps: 1200,
+      owner: 'soc',
+      enabled: true
+    });
+    expect(calls.find((call) => call.path === '/v1/rules/r1' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'tune rule threshold',
+      name: 'drop-suspect',
+      threshold_pps: 1500
+    });
+    expect(calls.find((call) => call.path === '/v1/rules/r1' && call.method === 'DELETE')?.reason).toBe('retire rule');
+  });
+
+  it('runs whitelist create, edit and soft-disable workflows', async () => {
+    const whitelistEntry = whitelistFixture();
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      if (path === '/v1/whitelist' && !init?.method) return jsonResponse([whitelistEntry]);
+      if (path === '/v1/whitelist' && init?.method === 'POST') return jsonResponse({ ...whitelistEntry, id: 'w2', cidr: '203.0.113.55/32' });
+      if (path === '/v1/whitelist/w1' && init?.method === 'PATCH') return jsonResponse({ ...whitelistEntry, label: 'trusted-partner' });
+      if (path === '/v1/whitelist/w1' && init?.method === 'DELETE') return jsonResponse({ ...whitelistEntry, enabled: false });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'whitelist');
+    expect(await screen.findByText('198.51.100.10/32')).toBeInTheDocument();
+
+    clickButtonByText(/add whitelist/i);
+    await fillField(/^cidr/i, '203.0.113.55/32');
+    await fillField(/^owner/i, 'noc');
+    await fillField(/^reason/i, 'allow partner probe');
+    clickButtonByText(/save whitelist/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/whitelist' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await fillField(/^label$/i, 'trusted-partner');
+    await fillField(/^reason/i, 'rename whitelist entry');
+    clickButtonByText(/save whitelist/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/whitelist/w1' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^disable$/i);
+    await fillField(/^reason/i, 'partner window closed');
+    clickButtonByText(/disable entry/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/whitelist/w1' && call.method === 'DELETE')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/whitelist' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'allow partner probe',
+      cidr: '203.0.113.55/32',
+      scope: 'global',
+      owner: 'noc',
+      enabled: true
+    });
+    expect(calls.find((call) => call.path === '/v1/whitelist/w1' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'rename whitelist entry',
+      cidr: '198.51.100.10/32',
+      label: 'trusted-partner'
+    });
+    expect(calls.find((call) => call.path === '/v1/whitelist/w1' && call.method === 'DELETE')?.reason).toBe('partner window closed');
+  });
+
+  it('runs feed create, edit, sync and soft-disable workflows with admin credentials', async () => {
+    const onRefresh = vi.fn(async () => undefined);
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      if (path === '/v1/feed-sources' && !init?.method) return jsonResponse(data.feedSources);
+      if (path === '/v1/feed-sources' && init?.method === 'POST') return jsonResponse({ ...data.feedSources[0], id: 'f2', name: 'partner-feed' });
+      if (path === '/v1/feed-sources/f1' && init?.method === 'PATCH') return jsonResponse({ ...data.feedSources[0], license_note: 'commercial-ok' });
+      if (path === '/v1/feed-sources/f1/sync' && init?.method === 'POST') return jsonResponse({ ...data.feedRuns[0], id: 'fr2' });
+      if (path === '/v1/feed-sources/f1' && init?.method === 'DELETE') return jsonResponse({ ...data.feedSources[0], enabled: false });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    render(
+      <DashboardShell
+        user={adminUser}
+        data={data}
+        activeTab="reputation"
+        setActiveTab={vi.fn()}
+        loading={false}
+        error=""
+        lastRefresh={new Date().toISOString()}
+        onRefresh={onRefresh}
+        onLogout={vi.fn()}
+      />
+    );
+
+    clickButtonByText(/add feed/i);
+    await fillField(/^name/i, 'partner-feed');
+    await fillField(/^url$/i, 'https://feeds.example.test/drop.json');
+    await fillField(/credential ref/i, 'vault://feeds/partner');
+    await fillField(/^reason/i, 'add partner feed');
+    clickButtonByText(/save feed/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await fillField(/license note/i, 'commercial-ok');
+    await fillField(/^reason/i, 'update feed license');
+    clickButtonByText(/save feed/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources/f1' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^sync$/i);
+    await fillField(/^reason/i, 'manual feed sync');
+    clickButtonByText(/sync feed/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources/f1/sync' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^disable$/i);
+    await fillField(/^reason/i, 'retire feed');
+    clickButtonByText(/disable feed/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources/f1' && call.method === 'DELETE')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/feed-sources' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'add partner feed',
+      name: 'partner-feed',
+      url: 'https://feeds.example.test/drop.json',
+      credential_ref: 'vault://feeds/partner'
+    });
+    expect(calls.find((call) => call.path === '/v1/feed-sources/f1' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'update feed license',
+      license_note: 'commercial-ok'
+    });
+    expect(calls.find((call) => call.path === '/v1/feed-sources/f1/sync' && call.method === 'POST')?.body).toEqual({ reason: 'manual feed sync' });
+    expect(calls.find((call) => call.path === '/v1/feed-sources/f1' && call.method === 'DELETE')?.reason).toBe('retire feed');
+  });
+
+  it('runs user create, reactivate, password reset and session revoke workflows', async () => {
+    const managedUser: User = {
+      ...operatorUser,
+      status: 'revoked',
+      force_password_change: true,
+      created_at: '2026-05-28T11:00:00Z'
+    };
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      if (path === '/v1/users' && !init?.method) return jsonResponse([managedUser]);
+      if (path === '/v1/users' && init?.method === 'POST') return jsonResponse({ id: 'u4', username: 'analyst', role: 'viewer', status: 'active' });
+      if (path === '/v1/users/u2' && init?.method === 'PATCH') return jsonResponse({ ...managedUser, status: 'active' });
+      if (path === '/v1/users/u2/password-reset' && init?.method === 'POST') return jsonResponse(managedUser);
+      if (path === '/v1/users/u2/sessions/revoke' && init?.method === 'POST') return jsonResponse(managedUser);
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(adminUser, 'access');
+    expect((await screen.findAllByText('operator')).length).toBeGreaterThan(0);
+
+    clickButtonByText(/add user/i);
+    await fillField(/^username/i, 'analyst');
+    await fillField(/temporary password/i, 'TempPass123!');
+    await fillField(/^reason/i, 'create analyst user');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/users' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await selectOption(/^status/i, 'Active');
+    await fillField(/^reason/i, 'reactivate operator');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/users/u2' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^reset$/i);
+    await fillField(/temporary password/i, 'NextPass123!');
+    await fillField(/^reason/i, 'reset locked account');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/users/u2/password-reset' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^sessions$/i);
+    await fillField(/^reason/i, 'clear stale sessions');
+    clickButtonByText(/revoke sessions/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/users/u2/sessions/revoke' && call.method === 'POST')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/users' && call.method === 'POST')?.body).toEqual({
+      reason: 'create analyst user',
+      username: 'analyst',
+      password: 'TempPass123!',
+      role: 'viewer'
+    });
+    expect(calls.find((call) => call.path === '/v1/users/u2' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'reactivate operator',
+      status: 'active'
+    });
+    expect(calls.find((call) => call.path === '/v1/users/u2/password-reset' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'reset locked account',
+      password: 'NextPass123!',
+      force_password_change: true
+    });
+    expect(calls.find((call) => call.path === '/v1/users/u2/sessions/revoke' && call.method === 'POST')?.body).toEqual({ reason: 'clear stale sessions' });
+  });
+
+  it('loads snapshot semantic diff and confirms rollback', async () => {
+    const snapshots = snapshotFixtures();
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      if (path === '/v1/snapshots?include_snapshot=false') return jsonResponse(snapshots);
+      if (path === '/v1/snapshots/diff?from=1&to=2') return jsonResponse(snapshotDiffFixture());
+      if (path === '/v1/snapshots/rollback' && init?.method === 'POST') return jsonResponse({ ...snapshots[0], version: 3, rollback_from: 2 });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'snapshots');
+    expect(await screen.findByText('Snapshot Versions')).toBeInTheDocument();
+
+    clickButtonByText(/load diff/i);
+    expect(await screen.findByText('diff v1 -> v2 loaded')).toBeInTheDocument();
+    expect(screen.getByText('changed')).toBeInTheDocument();
+
+    fireEvent.click((await screen.findAllByText(/^rollback$/i))[0].closest('button')!);
+    await fillField(/^reason/i, 'rollback bad policy');
+    clickButtonByText(/create rollback/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/snapshots/rollback' && call.method === 'POST')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/snapshots/rollback' && call.method === 'POST')?.body).toEqual({
+      target_version: 2,
+      reason: 'rollback bad policy'
+    });
   });
 
   it('logs in, polls dashboard, runs operator actions, and clears token on logout', async () => {
@@ -576,4 +875,90 @@ function jsonResponse(body: unknown) {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+function cleanupChartArtifacts() {
+  document.querySelectorAll('body > svg[aria-hidden="true"]').forEach((node) => node.remove());
+}
+
+function clickButtonByText(text: string | RegExp) {
+  const node = screen.getByText(text);
+  const button = node.closest('button');
+  if (!button) throw new Error(`no button found for ${String(text)}`);
+  fireEvent.click(button);
+}
+
+async function fillField(label: string | RegExp, value: string) {
+  const controls = await screen.findAllByLabelText(label);
+  const control = controls.find((item) => (
+    item instanceof HTMLInputElement ||
+    item instanceof HTMLTextAreaElement ||
+    item instanceof HTMLSelectElement
+  ));
+  if (!control) throw new Error(`no editable control found for ${String(label)}`);
+  fireEvent.change(control, { target: { value } });
+}
+
+async function selectOption(label: string | RegExp, optionText: string) {
+  const controls = await screen.findAllByLabelText(label);
+  const combo = controls.find((item) => item.getAttribute('role') === 'combobox');
+  if (!combo) throw new Error(`no select control found for ${String(label)}`);
+  fireEvent.mouseDown(combo);
+  fireEvent.click(await screen.findByText(new RegExp(`^${optionText}$`, 'i')));
+}
+
+function whitelistFixture() {
+  return {
+    id: 'w1',
+    ebpf_id: 21,
+    cidr: '198.51.100.10/32',
+    scope: 'global',
+    label: 'trusted-host',
+    owner: 'soc',
+    priority: 100,
+    enabled: true,
+    created_at: '2026-05-28T11:00:00Z',
+    updated_at: '2026-05-28T11:00:00Z'
+  };
+}
+
+function snapshotFixtures() {
+  return [
+    {
+      version: 2,
+      checksum: 'sha256:22222222222222222222222222222222',
+      object_checksum: 'obj222222222222222222222222222222',
+      created_by: 'operator',
+      created_at: '2026-05-28T11:10:00Z'
+    },
+    {
+      version: 1,
+      checksum: 'sha256:11111111111111111111111111111111',
+      object_checksum: 'obj111111111111111111111111111111',
+      created_by: 'operator',
+      created_at: '2026-05-28T11:00:00Z'
+    }
+  ];
+}
+
+function snapshotDiffFixture() {
+  const emptyCollection = { added: [], removed: [], changed: [], unchanged: 0 };
+  return {
+    from_version: 1,
+    to_version: 2,
+    object_checksum: { from: 'obj111', to: 'obj222', changed: true },
+    services: {
+      added: [],
+      removed: [],
+      changed: [{
+        key: 'service:api-https',
+        before: { name: 'api-https', enabled: true },
+        after: { name: 'api-https', enabled: false }
+      }],
+      unchanged: 0
+    },
+    whitelist_v4: emptyCollection,
+    blacklist_v4: emptyCollection,
+    rules: emptyCollection
+  };
 }

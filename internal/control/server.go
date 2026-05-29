@@ -56,13 +56,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/v1/me", s.handleMe)
+	s.mux.HandleFunc("/v1/me/password", s.handleMePassword)
 	s.mux.HandleFunc("/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/v1/users/", s.handleUserByID)
 	s.mux.HandleFunc("/v1/services", s.handleServices)
 	s.mux.HandleFunc("/v1/services/", s.handleServiceByID)
 	s.mux.HandleFunc("/v1/forwarding-policies", s.handleForwardingPolicies)
 	s.mux.HandleFunc("/v1/whitelist", s.handleWhitelist)
+	s.mux.HandleFunc("/v1/whitelist/", s.handleWhitelistByID)
 	s.mux.HandleFunc("/v1/rules", s.handleRules)
+	s.mux.HandleFunc("/v1/rules/", s.handleRuleByID)
 	s.mux.HandleFunc("/v1/blacklist", s.handleBlacklist)
 	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
 	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
@@ -74,7 +77,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/alerts/", s.handleAlertSubroute)
 	s.mux.HandleFunc("/v1/snapshots", s.handleSnapshots)
 	s.mux.HandleFunc("/v1/snapshots/build", s.handleBuildSnapshot)
+	s.mux.HandleFunc("/v1/snapshots/diff", s.handleSnapshotDiff)
 	s.mux.HandleFunc("/v1/snapshots/rollback", s.handleRollback)
+	s.mux.HandleFunc("/v1/snapshots/", s.handleSnapshotByVersion)
 	s.mux.HandleFunc("/v1/audit", s.handleAudit)
 	s.mux.HandleFunc("/v1/security-events", s.handleSecurityEvents)
 	s.mux.HandleFunc("/v1/security-events/summary", s.handleSecurityEventSummary)
@@ -161,6 +166,23 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, actor.User)
 }
 
+func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var req OwnPasswordInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := s.store.ChangeOwnPassword(r.Context(), actor, req, bearerTokenOrCookie(r))
+	writeResult(w, user, err)
+}
+
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
@@ -192,13 +214,68 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/v1/users/")
-	if r.Method != http.MethodDelete {
-		methodNotAllowed(w)
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/users/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(w, http.StatusNotFound, errors.New("user not found"))
 		return
 	}
-	user, err := s.store.RevokeUser(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
-	writeResult(w, user, err)
+	id := parts[0]
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "password-reset":
+			if r.Method != http.MethodPost {
+				methodNotAllowed(w)
+				return
+			}
+			var req PasswordResetInput
+			if !decodeJSON(w, r, &req) {
+				return
+			}
+			user, err := s.store.ResetUserPassword(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+			writeResult(w, user, err)
+			return
+		case "sessions":
+			writeError(w, http.StatusNotFound, errors.New("user session route not found"))
+			return
+		default:
+			writeError(w, http.StatusNotFound, errors.New("user route not found"))
+			return
+		}
+	}
+	if len(parts) == 3 && parts[1] == "sessions" && parts[2] == "revoke" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+			return
+		}
+		user, err := s.store.RevokeUserSessions(r.Context(), actor, id, mutationReason(r.Header.Get("X-Audit-Reason"), req.Reason))
+		writeResult(w, user, err)
+		return
+	}
+	if len(parts) != 1 {
+		writeError(w, http.StatusNotFound, errors.New("user route not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req UserUpdateInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		user, err := s.store.UpdateUser(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, user, err)
+	case http.MethodDelete:
+		user, err := s.store.RevokeUser(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, user, err)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +363,32 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleWhitelistByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/whitelist/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, errors.New("whitelist entry not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req WhitelistInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		entry, err := s.store.UpdateWhitelistEntry(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	case http.MethodDelete:
+		entry, err := s.store.DisableWhitelistEntry(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
@@ -301,6 +404,32 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rule, err := s.store.CreateRule(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, rule, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/rules/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, errors.New("rule not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req RuleInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		rule, err := s.store.UpdateRule(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, rule, err)
+	case http.MethodDelete:
+		rule, err := s.store.DisableRule(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
 		writeResult(w, rule, err)
 	default:
 		methodNotAllowed(w)
@@ -395,6 +524,9 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 		}
 		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
 		writeResult(w, source, err)
+	case http.MethodDelete:
+		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, source, err)
 	default:
 		methodNotAllowed(w)
 	}
@@ -436,6 +568,51 @@ func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	include := r.URL.Query().Get("include_snapshot") == "true"
 	snapshots, err := s.store.ListSnapshots(r.Context(), include)
 	writeResult(w, snapshots, err)
+}
+
+func (s *Server) handleSnapshotByVersion(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireActor(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	rawVersion := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/snapshots/"), "/")
+	if rawVersion == "" || strings.Contains(rawVersion, "/") {
+		writeError(w, http.StatusNotFound, errors.New("snapshot not found"))
+		return
+	}
+	version, err := strconv.ParseUint(rawVersion, 10, 32)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("snapshot version must be a positive integer"))
+		return
+	}
+	include := r.URL.Query().Get("include_snapshot") != "false"
+	snapshot, err := s.store.GetSnapshotMetadata(r.Context(), uint32(version), include)
+	writeResult(w, snapshot, err)
+}
+
+func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireActor(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	fromVersion, err := strconv.ParseUint(r.URL.Query().Get("from"), 10, 32)
+	if err != nil || fromVersion == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("from snapshot version is required"))
+		return
+	}
+	toVersion, err := strconv.ParseUint(r.URL.Query().Get("to"), 10, 32)
+	if err != nil || toVersion == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("to snapshot version is required"))
+		return
+	}
+	diff, err := s.store.DiffSnapshots(r.Context(), uint32(fromVersion), uint32(toVersion))
+	writeResult(w, diff, err)
 }
 
 func (s *Server) handleBuildSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -649,6 +826,17 @@ func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 }
 
+func bearerTokenOrCookie(r *http.Request) string {
+	token := bearerToken(r)
+	if token != "" {
+		return token
+	}
+	if cookie, err := r.Cookie("anti_ddos_session"); err == nil {
+		return cookie.Value
+	}
+	return ""
+}
+
 func contextWithTimeout(r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), timeout)
 }
@@ -666,9 +854,17 @@ func routeName(r *http.Request) string {
 		return "/v1/auth/logout"
 	case path == "/v1/me":
 		return "/v1/me"
+	case path == "/v1/me/password":
+		return "/v1/me/password"
 	case path == "/v1/users":
 		return "/v1/users"
 	case strings.HasPrefix(path, "/v1/users/"):
+		if strings.HasSuffix(path, "/password-reset") {
+			return "/v1/users/{id}/password-reset"
+		}
+		if strings.HasSuffix(path, "/sessions/revoke") {
+			return "/v1/users/{id}/sessions/revoke"
+		}
 		return "/v1/users/{id}"
 	case path == "/v1/services":
 		return "/v1/services"
@@ -678,8 +874,12 @@ func routeName(r *http.Request) string {
 		return "/v1/forwarding-policies"
 	case path == "/v1/whitelist":
 		return "/v1/whitelist"
+	case strings.HasPrefix(path, "/v1/whitelist/"):
+		return "/v1/whitelist/{id}"
 	case path == "/v1/rules":
 		return "/v1/rules"
+	case strings.HasPrefix(path, "/v1/rules/"):
+		return "/v1/rules/{id}"
 	case path == "/v1/blacklist":
 		return "/v1/blacklist"
 	case path == "/v1/feed-sources":
@@ -707,7 +907,15 @@ func routeName(r *http.Request) string {
 			return "/v1/alerts/{id}/deliveries"
 		}
 		return "/v1/alerts/{id}"
-	case strings.HasPrefix(path, "/v1/snapshots"):
+	case path == "/v1/snapshots/diff":
+		return "/v1/snapshots/diff"
+	case path == "/v1/snapshots/build":
+		return "/v1/snapshots/build"
+	case path == "/v1/snapshots/rollback":
+		return "/v1/snapshots/rollback"
+	case strings.HasPrefix(path, "/v1/snapshots/"):
+		return "/v1/snapshots/{version}"
+	case path == "/v1/snapshots":
 		return "/v1/snapshots"
 	case path == "/v1/audit":
 		return "/v1/audit"
