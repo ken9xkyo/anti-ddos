@@ -117,7 +117,7 @@ Agent target se `DOWN` cho den khi Agent host chay va bind metrics tai `0.0.0.0:
 Chi chay Agent khi da co interface lab hoac WAN duoc phe duyet. Khong dung lenh nay tren NIC production neu chua co interface role va rollback plan.
 
 ```bash
-make phase2-build
+make agent-build
 
 sudo env \
   ANTI_DDOS_WAN_IFACE=<approved-lab-or-wan-iface> \
@@ -189,7 +189,7 @@ ADMIN_DASHBOARD_URL=http://127.0.0.1:8088 \
 ADMIN_DASHBOARD_USERNAME=admin \
 ADMIN_DASHBOARD_PASSWORD='<admin-password>' \
 PYTHON=.venv-e2e/bin/python \
-make phase4-ui-e2e
+make services-ui-e2e
 ```
 
 Credential chi truyen qua bien moi truong local. Khong commit password vao repo hoac script.

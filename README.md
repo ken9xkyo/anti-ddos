@@ -89,7 +89,7 @@ Mot so integration test PostgreSQL se tu dung PostgreSQL container rieng khi kho
 Prometheus trong compose scrape Agent qua `host.docker.internal:9091`. Agent chi nen chay sau khi da chot interface lab/an toan:
 
 ```bash
-make phase2-build
+make agent-build
 
 sudo env \
   ANTI_DDOS_WAN_IFACE=<approved-lab-or-wan-iface> \
