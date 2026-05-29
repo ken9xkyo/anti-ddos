@@ -3,6 +3,13 @@ CC ?= gcc
 BPFTOOL ?= bpftool
 PKG_CONFIG ?= pkg-config
 PYTHON ?= python3
+CURL ?= curl
+NPM ?= npm
+GO ?= go
+COMPOSE ?= docker compose
+ADMIN_USERNAME ?= admin
+ADMIN_PASSWORD ?=
+export ADMIN_PASSWORD
 
 BUILD_DIR := build
 BPF_BUILD_DIR := $(BUILD_DIR)/bpf
@@ -32,9 +39,132 @@ USER_CFLAGS := -g -O2 -Wall -Wextra -Werror -Iinclude
 LIBBPF_CFLAGS := $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
 LIBBPF_LIBS := $(shell $(PKG_CONFIG) --libs libbpf 2>/dev/null || printf '%s' '-lbpf -lelf -lz')
 
+COMPOSE_BUILD_SERVICES := control-api admin-dashboard
+COMPOSE_LOG_SERVICES := postgres control-api prometheus grafana admin-dashboard
+
+.PHONY: help env-init compose-config compose-build dev-up dev-down dev-reset dev-ps dev-logs dev-health admin-bootstrap go-test go-vet go-race ui-test ui-build test test-all deploy deploy-down deploy-logs
 .PHONY: phase1-build phase1-test phase1-verify phase2-build phase2-test phase2-veth-test phase2-verify phase3-test phase3-verify phase4-policygen phase4-test phase4-veth-test phase4-ui-e2e phase4-verify phase5-test phase5-postgres-test phase5-verify phase6-test phase6-postgres-test phase6-ui-test phase6-verify phase7-test phase7-postgres-test phase7-veth-test phase7-ui-test phase7-verify phase8-test phase8-postgres-test phase8-ui-test phase8-verify phase9-test phase9-postgres-test phase9-ui-test phase9-verify admin-dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test clean
 
 phase1-build: $(BPF_OBJ)
+
+help:
+	@printf 'Anti-DDoS dev/test/deploy targets\n\n'
+	@printf 'Dev and deploy:\n'
+	@printf '  make env-init          Create .env from .env.example when missing\n'
+	@printf '  make compose-config    Validate docker-compose.yml\n'
+	@printf '  make compose-build     Build local control-api and admin-dashboard images\n'
+	@printf '  make dev-up            Build BPF/images and start the lab stack\n'
+	@printf '  make dev-health        Check local health endpoints\n'
+	@printf '  make dev-ps            Show compose service status\n'
+	@printf '  make dev-logs          Follow compose service logs\n'
+	@printf '  make dev-down          Stop the lab stack\n'
+	@printf '  make dev-reset         Stop the lab stack and remove lab volumes\n'
+	@printf '  make admin-bootstrap   Bootstrap the first admin user\n'
+	@printf '  make deploy            Alias for dev-up\n'
+	@printf '  make deploy-down       Alias for dev-down\n'
+	@printf '  make deploy-logs       Alias for dev-logs\n\n'
+	@printf 'Tests:\n'
+	@printf '  make go-test           Run Go tests\n'
+	@printf '  make go-vet            Run go vet\n'
+	@printf '  make go-race           Run Go race tests\n'
+	@printf '  make ui-test           Run dashboard tests\n'
+	@printf '  make ui-build          Build dashboard assets\n'
+	@printf '  make test              Run BPF fixture, Go tests, dashboard tests/build\n'
+	@printf '  make test-all          Run test plus admin-dashboard integration gate\n'
+
+env-init:
+	@if [ -f .env ]; then \
+		echo ".env already exists"; \
+	else \
+		cp .env.example .env; \
+		echo "created .env from .env.example"; \
+		echo "edit change-me-* values before using this stack outside a local lab"; \
+	fi
+
+compose-config:
+	$(COMPOSE) config --quiet
+
+compose-build:
+	$(COMPOSE) build $(COMPOSE_BUILD_SERVICES)
+
+dev-up: phase1-build compose-build
+	$(COMPOSE) up -d
+
+dev-down:
+	$(COMPOSE) down
+
+dev-reset:
+	$(COMPOSE) down -v
+
+dev-ps:
+	$(COMPOSE) ps
+
+dev-logs:
+	$(COMPOSE) logs -f $(COMPOSE_LOG_SERVICES)
+
+dev-health:
+	@set -eu; \
+	control_addr="$$($(COMPOSE) port control-api 8080)"; \
+	prometheus_addr="$$($(COMPOSE) port prometheus 9090)"; \
+	grafana_addr="$$($(COMPOSE) port grafana 3000)"; \
+	dashboard_addr="$$($(COMPOSE) port admin-dashboard 8080)"; \
+	check() { \
+		name="$$1"; \
+		url="$$2"; \
+		printf '%-16s %s\n' "$$name" "$$url"; \
+		$(CURL) -fsS "$$url" >/dev/null; \
+	}; \
+	check control-api "http://$$control_addr/healthz"; \
+	check prometheus "http://$$prometheus_addr/-/ready"; \
+	check grafana "http://$$grafana_addr/api/health"; \
+	check admin-dashboard "http://$$dashboard_addr/healthz"
+
+admin-bootstrap:
+	@if [ -n "$${ADMIN_PASSWORD:-}" ]; then \
+		printf '%s\n' "$$ADMIN_PASSWORD" | $(COMPOSE) run --rm --no-deps --entrypoint control-admin control-api bootstrap --username "$(ADMIN_USERNAME)" --password-stdin; \
+	else \
+		if [ ! -r /dev/tty ]; then \
+			echo "ADMIN_PASSWORD is required when no TTY is available" >&2; \
+			exit 1; \
+		fi; \
+		printf 'Admin password for %s: ' "$(ADMIN_USERNAME)" > /dev/tty; \
+		stty -echo < /dev/tty; \
+		trap 'stty echo < /dev/tty; printf "\n" > /dev/tty' EXIT INT TERM; \
+		IFS= read -r password < /dev/tty; \
+		stty echo < /dev/tty; \
+		trap - EXIT INT TERM; \
+		printf '\n' > /dev/tty; \
+		if [ -z "$$password" ]; then \
+			echo "admin password cannot be empty" >&2; \
+			exit 1; \
+		fi; \
+		printf '%s\n' "$$password" | $(COMPOSE) run --rm --no-deps --entrypoint control-admin control-api bootstrap --username "$(ADMIN_USERNAME)" --password-stdin; \
+	fi
+
+go-test:
+	$(GO) test ./...
+
+go-vet:
+	$(GO) vet ./...
+
+go-race:
+	$(GO) test -race ./...
+
+ui-test:
+	$(NPM) --prefix web/dashboard test -- --run
+
+ui-build:
+	$(NPM) --prefix web/dashboard run build
+
+test: phase1-test go-test ui-test ui-build
+
+test-all: test admin-dashboard-test
+
+deploy: dev-up
+
+deploy-down: dev-down
+
+deploy-logs: dev-logs
 
 phase1-test: $(BPF_OBJ) $(PHASE1_TEST)
 	$(PHASE1_TEST) $(BPF_OBJ)

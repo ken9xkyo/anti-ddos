@@ -1,7 +1,14 @@
-version: "3.9"
+x-service-defaults: &service-defaults
+  init: true
+  logging:
+    driver: json-file
+    options:
+      max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+      max-file: ${DOCKER_LOG_MAX_FILE:-5}
 
 services:
   postgres:
+    <<: *service-defaults
     image: ${POSTGRES_IMAGE:-postgres:16.9-alpine3.22}
     restart: unless-stopped
     environment:
@@ -22,6 +29,7 @@ services:
       start_period: 10s
 
   control-api:
+    <<: *service-defaults
     image: ${CONTROL_API_IMAGE:-anti-ddos/control-api:local}
     build:
       context: .
@@ -68,6 +76,7 @@ services:
       start_period: 10s
 
   prometheus:
+    <<: *service-defaults
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.2}
     restart: unless-stopped
     depends_on:
@@ -100,6 +109,7 @@ services:
       start_period: 10s
 
   grafana:
+    <<: *service-defaults
     image: ${GRAFANA_IMAGE:-grafana/grafana:12.4.3-security-02}
     restart: unless-stopped
     depends_on:
@@ -129,6 +139,7 @@ services:
       start_period: 20s
 
   admin-dashboard:
+    <<: *service-defaults
     image: ${ADMIN_DASHBOARD_IMAGE:-anti-ddos/admin-dashboard:local}
     build:
       context: .

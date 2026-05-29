@@ -16,7 +16,7 @@ MVP nay tap trung vao mot node Ubuntu 24.04, IPv4, native XDP, policy snapshot a
 
 ## Trang Thai Repo
 
-- Phase 01-08 da co verification report trong `reports/`.
+- Phase 01-09 da co verification report trong `docs/reports/`.
 - Control API, Admin CLI, Agent va React/Vite Admin Dashboard da co source trong repo.
 - Prometheus scrape config va Grafana dashboard co san trong `deploy/`.
 - Compose lab stack chay PostgreSQL, Control API, Prometheus, Grafana va Admin Dashboard. Node Agent van chay tren host de tranh dua quyen XDP/NIC vao container.
@@ -32,29 +32,24 @@ Khi can chay Agent, uu tien VETH/lab interface. Neu chay tren NIC that, can co p
 Yeu cau: Docker Engine va Docker Compose plugin.
 
 ```bash
-cp .env.example .env
+make env-init
 # Sua cac gia tri change-me-* trong .env truoc khi dung ngoai lab local.
 
-make phase1-build
-docker compose build control-api admin-dashboard
-docker compose up -d
-```
-
-Kiem tra health:
-
-```bash
-curl -fsS http://127.0.0.1:8080/healthz
-curl -fsS http://127.0.0.1:9090/-/ready
-curl -fsS http://127.0.0.1:3000/api/health
-curl -fsS http://127.0.0.1:8088/
+make compose-config
+make deploy
+make dev-health
 ```
 
 Bootstrap Admin dau tien:
 
 ```bash
-printf '%s\n' 'replace-with-a-strong-password' \
-  | docker compose run --rm --no-deps --entrypoint control-admin control-api \
-      bootstrap --username admin --password-stdin
+make admin-bootstrap
+```
+
+Non-interactive lab use:
+
+```bash
+ADMIN_PASSWORD='replace-with-a-strong-password' make admin-bootstrap
 ```
 
 Mo cac giao dien:
@@ -65,6 +60,29 @@ Mo cac giao dien:
 - Grafana: `http://127.0.0.1:3000`
 
 Tai lieu chi tiet: [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md).
+
+## Workflow Dev/Test/Deploy
+
+```bash
+make help
+make dev-up
+make dev-logs
+make dev-down
+```
+
+Kiem thu nhanh:
+
+```bash
+make test
+```
+
+Gate day du hon cho admin dashboard va integration PostgreSQL:
+
+```bash
+make test-all
+```
+
+Mot so integration test PostgreSQL se tu dung PostgreSQL container rieng khi khong co `ANTI_DDOS_CONTROL_TEST_DSN`.
 
 ## Chay Node Agent Tren Host
 
@@ -83,16 +101,3 @@ sudo env \
 ```
 
 Neu chua co interface duoc phe duyet, dung cac lab script VETH thay vi Agent tren NIC that.
-
-## Kiem Thu
-
-```bash
-make phase1-build
-docker compose config
-docker compose build control-api admin-dashboard
-go test ./...
-npm --prefix web/dashboard test -- --run
-npm --prefix web/dashboard run build
-```
-
-Mot so integration test PostgreSQL se tu dung PostgreSQL container rieng khi khong co `ANTI_DDOS_CONTROL_TEST_DSN`.
