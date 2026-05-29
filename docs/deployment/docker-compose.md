@@ -158,7 +158,7 @@ Doi port bang `.env` neu host da co service dung port tuong ung.
 
 E2E nay tao mot protected service tam thoi dang disabled, sua, roi xoa qua dashboard. Test khong enable service va khong attach XDP vao NIC that. Neu can xac thuc mot host interface cu the trong dropdown, dat `ANTI_DDOS_E2E_OUTPUT_INTERFACE=<iface>` va `ANTI_DDOS_E2E_REQUIRE_OUTPUT_INTERFACE=1`.
 
-Dashboard mac dinh tao service disabled. Khi enable service live, form phai co du `resolved_ifindex`, `resolved_src_mac` va `resolved_next_hop_mac`; Control API khong fallback sang lookup netlink trong container khi metadata host da duoc Agent bao ve nhung con thieu next-hop MAC.
+Dashboard mac dinh tao service disabled. Khi enable service live, form chi yeu cau `resolved_ifindex` va `resolved_src_mac` tu Agent-reported interface; `resolved_next_hop_mac` khong con la truong nhap tay. Neu next-hop chua co san, forwarding resolver se resolve khi build snapshot; neu resolver khong thay host NIC/neighbor trong compose thi build/apply fail-closed voi loi lookup/neighbor de operator sua route/ARP/interface thay vi nhap MAC thu cong.
 
 ```bash
 python3 -m venv .venv-e2e

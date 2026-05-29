@@ -42,7 +42,7 @@ describe('DashboardShell', () => {
   it('renders overview freshness and Prometheus unconfigured state', () => {
     renderShell(viewerUser);
     expect(screen.getByText('Packets/s')).toBeInTheDocument();
-    expect(screen.getByText('unconfigured')).toBeInTheDocument();
+    expect(screen.getByText('prometheus unconfigured')).toBeInTheDocument();
     expect(screen.getByText('198.51.100.0/24')).toBeInTheDocument();
   });
 
@@ -84,7 +84,7 @@ describe('DashboardShell', () => {
     }, 'services');
 
     expect(screen.getByText('No protected services configured')).toBeInTheDocument();
-    expect(screen.getByText('Latest apply failure')).toBeInTheDocument();
+    expect(screen.getByText('Latest Apply Failure')).toBeInTheDocument();
     expect(screen.getByText('validate: policy snapshot object_checksum mismatch')).toBeInTheDocument();
   });
 
@@ -103,15 +103,17 @@ describe('DashboardShell', () => {
           reported_at: '2026-05-29T03:00:00Z'
         }
       }]
-    }, 'agents');
+    }, 'fleet');
 
     expect(screen.getByText('v9')).toBeInTheDocument();
     expect(screen.getByText('validate: policy snapshot object_checksum mismatch')).toBeInTheDocument();
   });
 
-  it('shows operator mutation entrypoints', () => {
-    renderShell(operatorUser, 'rules');
-    expect(screen.getByRole('button', { name: /add rule/i })).toBeInTheDocument();
+  it('shows operator service mutation entrypoints without rule CRUD in v2', () => {
+    renderShell(operatorUser, 'services');
+    expect(screen.getByRole('button', { name: /add service/i })).toBeInTheDocument();
+    renderShell(operatorUser, 'detection');
+    expect(screen.queryByRole('button', { name: /add rule/i })).not.toBeInTheDocument();
   });
 
   it('renders loading and error states without dashboard data', () => {
@@ -134,14 +136,14 @@ describe('DashboardShell', () => {
   });
 
   it('renders anomaly and baseline visibility', () => {
-    renderShell(viewerUser, 'anomalies');
+    renderShell(viewerUser, 'detection');
     expect(screen.getByText('auto_enforced')).toBeInTheDocument();
     expect(screen.getByText('pps_spike')).toBeInTheDocument();
     expect(screen.getByText('approved')).toBeInTheDocument();
   });
 
   it('renders event investigation table', () => {
-    renderShell(viewerUser, 'events');
+    renderShell(viewerUser, 'investigation');
     const table = screen.getByRole('table');
     expect(within(table).getByText('198.51.100.10')).toBeInTheDocument();
     expect(within(table).getByText('203.0.113.10:443')).toBeInTheDocument();
@@ -155,7 +157,7 @@ describe('DashboardShell', () => {
   });
 
   it('renders alerts and manual ISP runbook', () => {
-    renderShell(viewerUser, 'alerts');
+    renderShell(viewerUser, 'incidents');
     expect(screen.getByText('isp_escalation_needed')).toBeInTheDocument();
     expect(screen.getByText('No automatic BGP, RTBH or FlowSpec action')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /test alert/i })).toBeDisabled();
@@ -213,7 +215,6 @@ describe('DashboardShell', () => {
         protection_mode: 'enforce',
         enabled: false,
         tags: [],
-        resolved_next_hop_mac: '',
         resolved_src_mac: '',
         neighbor_resolution_status: 'unresolved'
       }
@@ -276,9 +277,9 @@ describe('DashboardShell', () => {
     });
   });
 
-  it('requires resolved next-hop metadata before enabling a service', async () => {
+  it('allows enabling a service without manual next-hop MAC input', async () => {
     const onRefresh = vi.fn(async () => undefined);
-    const fetchMock = vi.fn();
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
     const dashboardData: DashboardData = {
       ...data,
       agents: [{
@@ -291,7 +292,14 @@ describe('DashboardShell', () => {
         }]
       }]
     };
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        path: input.toString(),
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      return jsonResponse(data.services[0]);
+    }));
     render(
       <DashboardShell
         user={operatorUser}
@@ -308,6 +316,7 @@ describe('DashboardShell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add service/i }));
     expect(screen.getByLabelText(/enabled/i)).not.toBeChecked();
+    expect(screen.queryByLabelText(/next-hop mac/i)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'edge-api' } });
     fireEvent.change(screen.getByLabelText(/backend cidr/i), { target: { value: '203.0.113.20/32' } });
     fireEvent.change(screen.getByLabelText(/allowed ports/i), { target: { value: '443' } });
@@ -317,12 +326,21 @@ describe('DashboardShell', () => {
     fireEvent.click(screen.getByLabelText(/enabled/i));
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
 
-    expect(await screen.findByText('resolved next-hop MAC is required before enabling a service')).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(onRefresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    expect(calls[0]).toMatchObject({
+      path: '/v1/services',
+      method: 'POST'
+    });
+    expect(calls[0].body).toMatchObject({
+      output_interface: 'enp134s0f1',
+      enabled: true,
+      resolved_ifindex: 7,
+      resolved_src_mac: '90:e2:ba:24:9b:b6'
+    });
+    expect(calls[0].body).not.toHaveProperty('resolved_next_hop_mac');
   });
 
-  it('updates and deletes a protected service from row actions', async () => {
+  it('updates and disables a protected service from row actions', async () => {
     const onRefresh = vi.fn(async () => undefined);
     const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -354,9 +372,9 @@ describe('DashboardShell', () => {
     fireEvent.click(screen.getByRole('button', { name: /save service/i }));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole('button', { name: /delete api-https/i }));
+    fireEvent.click(screen.getByRole('button', { name: /disable api-https/i }));
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: 'retire service' } });
-    fireEvent.click(screen.getByRole('button', { name: /confirm delete/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm disable/i }));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(2));
 
     expect(calls[0]).toMatchObject({
@@ -385,14 +403,14 @@ describe('DashboardShell', () => {
       return jsonResponse({ ...data.telegramConfig, chat_id: '5678' });
     }));
 
-    renderShell(operatorUser, 'alerts');
+    renderShell(operatorUser, 'incidents');
     expect(screen.queryByRole('button', { name: /save config/i })).not.toBeInTheDocument();
 
     render(
       <DashboardShell
         user={adminUser}
         data={data}
-        activeTab="alerts"
+        activeTab="incidents"
         setActiveTab={vi.fn()}
         loading={false}
         error=""
@@ -472,7 +490,7 @@ describe('DashboardShell', () => {
     });
     await waitFor(() => expect(seen.filter((path) => path === '/v1/dashboard/overview')).toHaveLength(2));
 
-    fireEvent.click(screen.getByRole('button', { name: /alerts/i }));
+    fireEvent.click(screen.getByRole('button', { name: /incidents/i }));
     fireEvent.click(await screen.findByRole('button', { name: /test alert/i }));
     expect(await screen.findByText('test_alert: sent')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /isp runbook/i }));
