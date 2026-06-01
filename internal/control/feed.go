@@ -20,11 +20,15 @@ import (
 )
 
 const (
-	feedStatusHealthy = "healthy"
-	feedStatusError   = "error"
-	feedStatusRunning = "running"
-	defaultFeedTTL    = 24 * time.Hour
-	maxFeedBodyBytes  = 16 << 20
+	feedStatusHealthy                 = "healthy"
+	feedStatusError                   = "error"
+	feedStatusRunning                 = "running"
+	feedCredentialMask                = "***"
+	defaultFeedTTL                    = 24 * time.Hour
+	maxFeedBodyBytes                  = 16 << 20
+	defaultAbuseIPDBConfidenceMinimum = 100
+	defaultAbuseIPDBLimit             = 9999999
+	defaultAbuseIPDBIPVersion         = 4
 )
 
 type normalizedFeedEntry struct {
@@ -151,8 +155,13 @@ func (s *Store) fetchFeed(ctx context.Context, source FeedSource) ([]byte, error
 		return nil, errors.New("feed url is required")
 	}
 	credential, credentialStatus := resolveCredentialRef(source.CredentialRef)
-	if credentialStatus == "missing" {
+	switch credentialStatus {
+	case "missing":
 		return nil, errors.New("feed credential is missing")
+	case "invalid":
+		return nil, errors.New("feed credential is invalid")
+	case "masked":
+		return nil, errors.New("feed credential is masked")
 	}
 	if sourceType == "abuseipdb" && credential == "" {
 		return nil, errors.New("abuseipdb key is required")
@@ -217,12 +226,13 @@ func feedRequestURL(source FeedSource, endpoint string) (string, error) {
 		quota := map[string]any{}
 		_ = json.Unmarshal(source.QuotaMetadata, &quota)
 		if q.Get("confidenceMinimum") == "" {
-			q.Set("confidenceMinimum", fmt.Sprint(intFromQuota(quota, "confidenceMinimum", 90)))
+			q.Set("confidenceMinimum", fmt.Sprint(intFromQuota(quota, "confidenceMinimum", defaultAbuseIPDBConfidenceMinimum)))
 		}
 		if q.Get("limit") == "" {
-			if limit := intFromQuota(quota, "limit", 0); limit > 0 {
-				q.Set("limit", fmt.Sprint(limit))
-			}
+			q.Set("limit", fmt.Sprint(intFromQuota(quota, "limit", defaultAbuseIPDBLimit)))
+		}
+		if q.Get("ipversion") == "" {
+			q.Set("ipversion", fmt.Sprint(intFromQuota(quota, "ipversion", defaultAbuseIPDBIPVersion)))
 		}
 		u.RawQuery = q.Encode()
 	}
@@ -244,7 +254,7 @@ func parsePlainTextFeed(source FeedSource, body []byte, now time.Time) parsedFee
 	sourceType := normalizeFeedType(source.Type)
 	defaultScore := uint32(100)
 	if sourceType == "abuseipdb" {
-		defaultScore = uint32(intFromQuota(rawJSONMap(source.QuotaMetadata), "confidenceMinimum", 90))
+		defaultScore = uint32(intFromQuota(rawJSONMap(source.QuotaMetadata), "confidenceMinimum", defaultAbuseIPDBConfidenceMinimum))
 	}
 	defaultTTL := defaultTTLSeconds(source, defaultFeedTTL)
 	for _, rawLine := range strings.Split(string(body), "\n") {
@@ -565,7 +575,7 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 	if err := requireOperator(actor); err != nil {
 		return FeedSource{}, err
 	}
-	if actor.Role != RoleAdmin && strings.TrimSpace(input.CredentialRef) != "" {
+	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, true) {
 		return FeedSource{}, errors.New("admin role required for feed credential changes")
 	}
 	if err := validateFeedSourceInput(input); err != nil {
@@ -583,10 +593,7 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	credentialRef := before.CredentialRef
-	if strings.TrimSpace(input.CredentialRef) != "" || actor.Role == RoleAdmin {
-		credentialRef = strings.TrimSpace(input.CredentialRef)
-	}
+	credentialRef := feedCredentialForUpdate(before.CredentialRef, input.CredentialRef)
 	interval := input.IntervalSeconds
 	if interval == 0 {
 		interval = before.IntervalSeconds
@@ -619,7 +626,7 @@ RETURNING `+feedSourceColumns(),
 	if err != nil {
 		return FeedSource{}, err
 	}
-	if err := insertAudit(ctx, tx, actor, "update_feed_source", "feed_source", source.ID, before, source, reason, ""); err != nil {
+	if err := insertAudit(ctx, tx, actor, "update_feed_source", "feed_source", source.ID, maskFeedSourceCredential(before), maskFeedSourceCredential(source), reason, ""); err != nil {
 		return FeedSource{}, err
 	}
 	if before.Enabled != source.Enabled {
@@ -828,10 +835,68 @@ func intFromQuota(quota map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+func feedCredentialInputValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func feedCredentialChangeRequiresAdmin(value *string, update bool) bool {
+	if value == nil {
+		return false
+	}
+	trimmed := feedCredentialInputValue(value)
+	if trimmed == feedCredentialMask {
+		return false
+	}
+	if update {
+		return true
+	}
+	return trimmed != ""
+}
+
+func feedCredentialForCreate(value *string) string {
+	trimmed := feedCredentialInputValue(value)
+	if trimmed == feedCredentialMask {
+		return ""
+	}
+	return trimmed
+}
+
+func feedCredentialForUpdate(current string, value *string) string {
+	if value == nil {
+		return current
+	}
+	trimmed := feedCredentialInputValue(value)
+	if trimmed == feedCredentialMask {
+		return current
+	}
+	return trimmed
+}
+
+func maskFeedSourceCredential(source FeedSource) FeedSource {
+	if strings.TrimSpace(source.CredentialRef) != "" {
+		source.CredentialRef = feedCredentialMask
+	}
+	return source
+}
+
+func maskFeedSourceCredentials(sources []FeedSource) []FeedSource {
+	out := make([]FeedSource, len(sources))
+	for i, source := range sources {
+		out[i] = maskFeedSourceCredential(source)
+	}
+	return out
+}
+
 func resolveCredentialRef(ref string) (string, string) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", "none"
+	}
+	if ref == feedCredentialMask {
+		return "", "masked"
 	}
 	var envKey string
 	switch {
@@ -841,7 +906,10 @@ func resolveCredentialRef(ref string) (string, string) {
 		name := strings.TrimPrefix(ref, "secret://anti-ddos/")
 		envKey = "ANTI_DDOS_SECRET_" + envName(name)
 	default:
-		return "", "invalid"
+		if strings.Contains(ref, "://") {
+			return "", "invalid"
+		}
+		return ref, "present"
 	}
 	value := strings.TrimSpace(os.Getenv(envKey))
 	if value == "" {

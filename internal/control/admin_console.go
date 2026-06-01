@@ -489,7 +489,7 @@ WHERE id=$1
 RETURNING `+feedSourceColumns(), id), &source); err != nil {
 		return FeedSource{}, err
 	}
-	if err := insertAudit(ctx, tx, actor, "disable_feed_source", "feed_source", id, before, source, strings.TrimSpace(reason), ""); err != nil {
+	if err := insertAudit(ctx, tx, actor, "disable_feed_source", "feed_source", id, maskFeedSourceCredential(before), maskFeedSourceCredential(source), strings.TrimSpace(reason), ""); err != nil {
 		return FeedSource{}, err
 	}
 	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {

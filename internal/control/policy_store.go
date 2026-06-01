@@ -806,7 +806,7 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	if err := requireOperator(actor); err != nil {
 		return FeedSource{}, err
 	}
-	if actor.Role != RoleAdmin && strings.TrimSpace(input.CredentialRef) != "" {
+	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, false) {
 		return FeedSource{}, errors.New("admin role required for feed credential changes")
 	}
 	if err := validateFeedSourceInput(input); err != nil {
@@ -822,6 +822,7 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	}
 	enabled := boolDefault(input.Enabled, false)
 	quota := defaultJSON(input.QuotaMetadata)
+	credentialRef := feedCredentialForCreate(input.CredentialRef)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return FeedSource{}, err
@@ -836,7 +837,7 @@ RETURNING `+feedSourceColumns(),
 		input.Name,
 		normalizeFeedType(input.Type),
 		input.URL,
-		input.CredentialRef,
+		credentialRef,
 		input.RequiredForProduction,
 		enabled,
 		effectiveFeedIntervalSeconds(FeedSource{Type: input.Type, IntervalSeconds: defaultInterval(input.IntervalSeconds)}),
@@ -847,7 +848,7 @@ RETURNING `+feedSourceColumns(),
 	if err != nil {
 		return FeedSource{}, err
 	}
-	if err := insertAudit(ctx, tx, actor, "create_feed_source", "feed_source", source.ID, nil, source, reason, ""); err != nil {
+	if err := insertAudit(ctx, tx, actor, "create_feed_source", "feed_source", source.ID, nil, maskFeedSourceCredential(source), reason, ""); err != nil {
 		return FeedSource{}, err
 	}
 	return source, tx.Commit(ctx)

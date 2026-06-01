@@ -17,7 +17,7 @@ Backend semantics:
 - Blacklist list supports optional `q`, `source`, `state`, and `expiry` query params; it only manages `manual_blacklist_entries`, while feed reputation stays under `Reputation`.
 - Effective blacklist snapshots de-duplicate exact CIDRs. Enabled manual entries win over feed reputation for the same exact CIDR.
 - User password reset/session revoke are Admin-only.
-- Feed `credential_ref` create/update is Admin-only.
+- Feed `credential_ref` create/update is Admin-only; the store keeps raw values or legacy refs, while API/UI/audit mask non-empty values as `***`.
 - Snapshot diff compares semantic collections: services, whitelist_v4, blacklist_v4, rules, runtime/object checksum.
 
 Frontend notes:

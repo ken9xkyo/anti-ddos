@@ -3,9 +3,11 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -80,9 +82,215 @@ func TestCredentialRefResolution(t *testing.T) {
 	if status != "present" || value != "fake-key" {
 		t.Fatalf("secret ref resolution failed value=%q status=%q", value, status)
 	}
+	value, status = resolveCredentialRef("raw-abuseipdb-key")
+	if status != "present" || value != "raw-abuseipdb-key" {
+		t.Fatalf("raw key resolution failed value=%q status=%q", value, status)
+	}
 	_, status = resolveCredentialRef("env://MISSING_PHASE8_SECRET")
 	if status != "missing" {
 		t.Fatalf("missing env status=%q", status)
+	}
+	value, status = resolveCredentialRef(feedCredentialMask)
+	if status != "masked" || value != "" {
+		t.Fatalf("masked credential resolution failed value=%q status=%q", value, status)
+	}
+	_, status = resolveCredentialRef("vault://feeds/partner")
+	if status != "invalid" {
+		t.Fatalf("unsupported credential scheme status=%q", status)
+	}
+}
+
+func TestAbuseIPDBFetchUsesRawKeyAndDefaultQuery(t *testing.T) {
+	var sawRequest bool
+	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawRequest = true
+		if r.Method != http.MethodGet {
+			t.Fatalf("method=%s want GET", r.Method)
+		}
+		if got := r.Header.Get("Key"); got != "raw-abuseipdb-key" {
+			t.Fatalf("Key header=%q", got)
+		}
+		if got := r.Header.Get("Accept"); got != "text/plain" {
+			t.Fatalf("Accept header=%q", got)
+		}
+		if body, _ := io.ReadAll(r.Body); len(body) != 0 {
+			t.Fatalf("GET request should not send body: %q", string(body))
+		}
+		query := r.URL.Query()
+		if query.Get("plaintext") != "true" || query.Get("confidenceMinimum") != "100" || query.Get("limit") != "9999999" {
+			t.Fatalf("unexpected AbuseIPDB query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte("203.0.113.7\n"))
+	}))
+	defer feedServer.Close()
+
+	store := &Store{feedHTTPClient: feedServer.Client()}
+	body, err := store.fetchFeed(context.Background(), FeedSource{
+		Name:          "abuseipdb",
+		Type:          "abuseipdb",
+		URL:           feedServer.URL,
+		CredentialRef: "raw-abuseipdb-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawRequest || string(body) != "203.0.113.7\n" {
+		t.Fatalf("unexpected fetch result saw=%v body=%q", sawRequest, string(body))
+	}
+}
+
+func TestAbuseIPDBRequestURLAllowsOverrides(t *testing.T) {
+	requestURL, err := feedRequestURL(FeedSource{
+		Type:          "abuseipdb",
+		QuotaMetadata: json.RawMessage(`{"confidenceMinimum":88,"limit":"123"}`),
+	}, "https://example.test/blacklist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(requestURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	if query.Get("confidenceMinimum") != "88" || query.Get("limit") != "123" || query.Get("plaintext") != "true" {
+		t.Fatalf("quota overrides not applied: %s", parsed.RawQuery)
+	}
+
+	requestURL, err = feedRequestURL(FeedSource{Type: "abuseipdb"}, "https://example.test/blacklist?confidenceMinimum=75&limit=42&plaintext=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = url.Parse(requestURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query = parsed.Query()
+	if query.Get("confidenceMinimum") != "75" || query.Get("limit") != "42" || query.Get("plaintext") != "false" {
+		t.Fatalf("explicit query overrides not preserved: %s", parsed.RawQuery)
+	}
+}
+
+func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
+	ctx, pool, dsn := resetControlTestDB(t)
+	var seenKeys []string
+	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenKeys = append(seenKeys, r.Header.Get("Key"))
+		_, _ = w.Write([]byte("203.0.113.8\n"))
+	}))
+	defer feedServer.Close()
+
+	cfg := Config{Addr: "127.0.0.1:0", DBDSN: dsn, SessionTTL: time.Hour, XDPObject: "missing-ok.o", AgentSharedToken: "agent-secret"}
+	store := NewStore(pool, cfg, nil)
+	if _, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(store, cfg, nil))
+	defer server.Close()
+	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
+
+	rawKey := "raw-abuseipdb-key"
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, FeedSourceInput{
+		Reason:                "create abuseipdb feed",
+		Name:                  "abuseipdb-fixture",
+		Type:                  "abuseipdb",
+		URL:                   feedServer.URL,
+		CredentialRef:         stringPtr(rawKey),
+		RequiredForProduction: true,
+		Enabled:               boolPtr(true),
+		IntervalSeconds:       3600,
+		LicenseNote:           "fixture",
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	if strings.Contains(resp.Body.String(), rawKey) {
+		t.Fatalf("create response leaked raw key: %s", resp.Body.String())
+	}
+	var source FeedSource
+	if err := json.Unmarshal(resp.Body.Bytes(), &source); err != nil {
+		t.Fatal(err)
+	}
+	if source.CredentialRef != feedCredentialMask {
+		t.Fatalf("credential response not masked: %#v", source)
+	}
+	rawSource, err := store.GetFeedSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawSource.CredentialRef != rawKey {
+		t.Fatalf("store credential was not preserved raw: %#v", rawSource)
+	}
+
+	events, err := store.ListAuditEvents(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawMaskedAudit bool
+	for _, event := range events {
+		if event.EntityType != "feed_source" {
+			continue
+		}
+		if strings.Contains(string(event.Before), rawKey) || strings.Contains(string(event.After), rawKey) {
+			t.Fatalf("audit leaked raw key before=%s after=%s", event.Before, event.After)
+		}
+		if strings.Contains(string(event.After), feedCredentialMask) {
+			sawMaskedAudit = true
+		}
+	}
+	if !sawMaskedAudit {
+		t.Fatalf("feed audit did not include masked credential: %#v", events)
+	}
+
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/feed-sources/"+source.ID, adminToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	if strings.Contains(resp.Body.String(), rawKey) || !strings.Contains(resp.Body.String(), feedCredentialMask) {
+		t.Fatalf("get response did not mask credential safely: %s", resp.Body.String())
+	}
+
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/feed-sources/"+source.ID, adminToken, FeedSourceInput{
+		Reason:                "preserve masked credential",
+		Name:                  source.Name,
+		Type:                  source.Type,
+		URL:                   source.URL,
+		CredentialRef:         stringPtr(feedCredentialMask),
+		RequiredForProduction: source.RequiredForProduction,
+		Enabled:               boolPtr(true),
+		IntervalSeconds:       source.IntervalSeconds,
+		LicenseNote:           "preserved",
+		Status:                source.Status,
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	rawSource, err = store.GetFeedSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawSource.CredentialRef != rawKey {
+		t.Fatalf("masked update did not preserve raw key: %#v", rawSource)
+	}
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources/"+source.ID+"/sync", adminToken, map[string]string{"reason": "manual abuseipdb sync"})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	if len(seenKeys) != 1 || seenKeys[0] != rawKey {
+		t.Fatalf("sync did not use raw key: %#v", seenKeys)
+	}
+
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/feed-sources/"+source.ID, adminToken, FeedSourceInput{
+		Reason:                "clear credential",
+		Name:                  source.Name,
+		Type:                  source.Type,
+		URL:                   source.URL,
+		CredentialRef:         stringPtr(""),
+		RequiredForProduction: source.RequiredForProduction,
+		Enabled:               boolPtr(true),
+		IntervalSeconds:       source.IntervalSeconds,
+		LicenseNote:           "cleared",
+		Status:                source.Status,
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	rawSource, err = store.GetFeedSource(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rawSource.CredentialRef != "" {
+		t.Fatalf("empty credential update did not clear raw key: %#v", rawSource)
 	}
 }
 
@@ -158,7 +366,7 @@ func TestFeedSyncIntegration(t *testing.T) {
 		Name:            source.Name,
 		Type:            source.Type,
 		URL:             source.URL,
-		CredentialRef:   "env://SHOULD_NOT_BE_ALLOWED",
+		CredentialRef:   stringPtr("env://SHOULD_NOT_BE_ALLOWED"),
 		Enabled:         boolPtr(true),
 		IntervalSeconds: 3600,
 	})

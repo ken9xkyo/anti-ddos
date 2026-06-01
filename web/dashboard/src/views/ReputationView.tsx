@@ -132,7 +132,7 @@ export function ReputationView({
       name: source.name,
       type: source.type,
       url: source.url ?? '',
-      credential_ref: '',
+      credential_ref: source.credential_ref ?? '',
       required_for_production: source.required_for_production,
       enabled: source.enabled,
       interval_seconds: String(source.interval_seconds ?? 3600),

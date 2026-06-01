@@ -28,14 +28,14 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 |---|---|
 | `viewer` | Doc dashboard, policy, events, alerts, feeds, snapshots |
 | `operator` | Bao gom viewer; duoc thao tac operational mutations |
-| `admin` | Bao gom operator; duoc quan tri users va secret references |
+| `admin` | Bao gom operator; duoc quan tri users va feed/secret credentials |
 
 Mutation policy:
 
 - User mutations: Admin only. `GET /v1/users` is authenticated read in the current server.
 - Service, forwarding policy, whitelist, rules, blacklist, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
 - Telegram config: Operator/Admin, nhung thay doi write-only `bot_token_ref` can Admin.
-- Feed `credential_ref`: Admin only khi create/update.
+- Feed `credential_ref`: Admin only khi create/update; raw values and secret refs are write-only and response is masked as `***`.
 - Viewer khong nen thay mutation control tren UI, nhung backend van la enforcement chinh.
 
 ## 3. Common data enums
@@ -332,6 +332,8 @@ Authenticated read, Operator/Admin mutation. `credential_ref` create/update requ
 - `license_note`
 - `quota_metadata`
 - `status`
+
+`credential_ref` accepts either a raw feed credential or an existing reference such as `env://KEY` or `secret://anti-ddos/name`. Non-empty values are returned as `***` in `FeedSource` responses and audit records. On PATCH, omitted `credential_ref` or `***` preserves the stored credential, an empty string clears it, and any other non-empty value replaces it.
 
 Soft-disable can rebuild snapshot when active feed state changes.
 

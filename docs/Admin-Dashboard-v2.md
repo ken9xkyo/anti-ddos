@@ -214,7 +214,7 @@ Hien thi:
 Actions:
 
 - Operator/Admin create/edit/sync/soft-disable feed source.
-- Chi Admin duoc create/update `credential_ref`.
+- Chi Admin duoc create/update `credential_ref`; non-empty value duoc hien thi lai dang `***`.
 - Soft-disable bang `DELETE /v1/feed-sources/{id}`.
 - Sync bang `POST /v1/feed-sources/{id}/sync`.
 
@@ -314,7 +314,7 @@ Bat buoc:
 - Audit before/after cho policy va access mutations.
 - Audit entity type phai ro: `user`, `rule`, `whitelist`, `manual_blacklist_entry`, `feed_source`, `snapshot`.
 - Raw password, temporary password, bot token, credential value khong vao audit.
-- Feed `credential_ref` chi la reference, khong phai secret plaintext.
+- Feed `credential_ref` la write-only credential field: co the nhan raw key hoac `env://`/`secret://anti-ddos/` reference, nhung response/audit phai mask thanh `***`.
 
 Snapshot rebuild:
 

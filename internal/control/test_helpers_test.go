@@ -101,6 +101,10 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
+func stringPtr(value string) *string {
+	return &value
+}
+
 func requireHTTPStatus(t *testing.T, resp *testHTTPResponse, want int) {
 	t.Helper()
 	if resp.Code != want {

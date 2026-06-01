@@ -37,7 +37,7 @@
 1. Xem `Status`, `Active`, `Parse errors` và `Next run` để xác định feed có đang chạy bình thường không.
 2. Chọn `Add feed` để thêm source mới. Mặc định feed mới disabled và status dạng placeholder.
 3. Chọn type phù hợp như `internal_json`, `spamhaus_drop`, `team_cymru` hoặc `abuseipdb`.
-4. Với admin, nhập `Credential ref` nếu feed cần secret reference. Operator không được sửa trường này.
+4. Với admin, nhập `Credential ref` nếu feed cần secret reference hoặc raw API key. Sau khi lưu, hệ thống chỉ hiển thị `***`. Operator không được sửa trường này.
 5. Nhập `Quota metadata` bằng JSON object nếu cần lưu metadata quota.
 6. Chọn `Sync` để chạy sync thủ công và nhập reason.
 7. Chọn `Disable` để soft-disable source và nhập reason.
@@ -51,7 +51,7 @@
 
 ## Lưu ý vận hành
 
-- `Credential ref` là tham chiếu secret, không phải nơi ghi raw credential tùy tiện cho operator.
+- `Credential ref` là trường write-only cho admin: có thể nhập raw API key hoặc `env://`/`secret://anti-ddos/` reference, nhưng API/UI/audit chỉ trả về `***`.
 - Parse errors cao có thể làm active entries thấp hoặc snapshot reputation không đầy đủ.
 - Whitelist conflict cần xử lý cẩn thận: whitelist có thể cố ý override reputation, nhưng cũng có thể là cấu hình allow-list quá rộng.
 - Disable feed giữ lại bản ghi để audit và giảm rủi ro mất lịch sử.

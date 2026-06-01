@@ -690,6 +690,11 @@ describe('DashboardShell', () => {
 
   it('runs feed create, edit, sync and soft-disable workflows with admin credentials', async () => {
     const onRefresh = vi.fn(async () => undefined);
+    const rawKey = 'raw-abuseipdb-key';
+    const feedData = {
+      ...data,
+      feedSources: data.feedSources.map((source) => source.id === 'f1' ? { ...source, credential_ref: '***' } : source)
+    };
     const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = input.toString();
@@ -699,18 +704,18 @@ describe('DashboardShell', () => {
         body: init?.body ? JSON.parse(init.body as string) : undefined,
         reason: new Headers(init?.headers).get('X-Audit-Reason')
       });
-      if (path === '/v1/feed-sources' && !init?.method) return jsonResponse(data.feedSources);
-      if (path === '/v1/feed-sources' && init?.method === 'POST') return jsonResponse({ ...data.feedSources[0], id: 'f2', name: 'partner-feed' });
-      if (path === '/v1/feed-sources/f1' && init?.method === 'PATCH') return jsonResponse({ ...data.feedSources[0], license_note: 'commercial-ok' });
+      if (path === '/v1/feed-sources' && !init?.method) return jsonResponse(feedData.feedSources);
+      if (path === '/v1/feed-sources' && init?.method === 'POST') return jsonResponse({ ...feedData.feedSources[0], id: 'f2', name: 'partner-feed', credential_ref: '***' });
+      if (path === '/v1/feed-sources/f1' && init?.method === 'PATCH') return jsonResponse({ ...feedData.feedSources[0], license_note: 'commercial-ok', credential_ref: '***' });
       if (path === '/v1/feed-sources/f1/sync' && init?.method === 'POST') return jsonResponse({ ...data.feedRuns[0], id: 'fr2' });
-      if (path === '/v1/feed-sources/f1' && init?.method === 'DELETE') return jsonResponse({ ...data.feedSources[0], enabled: false });
+      if (path === '/v1/feed-sources/f1' && init?.method === 'DELETE') return jsonResponse({ ...feedData.feedSources[0], enabled: false });
       throw new Error(`unexpected request ${path}`);
     }));
 
     render(
       <DashboardShell
         user={adminUser}
-        data={data}
+        data={feedData}
         activeTab="reputation"
         setActiveTab={vi.fn()}
         loading={false}
@@ -724,7 +729,7 @@ describe('DashboardShell', () => {
     clickButtonByText(/add feed/i);
     await fillField(/^name/i, 'partner-feed');
     await fillField(/^url$/i, 'https://feeds.example.test/drop.json');
-    await fillField(/credential ref/i, 'vault://feeds/partner');
+    await fillField(/credential ref/i, rawKey);
     await fillField(/^reason/i, 'add partner feed');
     clickButtonByText(/save feed/i);
     await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources' && call.method === 'POST')).toBe(true));
@@ -749,10 +754,11 @@ describe('DashboardShell', () => {
       reason: 'add partner feed',
       name: 'partner-feed',
       url: 'https://feeds.example.test/drop.json',
-      credential_ref: 'vault://feeds/partner'
+      credential_ref: rawKey
     });
     expect(calls.find((call) => call.path === '/v1/feed-sources/f1' && call.method === 'PATCH')?.body).toMatchObject({
       reason: 'update feed license',
+      credential_ref: '***',
       license_note: 'commercial-ok'
     });
     expect(calls.find((call) => call.path === '/v1/feed-sources/f1/sync' && call.method === 'POST')?.body).toEqual({ reason: 'manual feed sync' });

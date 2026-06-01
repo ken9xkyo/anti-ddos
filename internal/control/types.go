@@ -265,7 +265,7 @@ type FeedSourceInput struct {
 	Name                  string          `json:"name"`
 	Type                  string          `json:"type"`
 	URL                   string          `json:"url,omitempty"`
-	CredentialRef         string          `json:"credential_ref,omitempty"`
+	CredentialRef         *string         `json:"credential_ref,omitempty"`
 	RequiredForProduction bool            `json:"required_for_production,omitempty"`
 	Enabled               *bool           `json:"enabled,omitempty"`
 	IntervalSeconds       uint32          `json:"interval_seconds,omitempty"`

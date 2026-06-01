@@ -502,6 +502,9 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		sources, err := s.store.ListFeedSources(r.Context())
+		if err == nil {
+			sources = maskFeedSourceCredentials(sources)
+		}
 		writeResult(w, sources, err)
 	case http.MethodPost:
 		var req FeedSourceInput
@@ -509,6 +512,9 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		source, err := s.store.CreateFeedSource(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
+		if err == nil {
+			source = maskFeedSourceCredential(source)
+		}
 		writeResult(w, source, err)
 	default:
 		methodNotAllowed(w)
@@ -553,6 +559,9 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		source, err := s.store.GetFeedSource(r.Context(), id)
+		if err == nil {
+			source = maskFeedSourceCredential(source)
+		}
 		writeResult(w, source, err)
 	case http.MethodPatch:
 		var req FeedSourceInput
@@ -560,9 +569,15 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		if err == nil {
+			source = maskFeedSourceCredential(source)
+		}
 		writeResult(w, source, err)
 	case http.MethodDelete:
 		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		if err == nil {
+			source = maskFeedSourceCredential(source)
+		}
 		writeResult(w, source, err)
 	default:
 		methodNotAllowed(w)
