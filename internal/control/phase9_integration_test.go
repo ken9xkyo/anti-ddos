@@ -53,7 +53,7 @@ func TestPhase09TelegramAlertingIntegration(t *testing.T) {
 		}
 	}))
 	defer telegram.Close()
-	t.Setenv("PHASE9_TELEGRAM_TOKEN", "123456:abcdefghijklmnopqrstuvwxyzABCDEF")
+	telegramToken := "123456:abcdefghijklmnopqrstuvwxyzABCDEF"
 
 	cfg := Config{Addr: "127.0.0.1:0", DBDSN: dsn, SessionTTL: time.Hour, XDPObject: "missing-ok.o", AgentSharedToken: "agent-secret", TelegramAPIURL: telegram.URL, EventSampleDenom: 1, AgentStaleAfter: time.Minute}
 	store := NewStore(pool, cfg, nil)
@@ -77,7 +77,7 @@ func TestPhase09TelegramAlertingIntegration(t *testing.T) {
 
 	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", operatorToken, TelegramConfigInput{
 		Reason:      "operator should not set token",
-		BotTokenRef: "env://PHASE9_TELEGRAM_TOKEN",
+		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
@@ -86,15 +86,30 @@ func TestPhase09TelegramAlertingIntegration(t *testing.T) {
 	}
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
 		Reason:      "configure Telegram",
-		BotTokenRef: "env://PHASE9_TELEGRAM_TOKEN",
+		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("configure Telegram status=%d body=%s", resp.Code, resp.Body.String())
 	}
+	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) {
+		t.Fatalf("telegram config response did not mask token: %s", resp.Body.String())
+	}
 	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("telegram token leaked in config response: %s", resp.Body.String())
+	}
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+		Reason:      "keep Telegram token",
+		BotTokenRef: "*****",
+		ChatID:      "1234",
+		Enabled:     boolPtr(true),
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("keep Telegram token status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("telegram token leaked in masked config response: %s", resp.Body.String())
 	}
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", viewerToken, map[string]string{"reason": "viewer"})
 	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {

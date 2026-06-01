@@ -67,7 +67,7 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
 
     api.post("/v1/telegram/config", {
         "reason": "automation configure Telegram",
-        "bot_token_ref": f"env://{TELEGRAM_TOKEN_ENV}",
+        "bot_token_ref": TELEGRAM_TOKEN_VALUE,
         "chat_id": "1234",
         "parse_mode": "HTML",
         "enabled": True,

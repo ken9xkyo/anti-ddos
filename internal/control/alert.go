@@ -25,6 +25,7 @@ const (
 	defaultAlertRateLimitSeconds = 300
 	defaultAlertMaxAttempts      = 3
 	maxTelegramMessageBytes      = 4000
+	telegramTokenMask            = "*****"
 )
 
 type alertPolicy struct {
@@ -131,7 +132,8 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	if err := requireOperator(actor); err != nil {
 		return TelegramConfig{}, err
 	}
-	if actor.Role != RoleAdmin && strings.TrimSpace(input.BotTokenRef) != "" {
+	tokenInput := strings.TrimSpace(input.BotTokenRef)
+	if actor.Role != RoleAdmin && tokenInput != "" && tokenInput != telegramTokenMask {
 		return TelegramConfig{}, errors.New("admin role required for telegram token changes")
 	}
 	if err := validateTelegramConfigInput(input); err != nil {
@@ -141,7 +143,18 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	if reason == "" {
 		return TelegramConfig{}, errors.New("reason is required")
 	}
-	before, _ := s.GetTelegramConfig(ctx)
+	beforeRaw, err := s.getTelegramConfigRaw(ctx)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return TelegramConfig{}, err
+	}
+	token := strings.TrimSpace(beforeRaw.BotTokenRef)
+	if tokenInput != "" && tokenInput != telegramTokenMask {
+		token = tokenInput
+	}
+	if token == "" {
+		return TelegramConfig{}, errors.New("bot_token_ref is required")
+	}
+	before := maskTelegramConfig(beforeRaw)
 	enabled := boolDefault(input.Enabled, true)
 	row := s.pool.QueryRow(ctx, `INSERT INTO telegram_configs(id, bot_token_ref, chat_id, parse_mode, enabled)
 VALUES (1,$1,$2,$3,$4)
@@ -152,23 +165,28 @@ ON CONFLICT (id) DO UPDATE SET
     enabled=EXCLUDED.enabled,
     updated_at=now()
 RETURNING bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at`,
-		strings.TrimSpace(input.BotTokenRef), strings.TrimSpace(input.ChatID), normalizeTelegramParseMode(input.ParseMode), enabled)
+		token, strings.TrimSpace(input.ChatID), normalizeTelegramParseMode(input.ParseMode), enabled)
 	cfg, err := scanTelegramConfig(row)
 	if err != nil {
 		return TelegramConfig{}, err
 	}
-	if err := insertAudit(ctx, s.pool, actor, "configure_telegram", "telegram_config", "1", before, cfg, reason, ""); err != nil {
+	masked := maskTelegramConfig(cfg)
+	if err := insertAudit(ctx, s.pool, actor, "configure_telegram", "telegram_config", "1", before, masked, reason, ""); err != nil {
 		return TelegramConfig{}, err
 	}
-	return cfg, nil
+	return masked, nil
 }
 
 func (s *Store) GetTelegramConfig(ctx context.Context) (TelegramConfig, error) {
-	cfg, err := scanTelegramConfig(s.pool.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
+	cfg, err := s.getTelegramConfigRaw(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TelegramConfig{}, nil
 	}
-	return cfg, err
+	return maskTelegramConfig(cfg), err
+}
+
+func (s *Store) getTelegramConfigRaw(ctx context.Context) (TelegramConfig, error) {
+	return scanTelegramConfig(s.pool.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
 }
 
 func scanTelegramConfig(row rowScanner) (TelegramConfig, error) {
@@ -176,18 +194,12 @@ func scanTelegramConfig(row rowScanner) (TelegramConfig, error) {
 	if err := row.Scan(&cfg.BotTokenRef, &cfg.ChatID, &cfg.ParseMode, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt); err != nil {
 		return TelegramConfig{}, err
 	}
-	_, status := resolveCredentialRef(cfg.BotTokenRef)
+	_, status := resolveTelegramBotToken(cfg.BotTokenRef)
 	cfg.BotTokenPresent = status == "present"
 	return cfg, nil
 }
 
 func validateTelegramConfigInput(input TelegramConfigInput) error {
-	if strings.TrimSpace(input.BotTokenRef) == "" {
-		return errors.New("bot_token_ref is required")
-	}
-	if _, status := resolveCredentialRef(input.BotTokenRef); status == "invalid" {
-		return errors.New("bot_token_ref must use env:// or secret://anti-ddos/")
-	}
 	if strings.TrimSpace(input.ChatID) == "" {
 		return errors.New("chat_id is required")
 	}
@@ -195,6 +207,31 @@ func validateTelegramConfigInput(input TelegramConfigInput) error {
 		return errors.New("unsupported telegram parse_mode")
 	}
 	return nil
+}
+
+func maskTelegramConfig(cfg TelegramConfig) TelegramConfig {
+	if strings.TrimSpace(cfg.BotTokenRef) != "" {
+		cfg.BotTokenRef = telegramTokenMask
+	}
+	return cfg
+}
+
+func resolveTelegramBotToken(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "none"
+	}
+	if value == telegramTokenMask {
+		return "", "masked"
+	}
+	if isLegacyCredentialRef(value) {
+		return resolveCredentialRef(value)
+	}
+	return value, "present"
+}
+
+func isLegacyCredentialRef(value string) bool {
+	return strings.HasPrefix(value, "env://") || strings.HasPrefix(value, "secret://anti-ddos/")
 }
 
 func normalizeTelegramParseMode(value string) string {
@@ -358,11 +395,11 @@ func (s *Store) deliverAlert(ctx context.Context, alert Alert) (Alert, error) {
 		}
 		return s.setAlertStatus(ctx, alert.ID, alertStatusDeduped)
 	}
-	cfg, err := s.GetTelegramConfig(ctx)
+	cfg, err := s.getTelegramConfigRaw(ctx)
 	if err != nil {
 		return alert, err
 	}
-	token, status := resolveCredentialRef(cfg.BotTokenRef)
+	token, status := resolveTelegramBotToken(cfg.BotTokenRef)
 	if !cfg.Enabled || status != "present" {
 		msg := "telegram config is disabled or token is missing"
 		if _, err := s.recordAlertDelivery(ctx, alert.ID, "telegram", alertStatusFailed, 0, msg, nil); err != nil {

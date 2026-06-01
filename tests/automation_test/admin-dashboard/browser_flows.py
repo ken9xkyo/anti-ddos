@@ -322,11 +322,12 @@ def assert_investigation(page: Page) -> None:
 
 def assert_admin_telegram_config(page: Page) -> None:
     goto_tab(page, "Incidents")
-    page.get_by_label(re.compile(r"Bot token ref", re.I)).fill("env://ADMIN_DASHBOARD_TELEGRAM_TOKEN")
+    page.get_by_label(re.compile(r"Bot token", re.I)).fill("123456:abcdefghijklmnopqrstuvwxyzABCDEF")
     page.get_by_label(re.compile(r"Chat ID", re.I)).fill("5678")
     page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation update Telegram config")
     page.get_by_role("button", name=re.compile(r"Save config", re.I)).click()
     expect_visible_text(page, "telegram config saved", timeout=20000)
+    expect(page.get_by_label(re.compile(r"Bot token", re.I))).to_have_value("*****", timeout=20000)
 
 
 def assert_admin_reputation_credentials(page: Page, seed: SeedData, feed_url: str) -> None:

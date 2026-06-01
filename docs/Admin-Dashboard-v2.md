@@ -47,7 +47,7 @@ Ngoai pham vi increment nay:
 |---|---|---|
 | Viewer | Theo doi tinh trang, xem services, alerts, events, feeds, snapshots | Chi doc; khong hien nut create/edit/disable/sync/test/rollback |
 | Operator | Truc van hanh va thay doi policy runtime | Service, rule, whitelist, feed operational actions, snapshot rollback, alert test/runbook; khong quan ly users, khong doi credentials |
-| Admin | Quan tri access va secret references | Bao gom Operator; them user management, password reset, session revoke, Telegram config, feed `credential_ref` |
+| Admin | Quan tri access va secrets | Bao gom Operator; them user management, password reset, session revoke, Telegram config, feed `credential_ref` |
 
 Nguyen tac:
 
@@ -129,7 +129,7 @@ Actions:
 
 - Operator/Admin duoc gui test alert.
 - Operator/Admin duoc evaluate ISP escalation.
-- Admin duoc update Telegram config bang secret reference.
+- Admin duoc update Telegram config bang write-only bot token; dashboard/API chi hien `*****`.
 - Khong tu dong BGP/RTBH/FlowSpec trong dashboard.
 
 ### 6.3 Services

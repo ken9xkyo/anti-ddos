@@ -422,7 +422,10 @@ describe('DashboardShell', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText(/bot token ref/i), { target: { value: 'env://ADMIN_DASHBOARD_TELEGRAM_TOKEN' } });
+    const tokenInput = screen.getByLabelText(/bot token/i);
+    expect(tokenInput).toHaveAttribute('type', 'password');
+    expect(tokenInput).toHaveValue('*****');
+    fireEvent.change(tokenInput, { target: { value: '123456:abcdefghijklmnopqrstuvwxyzABCDEF' } });
     fireEvent.change(screen.getByLabelText(/chat id/i), { target: { value: '5678' } });
     fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'configure alert channel' } });
     fireEvent.click(screen.getByRole('button', { name: /save config/i }));
@@ -433,7 +436,7 @@ describe('DashboardShell', () => {
       method: 'POST',
       body: {
         reason: 'configure alert channel',
-        bot_token_ref: 'env://ADMIN_DASHBOARD_TELEGRAM_TOKEN',
+        bot_token_ref: '123456:abcdefghijklmnopqrstuvwxyzABCDEF',
         chat_id: '5678',
         parse_mode: '',
         enabled: true

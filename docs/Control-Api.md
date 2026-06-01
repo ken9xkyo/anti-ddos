@@ -34,7 +34,7 @@ Mutation policy:
 
 - User mutations: Admin only. `GET /v1/users` is authenticated read in the current server.
 - Service, forwarding policy, whitelist, rules, blacklist, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
-- Telegram config: Operator/Admin, nhung thay doi `bot_token_ref` can Admin.
+- Telegram config: Operator/Admin, nhung thay doi write-only `bot_token_ref` can Admin.
 - Feed `credential_ref`: Admin only khi create/update.
 - Viewer khong nen thay mutation control tren UI, nhung backend van la enforcement chinh.
 
@@ -333,7 +333,7 @@ Authenticated read. Operational alert actions require Operator/Admin through sto
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/telegram/config` | none | `TelegramConfig` | Get Telegram config |
-| POST | `/v1/telegram/config` | `TelegramConfigInput` | `TelegramConfig` | Upsert config; token ref changes require Admin |
+| POST | `/v1/telegram/config` | `TelegramConfigInput` | `TelegramConfig` | Upsert config; bot token changes require Admin |
 | POST | `/v1/telegram/test` | optional `{reason}` | `Alert` | Create test alert |
 | GET | `/v1/alerts?limit=N` | none | `Alert[]` | List alerts |
 | POST | `/v1/alerts` | `AlertInput` | `Alert` | Create alert |
@@ -345,12 +345,14 @@ Authenticated read. Operational alert actions require Operator/Admin through sto
 ```json
 {
   "reason": "configure telegram",
-  "bot_token_ref": "env://TELEGRAM_TOKEN",
+  "bot_token_ref": "123456:telegram-bot-token",
   "chat_id": "123456",
   "parse_mode": "MarkdownV2",
   "enabled": true
 }
 ```
+
+`bot_token_ref` is a write-only Telegram bot token value. Responses return `bot_token_ref: "*****"` when a token is configured; sending `"*****"` or an empty value keeps the existing token.
 
 `AlertInput` key fields:
 
@@ -417,7 +419,7 @@ Audit event fields:
 - `reason`
 - `request_id`
 
-Sensitive policy: raw passwords and credential values must not be stored in audit payloads.
+Sensitive policy: raw passwords, Telegram bot tokens and credential values must not be stored in audit payloads.
 
 ## 16. Security events and investigation
 

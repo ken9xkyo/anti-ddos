@@ -205,7 +205,7 @@ describe('ApiClient', () => {
     ]);
   });
 
-  it('configures Telegram with secret references only', async () => {
+  it('configures Telegram with write-only bot token', async () => {
     const calls: Array<{ path: string; method?: string; body: unknown; auth: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({
@@ -214,14 +214,14 @@ describe('ApiClient', () => {
         body: init?.body ? JSON.parse(init.body as string) : undefined,
         auth: new Headers(init?.headers).get('Authorization')
       });
-      return jsonResponse({ ...dashboardFixture().telegramConfig, bot_token_ref: 'env://TELEGRAM_TOKEN', bot_token_present: true });
+      return jsonResponse({ ...dashboardFixture().telegramConfig, bot_token_ref: '*****', bot_token_present: true });
     }));
 
     const client = new ApiClient();
     client.setToken('admin-token');
     await client.configureTelegram({
       reason: 'configure alerts',
-      bot_token_ref: 'env://TELEGRAM_TOKEN',
+      bot_token_ref: '123456:abcdefghijklmnopqrstuvwxyzABCDEF',
       chat_id: '1234',
       parse_mode: 'HTML',
       enabled: true
@@ -232,7 +232,7 @@ describe('ApiClient', () => {
       method: 'POST',
       body: {
         reason: 'configure alerts',
-        bot_token_ref: 'env://TELEGRAM_TOKEN',
+        bot_token_ref: '123456:abcdefghijklmnopqrstuvwxyzABCDEF',
         chat_id: '1234',
         parse_mode: 'HTML',
         enabled: true

@@ -13,6 +13,8 @@ type TelegramFormState = {
   reason: string;
 };
 
+const telegramTokenMask = '*****';
+
 export function IncidentsView({
   alerts,
   config,
@@ -78,7 +80,7 @@ export function IncidentsView({
         <PanelHeader icon={<Send size={18} />} title="Telegram Channel" />
         <KeyValueGrid>
           <KeyValue label="State" value={<StatusPill state={config.enabled && config.bot_token_present ? 'ok' : 'warn'} text={config.enabled ? 'enabled' : 'disabled'} />} />
-          <KeyValue label="Token" value={config.bot_token_present ? 'present' : 'missing'} />
+          <KeyValue label="Token" value={config.bot_token_present ? telegramTokenMask : 'missing'} />
           <KeyValue label="Chat" value={config.chat_id || 'not configured'} />
           <KeyValue label="Parse mode" value={config.parse_mode || 'plain text'} />
         </KeyValueGrid>
@@ -86,8 +88,8 @@ export function IncidentsView({
         {canConfigureTelegram ? (
           <form className="form-grid" onSubmit={saveTelegramConfig}>
             <label>
-              Bot token ref
-              <input value={telegramForm.bot_token_ref} onChange={(event) => setTelegramForm({ ...telegramForm, bot_token_ref: event.target.value })} placeholder="env://TELEGRAM_TOKEN" />
+              Bot token
+              <input type="password" autoComplete="new-password" value={telegramForm.bot_token_ref} onChange={(event) => setTelegramForm({ ...telegramForm, bot_token_ref: event.target.value })} placeholder="123456:telegram-bot-token" />
             </label>
             <label>
               Chat ID
@@ -173,7 +175,7 @@ export function IncidentsView({
 
 function telegramFormFromConfig(config: TelegramConfig): TelegramFormState {
   return {
-    bot_token_ref: config.bot_token_ref,
+    bot_token_ref: config.bot_token_ref || (config.bot_token_present ? telegramTokenMask : ''),
     chat_id: config.chat_id,
     parse_mode: config.parse_mode ?? '',
     enabled: config.enabled,

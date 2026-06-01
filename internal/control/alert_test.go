@@ -75,3 +75,24 @@ func TestAlertHelpers(t *testing.T) {
 		t.Fatalf("backoff=%s", got)
 	}
 }
+
+func TestTelegramTokenResolutionAndMasking(t *testing.T) {
+	rawToken := "123456:abcdefghijklmnopqrstuvwxyzABCDEF"
+	token, status := resolveTelegramBotToken(rawToken)
+	if token != rawToken || status != "present" {
+		t.Fatalf("raw token resolution token=%q status=%q", token, status)
+	}
+	token, status = resolveTelegramBotToken(telegramTokenMask)
+	if token != "" || status != "masked" {
+		t.Fatalf("masked token should not resolve token=%q status=%q", token, status)
+	}
+	t.Setenv("TELEGRAM_LEGACY_TOKEN", rawToken)
+	token, status = resolveTelegramBotToken("env://TELEGRAM_LEGACY_TOKEN")
+	if token != rawToken || status != "present" {
+		t.Fatalf("legacy ref resolution token=%q status=%q", token, status)
+	}
+	cfg := maskTelegramConfig(TelegramConfig{BotTokenRef: rawToken, BotTokenPresent: true})
+	if cfg.BotTokenRef != telegramTokenMask || !cfg.BotTokenPresent {
+		t.Fatalf("token not masked: %#v", cfg)
+	}
+}

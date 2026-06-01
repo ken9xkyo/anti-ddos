@@ -76,7 +76,7 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
 	defer telegram.Close()
-	t.Setenv("ADMIN_DASHBOARD_TELEGRAM_TOKEN", "123456:abcdefghijklmnopqrstuvwxyzABCDEF")
+	telegramToken := "123456:abcdefghijklmnopqrstuvwxyzABCDEF"
 
 	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -171,20 +171,31 @@ func TestAdminDashboardCoverageIntegration(t *testing.T) {
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", operatorToken, TelegramConfigInput{
 		Reason:      "operator token change denied",
-		BotTokenRef: "env://ADMIN_DASHBOARD_TELEGRAM_TOKEN",
+		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
 	requireHTTPStatusOneOf(t, resp, http.StatusForbidden, http.StatusBadRequest)
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
 		Reason:      "configure dashboard Telegram",
-		BotTokenRef: "env://ADMIN_DASHBOARD_TELEGRAM_TOKEN",
+		BotTokenRef: telegramToken,
+		ChatID:      "1234",
+		Enabled:     boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"bot_token_ref":"*****"`)
+	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("telegram token leaked in config response: %s", resp.Body.String())
+	}
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+		Reason:      "keep dashboard Telegram token",
+		BotTokenRef: "*****",
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
-		t.Fatalf("telegram token leaked in config response: %s", resp.Body.String())
+		t.Fatalf("telegram token leaked in masked config response: %s", resp.Body.String())
 	}
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", viewerToken, map[string]string{"reason": "viewer denied"})

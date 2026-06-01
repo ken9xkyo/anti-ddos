@@ -157,7 +157,7 @@ export function dashboardFixture(): DashboardData {
       detected_at: now
     }],
     telegramConfig: {
-      bot_token_ref: 'env://TELEGRAM_TOKEN',
+      bot_token_ref: '*****',
       bot_token_present: true,
       chat_id: '1234',
       enabled: true,
