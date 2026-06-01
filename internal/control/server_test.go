@@ -14,7 +14,6 @@ func TestControlCoreIntegration(t *testing.T) {
 	ctx, pool, dsn := resetControlTestDB(t)
 	cfg := Config{Addr: "127.0.0.1:0", DBDSN: dsn, SessionTTL: time.Hour, XDPObject: "missing-ok.o", AgentSharedToken: "agent-secret"}
 	store := NewStore(pool, cfg, nil)
-	store.SetForwardingResolver(nil)
 
 	admin, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
 	if err != nil {

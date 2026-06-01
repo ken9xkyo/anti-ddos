@@ -15,12 +15,13 @@ const (
 )
 
 type PolicyApplyOptions struct {
-	SnapshotPath      string
-	ObjectChecksum    string
-	Now               time.Time
-	CapacityOverrides map[string]uint32
-	MemoryBudgetBytes uint64
-	Metrics           *Metrics
+	SnapshotPath       string
+	ObjectChecksum     string
+	Now                time.Time
+	CapacityOverrides  map[string]uint32
+	MemoryBudgetBytes  uint64
+	Metrics            *Metrics
+	ForwardingResolver ForwardingResolver
 }
 
 type PolicyDevmapStats struct {
@@ -67,6 +68,27 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 	}
 
 	verifyStats, err := VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{
+		CurrentVersion:          currentConfig.PolicyVersion,
+		ObjectChecksum:          options.ObjectChecksum,
+		Now:                     options.Now,
+		CapacityOverrides:       options.CapacityOverrides,
+		MemoryBudgetBytes:       options.MemoryBudgetBytes,
+		AllowUnresolvedServices: true,
+	})
+	result.MapStats = verifyStats.Maps
+	if err != nil {
+		return failPolicyApply(result, "validate", err)
+	}
+
+	snapshot, err = resolvePolicySnapshotServices(snapshot, options.ForwardingResolver)
+	if err != nil {
+		return failPolicyApply(result, "resolve_forwarding", err)
+	}
+	snapshot, err = SignPolicySnapshot(snapshot)
+	if err != nil {
+		return failPolicyApply(result, "validate", err)
+	}
+	verifyStats, err = VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{
 		CurrentVersion:    currentConfig.PolicyVersion,
 		ObjectChecksum:    options.ObjectChecksum,
 		Now:               options.Now,
@@ -78,9 +100,6 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 		return failPolicyApply(result, "validate", err)
 	}
 
-	checksum := snapshot.Checksum
-	snapshot = normalizePolicySnapshot(snapshot)
-	snapshot.Checksum = checksum
 	inactiveSlot := uint32(1 - currentConfig.ActiveSlot)
 
 	if err := clearInactivePolicySlot(runtime.Collection.Maps, inactiveSlot); err != nil {
@@ -160,6 +179,37 @@ func failPolicyApply(result PolicyApplyResult, stage string, err error) (PolicyA
 	result.ErrorStage = stage
 	result.ErrorReason = err.Error()
 	return result, err
+}
+
+func resolvePolicySnapshotServices(snapshot PolicySnapshot, resolver ForwardingResolver) (PolicySnapshot, error) {
+	snapshot = normalizePolicySnapshot(snapshot)
+	for i, service := range snapshot.Services {
+		if !serviceNeedsResolution(service) {
+			continue
+		}
+		if resolver == nil {
+			return PolicySnapshot{}, fmt.Errorf("service %d forwarding metadata is unresolved and no resolver is configured", service.ServiceID)
+		}
+		resolved, err := resolver.ResolveService(ServiceResolveRequest{
+			ServiceID:          service.ServiceID,
+			ForwardingPolicyID: service.ForwardingPolicyID,
+			DstV4:              service.DstV4,
+			DstPort:            service.DstPort,
+			Proto:              service.Proto,
+			Priority:           service.Priority,
+			DefaultRuleID:      service.DefaultRuleID,
+			OutputInterface:    service.OutputInterface,
+			DevmapKey:          service.DevmapKey,
+		})
+		if err != nil {
+			return PolicySnapshot{}, fmt.Errorf("service %d: %w", service.ServiceID, err)
+		}
+		if resolved.Service.OutputInterface == "" {
+			resolved.Service.OutputInterface = service.OutputInterface
+		}
+		snapshot.Services[i] = resolved.Service
+	}
+	return snapshot, nil
 }
 
 func readRuntimeConfig(runtimeConfig *ebpf.Map) (RuntimeConfigValue, error) {

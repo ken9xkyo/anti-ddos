@@ -96,10 +96,11 @@ func LoadAndAttach(cfg Config, metrics *Metrics, logger *slog.Logger) (*Runtime,
 			return nil, fmt.Errorf("load bootstrap policy snapshot: %w", err)
 		}
 		applyResult, err := ApplyPolicySnapshot(rt, bootstrapPolicy, PolicyApplyOptions{
-			SnapshotPath:      cfg.SnapshotPath,
-			ObjectChecksum:    objectChecksum,
-			MemoryBudgetBytes: cfg.PolicyMemoryBudgetBytes,
-			Metrics:           metrics,
+			SnapshotPath:       cfg.SnapshotPath,
+			ObjectChecksum:     objectChecksum,
+			MemoryBudgetBytes:  cfg.PolicyMemoryBudgetBytes,
+			Metrics:            metrics,
+			ForwardingResolver: NewNetlinkForwardingResolver(),
 		})
 		if err != nil {
 			coll.Close()

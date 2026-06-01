@@ -148,6 +148,23 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestVerifyPolicySnapshotAllowsUnresolvedServicesOnlyWhenConfigured(t *testing.T) {
+	snapshot := signedUnresolvedTestPolicySnapshot(t, 2)
+
+	if _, err := VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{}); err == nil || !strings.Contains(err.Error(), "output_ifindex must be non-zero") {
+		t.Fatalf("VerifyPolicySnapshot() error = %v, want strict unresolved rejection", err)
+	}
+	if _, err := VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{AllowUnresolvedServices: true}); err != nil {
+		t.Fatalf("VerifyPolicySnapshot() with AllowUnresolvedServices error = %v", err)
+	}
+
+	snapshot.Services[0].OutputInterface = ""
+	snapshot = resignTestPolicySnapshot(t, snapshot)
+	if _, err := VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{AllowUnresolvedServices: true}); err == nil || !strings.Contains(err.Error(), "output_interface is required") {
+		t.Fatalf("VerifyPolicySnapshot() error = %v, want output_interface rejection", err)
+	}
+}
+
 func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 	valid := signedTestPolicySnapshot(t, 2)
 
@@ -168,6 +185,84 @@ func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 				t.Fatalf("VerifyPolicySnapshot() error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestApplyPolicySnapshotResolvesUnresolvedServicesBeforePopulate(t *testing.T) {
+	runtime := newPolicyApplyTestRuntime(t, false)
+	path := filepath.Join(t.TempDir(), "last-valid.json")
+	snapshot := signedUnresolvedTestPolicySnapshot(t, 2)
+	resolver := &policyApplyTestResolver{}
+
+	result, err := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
+		SnapshotPath:       path,
+		ObjectChecksum:     "obj",
+		Now:                time.Now(),
+		ForwardingResolver: resolver,
+	})
+	if err != nil {
+		t.Fatalf("ApplyPolicySnapshot() error = %v", err)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+	if result.Status != policyApplyStatusApplied || result.ActiveSlot != 1 {
+		t.Fatalf("unexpected apply result: %#v", result)
+	}
+
+	key, err := serviceMapKey(snapshot.Services[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value ServiceValue
+	if err := runtime.Collection.Maps["service_allowlist_b"].Lookup(&key, &value); err != nil {
+		t.Fatalf("service_allowlist_b missing resolved service: %v", err)
+	}
+	if value.OutputIfindex != 7 || value.NeighborStatus != neighborResolved {
+		t.Fatalf("service map was not populated with resolved metadata: %#v", value)
+	}
+
+	loaded, err := LoadLastValidSnapshot(path)
+	if err != nil {
+		t.Fatalf("LoadLastValidSnapshot() error = %v", err)
+	}
+	if loaded.Policy == nil || len(loaded.Policy.Services) != 1 {
+		t.Fatalf("last-valid policy missing service: %#v", loaded)
+	}
+	service := loaded.Policy.Services[0]
+	if service.OutputInterface != "backend0" || service.OutputIfindex != 7 || service.DstMAC == "" || service.SrcMAC == "" {
+		t.Fatalf("last-valid policy did not persist resolved forwarding metadata: %#v", service)
+	}
+}
+
+func TestApplyPolicySnapshotFailsBeforeMapChangesWhenForwardingResolutionFails(t *testing.T) {
+	runtime := newPolicyApplyTestRuntime(t, false)
+	path := filepath.Join(t.TempDir(), "last-valid.json")
+	snapshot := signedUnresolvedTestPolicySnapshot(t, 2)
+	resolver := &policyApplyTestResolver{err: errors.New("missing link")}
+
+	result, err := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
+		SnapshotPath:       path,
+		ObjectChecksum:     "obj",
+		Now:                time.Now(),
+		ForwardingResolver: resolver,
+	})
+	if err == nil {
+		t.Fatal("expected apply failure")
+	}
+	if result.ErrorStage != "resolve_forwarding" {
+		t.Fatalf("unexpected failure result: %#v", result)
+	}
+
+	cfg, err := readRuntimeConfig(runtime.Collection.Maps["runtime_config"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PolicyVersion != 1 || cfg.ActiveSlot != 0 {
+		t.Fatalf("runtime_config changed after failed resolution: %#v", cfg)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("last-valid snapshot should not be written on resolution failure, stat err=%v", err)
 	}
 }
 
@@ -293,6 +388,17 @@ func signedTestPolicySnapshot(t *testing.T, version uint32) PolicySnapshot {
 	return resignTestPolicySnapshot(t, testPolicySnapshot(t, version))
 }
 
+func signedUnresolvedTestPolicySnapshot(t *testing.T, version uint32) PolicySnapshot {
+	t.Helper()
+	snapshot := testPolicySnapshot(t, version)
+	snapshot.Services[0].OutputInterface = "backend0"
+	snapshot.Services[0].OutputIfindex = 0
+	snapshot.Services[0].NeighborStatus = 0
+	snapshot.Services[0].DstMAC = ""
+	snapshot.Services[0].SrcMAC = ""
+	return resignTestPolicySnapshot(t, snapshot)
+}
+
 func resignTestPolicySnapshot(t *testing.T, snapshot PolicySnapshot) PolicySnapshot {
 	t.Helper()
 	signed, err := SignPolicySnapshot(snapshot)
@@ -340,6 +446,39 @@ func testPolicySnapshot(t *testing.T, version uint32) PolicySnapshot {
 			{RuleID: 2, Priority: 10, Action: actionDrop, Mode: 1},
 		},
 	}
+}
+
+type policyApplyTestResolver struct {
+	calls int
+	err   error
+}
+
+func (r *policyApplyTestResolver) ResolveService(req ServiceResolveRequest) (ResolvedService, error) {
+	r.calls++
+	if r.err != nil {
+		return ResolvedService{}, r.err
+	}
+	return ResolvedService{
+		Service: PolicyService{
+			ServiceID:          req.ServiceID,
+			ForwardingPolicyID: req.ForwardingPolicyID,
+			DstV4:              req.DstV4,
+			DstPort:            req.DstPort,
+			Proto:              req.Proto,
+			Action:             actionRedirect,
+			Priority:           req.Priority,
+			DefaultRuleID:      req.DefaultRuleID,
+			OutputInterface:    req.OutputInterface,
+			OutputIfindex:      7,
+			DevmapKey:          req.DevmapKey,
+			NeighborStatus:     neighborResolved,
+			DstMAC:             "02:00:00:00:00:02",
+			SrcMAC:             "02:00:00:00:00:01",
+		},
+		OutputInterface: req.OutputInterface,
+		NeighborTarget:  req.DstV4,
+		NeighborState:   "reachable",
+	}, nil
 }
 
 func newPolicyApplyTestRuntime(t *testing.T, brokenBlacklist bool) *Runtime {

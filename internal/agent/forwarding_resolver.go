@@ -136,6 +136,7 @@ func (r *NetlinkForwardingResolver) ResolveService(req ServiceResolveRequest) (R
 			Action:             actionRedirect,
 			Priority:           req.Priority,
 			DefaultRuleID:      req.DefaultRuleID,
+			OutputInterface:    req.OutputInterface,
 			OutputIfindex:      uint32(attrs.Index),
 			DevmapKey:          req.DevmapKey,
 			NeighborStatus:     neighborResolved,

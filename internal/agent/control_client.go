@@ -126,12 +126,13 @@ func RunControlSync(ctx context.Context, cfg Config, runtime *Runtime, metrics *
 				continue
 			}
 			result, applyErr := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
-				SnapshotPath:      cfg.SnapshotPath,
-				ObjectChecksum:    runtime.ObjectChecksum,
-				MemoryBudgetBytes: cfg.PolicyMemoryBudgetBytes,
-				Metrics:           metrics,
-				Now:               time.Now(),
-				CapacityOverrides: nil,
+				SnapshotPath:       cfg.SnapshotPath,
+				ObjectChecksum:     runtime.ObjectChecksum,
+				MemoryBudgetBytes:  cfg.PolicyMemoryBudgetBytes,
+				Metrics:            metrics,
+				Now:                time.Now(),
+				CapacityOverrides:  nil,
+				ForwardingResolver: NewNetlinkForwardingResolver(),
 			})
 			if err := client.ack(ctx, state.AgentID, result); err != nil {
 				logger.Warn("control apply ack failed", "error", RedactString(err.Error()))

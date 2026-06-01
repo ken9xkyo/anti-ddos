@@ -61,6 +61,7 @@ type PolicyService struct {
 	Action             uint32 `json:"action"`
 	Priority           uint32 `json:"priority"`
 	DefaultRuleID      uint32 `json:"default_rule_id,omitempty"`
+	OutputInterface    string `json:"output_interface,omitempty"`
 	OutputIfindex      uint32 `json:"output_ifindex"`
 	DevmapKey          uint32 `json:"devmap_key"`
 	NeighborStatus     uint32 `json:"neighbor_status"`
@@ -85,11 +86,12 @@ type PolicyRule struct {
 }
 
 type PolicySnapshotVerifyOptions struct {
-	CurrentVersion    uint32
-	ObjectChecksum    string
-	Now               time.Time
-	CapacityOverrides map[string]uint32
-	MemoryBudgetBytes uint64
+	CurrentVersion          uint32
+	ObjectChecksum          string
+	Now                     time.Time
+	CapacityOverrides       map[string]uint32
+	MemoryBudgetBytes       uint64
+	AllowUnresolvedServices bool
 }
 
 type PolicyMapStat struct {
@@ -372,23 +374,38 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 
 	serviceKeys := make(map[ServiceKey]struct{}, len(snapshot.Services))
 	devmapTargets := make(map[uint32]uint32)
-	serviceCap := capacity("service_allowlist")
+	devmapKeys := make(map[uint32]struct{})
 	devmapCap := capacity("tx_devmap")
 	for _, service := range snapshot.Services {
-		key, value, err := serviceMapEntry(service)
+		key, err := serviceMapKey(service)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("service %d: %w", service.ServiceID, err))
-			continue
-		}
-		if serviceCap > 0 && uint32(len(snapshot.Services)) > serviceCap {
 			continue
 		}
 		if _, ok := serviceKeys[key]; ok {
 			errs = append(errs, fmt.Errorf("duplicate service_allowlist key dst=%s proto=%d port=%d", service.DstV4, service.Proto, service.DstPort))
 		}
 		serviceKeys[key] = struct{}{}
-		if devmapCap > 0 && value.DevmapKey >= devmapCap {
-			errs = append(errs, fmt.Errorf("service %d devmap_key %d exceeds capacity %d", service.ServiceID, value.DevmapKey, devmapCap))
+		if devmapCap > 0 && service.DevmapKey >= devmapCap {
+			errs = append(errs, fmt.Errorf("service %d devmap_key %d exceeds capacity %d", service.ServiceID, service.DevmapKey, devmapCap))
+		}
+		devmapKeys[service.DevmapKey] = struct{}{}
+		if serviceNeedsResolution(service) {
+			if !options.AllowUnresolvedServices {
+				if _, _, err := serviceMapEntry(service); err != nil {
+					errs = append(errs, fmt.Errorf("service %d: %w", service.ServiceID, err))
+				}
+				continue
+			}
+			if strings.TrimSpace(service.OutputInterface) == "" {
+				errs = append(errs, fmt.Errorf("service %d output_interface is required for unresolved forwarding metadata", service.ServiceID))
+			}
+			continue
+		}
+		_, value, err := serviceMapEntry(service)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("service %d: %w", service.ServiceID, err))
+			continue
 		}
 		if existing, ok := devmapTargets[value.DevmapKey]; ok && existing != value.OutputIfindex {
 			errs = append(errs, fmt.Errorf("devmap_key %d has conflicting output_ifindex values %d and %d", value.DevmapKey, existing, value.OutputIfindex))
@@ -396,7 +413,7 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 		devmapTargets[value.DevmapKey] = value.OutputIfindex
 	}
 	addStat("service_allowlist", uint32(len(snapshot.Services)), unsafe.Sizeof(ServiceKey{}), unsafe.Sizeof(ServiceValue{}))
-	addStat("tx_devmap", uint32(len(devmapTargets)), unsafe.Sizeof(uint32(0)), unsafe.Sizeof(uint32(0)))
+	addStat("tx_devmap", uint32(len(devmapKeys)), unsafe.Sizeof(uint32(0)), unsafe.Sizeof(uint32(0)))
 
 	ruleIDs := make(map[uint32]struct{}, len(snapshot.Rules))
 	ruleCap := capacity("rule_config")
@@ -452,28 +469,47 @@ func cidrPolicyValue(entry PolicyCIDREntry) CIDRPolicyValue {
 	}
 }
 
-func serviceMapEntry(service PolicyService) (ServiceKey, ServiceValue, error) {
+func serviceNeedsResolution(service PolicyService) bool {
+	return service.OutputIfindex == 0 ||
+		service.NeighborStatus != neighborResolved ||
+		strings.TrimSpace(service.DstMAC) == "" ||
+		strings.TrimSpace(service.SrcMAC) == ""
+}
+
+func serviceMapKey(service PolicyService) (ServiceKey, error) {
 	addr, err := parseV4Addr(service.DstV4)
 	if err != nil {
-		return ServiceKey{}, ServiceValue{}, err
+		return ServiceKey{}, err
 	}
 	if service.ServiceID == 0 {
-		return ServiceKey{}, ServiceValue{}, errors.New("service_id must be non-zero")
+		return ServiceKey{}, errors.New("service_id must be non-zero")
 	}
 	if service.Action != actionRedirect {
-		return ServiceKey{}, ServiceValue{}, fmt.Errorf("action must be ACTION_REDIRECT (%d)", actionRedirect)
+		return ServiceKey{}, fmt.Errorf("action must be ACTION_REDIRECT (%d)", actionRedirect)
 	}
 	switch service.Proto {
 	case l4TCP, l4UDP:
 		if service.DstPort == 0 {
-			return ServiceKey{}, ServiceValue{}, errors.New("tcp/udp service dst_port must be non-zero")
+			return ServiceKey{}, errors.New("tcp/udp service dst_port must be non-zero")
 		}
 	case l4ICMP:
 		if service.DstPort != 0 {
-			return ServiceKey{}, ServiceValue{}, errors.New("icmp service dst_port must be 0")
+			return ServiceKey{}, errors.New("icmp service dst_port must be 0")
 		}
 	default:
-		return ServiceKey{}, ServiceValue{}, fmt.Errorf("unsupported service proto %d", service.Proto)
+		return ServiceKey{}, fmt.Errorf("unsupported service proto %d", service.Proto)
+	}
+	return ServiceKey{
+		DstV4:   binary.LittleEndian.Uint32(addr[:]),
+		DstPort: service.DstPort,
+		Proto:   service.Proto,
+	}, nil
+}
+
+func serviceMapEntry(service PolicyService) (ServiceKey, ServiceValue, error) {
+	key, err := serviceMapKey(service)
+	if err != nil {
+		return ServiceKey{}, ServiceValue{}, err
 	}
 	if service.OutputIfindex == 0 {
 		return ServiceKey{}, ServiceValue{}, errors.New("output_ifindex must be non-zero")
@@ -488,11 +524,6 @@ func serviceMapEntry(service PolicyService) (ServiceKey, ServiceValue, error) {
 	srcMAC, err := parsePolicyMAC(service.SrcMAC)
 	if err != nil {
 		return ServiceKey{}, ServiceValue{}, fmt.Errorf("src_mac: %w", err)
-	}
-	key := ServiceKey{
-		DstV4:   binary.LittleEndian.Uint32(addr[:]),
-		DstPort: service.DstPort,
-		Proto:   service.Proto,
 	}
 	value := ServiceValue{
 		ServiceID:          service.ServiceID,

@@ -1,45 +1,61 @@
 package control
 
 import (
-	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ken9xkyo/anti-ddos/internal/agent"
 )
 
-type recordingForwardingResolver struct {
-	called  bool
-	service agent.PolicyService
-	err     error
+func TestRebuildAndRollbackAllowUnresolvedServiceSnapshots(t *testing.T) {
+	ctx, pool, _ := resetControlTestDB(t)
+	objectPath := filepath.Join(t.TempDir(), "xdp.o")
+	if err := os.WriteFile(objectPath, []byte("test object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(pool, Config{XDPObject: objectPath}, nil)
+	admin, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := store.CreateService(ctx, &Actor{User: admin}, ServiceInput{
+		Reason:                   "enable unresolved service",
+		Name:                     "api",
+		BackendCIDR:              "203.0.113.10/32",
+		Protocol:                 "tcp",
+		AllowedPorts:             []uint16{443},
+		OutputInterface:          "enp134s0f1",
+		Owner:                    "sre",
+		Criticality:              "high",
+		ProtectionMode:           "enforce",
+		Enabled:                  &enabled,
+		ResolvedIfindex:          7,
+		ResolvedSourceMAC:        "90:e2:ba:24:9b:b6",
+		NeighborResolutionStatus: "unresolved",
+	}, "enable unresolved service"); err != nil {
+		t.Fatalf("CreateService() should build unresolved snapshot without control netlink: %v", err)
+	}
+
+	snapshot, err := store.FetchSnapshot(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot == nil || len(snapshot.Services) != 1 {
+		t.Fatalf("expected one snapshot service, got %#v", snapshot)
+	}
+	service := snapshot.Services[0]
+	if service.OutputInterface != "enp134s0f1" || service.OutputIfindex != 0 || service.DstMAC != "" || service.SrcMAC != "" {
+		t.Fatalf("snapshot should carry unresolved forwarding intent: %#v", service)
+	}
+	if _, err := store.RollbackSnapshot(ctx, &Actor{User: admin}, snapshot.Version, "rollback unresolved service snapshot"); err != nil {
+		t.Fatalf("RollbackSnapshot() should verify unresolved target snapshot: %v", err)
+	}
 }
 
-func (r *recordingForwardingResolver) ResolveService(req agent.ServiceResolveRequest) (agent.ResolvedService, error) {
-	r.called = true
-	if r.err != nil {
-		return agent.ResolvedService{}, r.err
-	}
-	service := r.service
-	if service.ServiceID == 0 {
-		service = agent.PolicyService{
-			ServiceID:          req.ServiceID,
-			ForwardingPolicyID: req.ForwardingPolicyID,
-			DstV4:              req.DstV4,
-			DstPort:            req.DstPort,
-			Proto:              req.Proto,
-			Action:             ActionRedirect,
-			Priority:           req.Priority,
-			OutputIfindex:      7,
-			DevmapKey:          req.DevmapKey,
-			NeighborStatus:     NeighborResolved,
-			DstMAC:             "02:00:00:00:00:02",
-			SrcMAC:             "90:e2:ba:24:9b:b6",
-		}
-	}
-	return agent.ResolvedService{Service: service}, nil
-}
-
-func TestMakePolicyServiceFallsBackToResolverWhenNextHopMissing(t *testing.T) {
+func TestMakePolicyServiceEmitsUnresolvedForwardingIntentWhenNextHopMissing(t *testing.T) {
 	req := agent.ServiceResolveRequest{
 		ServiceID:          10,
 		ForwardingPolicyID: 10,
@@ -50,18 +66,56 @@ func TestMakePolicyServiceFallsBackToResolverWhenNextHopMissing(t *testing.T) {
 		OutputInterface:    "enp134s0f1",
 		DevmapKey:          10,
 	}
-	resolver := &recordingForwardingResolver{}
-	store := &Store{resolver: resolver}
+	store := &Store{}
 
 	service, err := store.makePolicyService(req, 7, "", "90:e2:ba:24:9b:b6")
 	if err != nil {
 		t.Fatalf("makePolicyService() error = %v", err)
 	}
-	if !resolver.called {
-		t.Fatal("resolver should be called when next-hop MAC is not pre-resolved")
+	if service.OutputInterface != "enp134s0f1" || service.OutputIfindex != 0 || service.NeighborStatus != 0 {
+		t.Fatalf("service should carry unresolved output intent: %#v", service)
 	}
-	if service.DstMAC != "02:00:00:00:00:02" || service.SrcMAC != "90:e2:ba:24:9b:b6" || service.OutputIfindex != 7 {
-		t.Fatalf("resolved service = %#v", service)
+	if service.DstMAC != "" || service.SrcMAC != "" {
+		t.Fatalf("unresolved service should not carry MAC metadata: %#v", service)
+	}
+	snapshot := agent.PolicySnapshot{
+		SchemaVersion:  1,
+		Version:        1,
+		ObjectChecksum: "obj",
+		Runtime:        agent.PolicyRuntimeConfig{MalformedPolicy: ActionDrop},
+		Services:       []agent.PolicyService{service},
+	}
+	signed, err := agent.SignPolicySnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.VerifyPolicySnapshot(signed, agent.PolicySnapshotVerifyOptions{AllowUnresolvedServices: true}); err != nil {
+		t.Fatalf("unresolved service should verify for control snapshots: %v", err)
+	}
+}
+
+func TestMakePolicyServiceUsesPreResolvedMetadataWhenNextHopPresent(t *testing.T) {
+	req := agent.ServiceResolveRequest{
+		ServiceID:          10,
+		ForwardingPolicyID: 10,
+		DstV4:              "203.0.113.10",
+		DstPort:            443,
+		Proto:              6,
+		Priority:           10,
+		OutputInterface:    "enp134s0f1",
+		DevmapKey:          10,
+	}
+	store := &Store{}
+
+	service, err := store.makePolicyService(req, 7, "02:00:00:00:00:02", "90:e2:ba:24:9b:b6")
+	if err != nil {
+		t.Fatalf("makePolicyService() error = %v", err)
+	}
+	if service.OutputInterface != "enp134s0f1" || service.OutputIfindex != 7 || service.NeighborStatus != NeighborResolved {
+		t.Fatalf("service should carry pre-resolved metadata: %#v", service)
+	}
+	if service.DstMAC != "02:00:00:00:00:02" || service.SrcMAC != "90:e2:ba:24:9b:b6" {
+		t.Fatalf("unexpected MAC metadata: %#v", service)
 	}
 }
 
@@ -100,13 +154,9 @@ func TestMakePolicyServiceRequiresCompletePreResolvedMetadata(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolver := &recordingForwardingResolver{err: errors.New("resolver should not be called")}
-			store := &Store{resolver: resolver}
+			store := &Store{}
 			if _, err := store.makePolicyService(req, tc.ifindex, tc.dstMAC, tc.srcMAC); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("makePolicyService() error = %v, want containing %q", err, tc.want)
-			}
-			if resolver.called {
-				t.Fatal("resolver should not be called for incomplete pre-resolved forwarding metadata")
 			}
 		})
 	}

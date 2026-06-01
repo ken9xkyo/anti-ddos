@@ -55,7 +55,7 @@ func (s *Store) rebuildSnapshotInTx(ctx context.Context, tx pgx.Tx, actor *Actor
 	if err != nil {
 		return nil, err
 	}
-	if _, err := agent.VerifyPolicySnapshot(signed, agent.PolicySnapshotVerifyOptions{Now: time.Now().UTC()}); err != nil {
+	if _, err := agent.VerifyPolicySnapshot(signed, agent.PolicySnapshotVerifyOptions{Now: time.Now().UTC(), AllowUnresolvedServices: true}); err != nil {
 		return nil, err
 	}
 	if rollbackFrom == nil && latestRaw != nil {
@@ -147,7 +147,7 @@ func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersio
 	if err != nil {
 		return SnapshotMetadata{}, err
 	}
-	if _, err := agent.VerifyPolicySnapshot(signed, agent.PolicySnapshotVerifyOptions{Now: time.Now().UTC()}); err != nil {
+	if _, err := agent.VerifyPolicySnapshot(signed, agent.PolicySnapshotVerifyOptions{Now: time.Now().UTC(), AllowUnresolvedServices: true}); err != nil {
 		return SnapshotMetadata{}, err
 	}
 	raw, err := json.Marshal(signed)
@@ -430,6 +430,7 @@ func (s *Store) makePolicyService(req agent.ServiceResolveRequest, ifindex uint3
 			Proto:              req.Proto,
 			Action:             ActionRedirect,
 			Priority:           req.Priority,
+			OutputInterface:    req.OutputInterface,
 			OutputIfindex:      ifindex,
 			DevmapKey:          req.DevmapKey,
 			NeighborStatus:     NeighborResolved,
@@ -437,14 +438,18 @@ func (s *Store) makePolicyService(req agent.ServiceResolveRequest, ifindex uint3
 			SrcMAC:             srcMAC,
 		}, nil
 	}
-	if s.resolver == nil {
-		return agent.PolicyService{}, errors.New("resolved ifindex and MAC metadata are required")
-	}
-	resolved, err := s.resolver.ResolveService(req)
-	if err != nil {
-		return agent.PolicyService{}, err
-	}
-	return resolved.Service, nil
+	return agent.PolicyService{
+		ServiceID:          req.ServiceID,
+		ForwardingPolicyID: req.ForwardingPolicyID,
+		DstV4:              req.DstV4,
+		DstPort:            req.DstPort,
+		Proto:              req.Proto,
+		Action:             ActionRedirect,
+		Priority:           req.Priority,
+		DefaultRuleID:      req.DefaultRuleID,
+		OutputInterface:    req.OutputInterface,
+		DevmapKey:          req.DevmapKey,
+	}, nil
 }
 
 func snapshotWhitelist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {

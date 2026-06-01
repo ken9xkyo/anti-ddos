@@ -10,6 +10,7 @@ Gotcha: Control API runs in compose container and cannot netlink-lookup host NIC
 - UI defaults new service disabled
 - Selecting an Agent-reported interface fills `resolved_ifindex` and `resolved_src_mac`
 - Enabling a service requires `resolved_ifindex` and `resolved_src_mac`; `resolved_next_hop_mac` is not a manual dashboard field
-- `snapshot.go:makePolicyService()` falls back to the forwarding resolver when next-hop MAC is missing, while still requiring complete metadata for legacy pre-resolved next-hop inputs
+- `snapshot.go:makePolicyService()` emits unresolved forwarding intent when next-hop MAC is missing; `agent.ApplyPolicySnapshot()` resolves output ifindex/source MAC/next-hop MAC on the host before populating XDP maps
+- Legacy pre-resolved next-hop inputs still bypass Agent resolution but must include complete ifindex/source MAC metadata
 
-Updated: 2026-05-29
+Updated: 2026-06-01

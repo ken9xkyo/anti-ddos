@@ -28,7 +28,6 @@ type Store struct {
 	pool           *pgxpool.Pool
 	cfg            Config
 	logger         *slog.Logger
-	resolver       agent.ForwardingResolver
 	feedHTTPClient *http.Client
 	telegramClient *TelegramClient
 	alertRetryBase time.Duration
@@ -66,7 +65,6 @@ func NewStore(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) *Store {
 		pool:           pool,
 		cfg:            cfg,
 		logger:         logger,
-		resolver:       agent.NewNetlinkForwardingResolver(),
 		feedHTTPClient: &http.Client{Timeout: 15 * time.Second},
 		telegramClient: NewTelegramClient(cfg.TelegramAPIURL, &http.Client{Timeout: 5 * time.Second}),
 		alertRetryBase: time.Second,
@@ -76,10 +74,6 @@ func NewStore(pool *pgxpool.Pool, cfg Config, logger *slog.Logger) *Store {
 
 func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
-}
-
-func (s *Store) SetForwardingResolver(resolver agent.ForwardingResolver) {
-	s.resolver = resolver
 }
 
 func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (User, error) {
