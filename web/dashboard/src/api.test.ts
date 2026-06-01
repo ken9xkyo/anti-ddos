@@ -205,6 +205,26 @@ describe('ApiClient', () => {
     ]);
   });
 
+  it('loads whitelist with encoded filters and omitted defaults', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return jsonResponse([]);
+    }));
+
+    const client = new ApiClient();
+    client.setToken('operator-token');
+    await client.whitelist();
+    await client.whitelist({ q: ' api customer ', scope: 'all', state: 'all', expiry: 'all' });
+    await client.whitelist({ q: 'api/customer', scope: 'service', service_id: 'svc 1', state: 'enabled', expiry: 'valid' });
+
+    expect(calls).toEqual([
+      '/v1/whitelist',
+      '/v1/whitelist?q=api+customer',
+      '/v1/whitelist?q=api%2Fcustomer&scope=service&service_id=svc+1&state=enabled&expiry=valid'
+    ]);
+  });
+
   it('configures Telegram with write-only bot token', async () => {
     const calls: Array<{ path: string; method?: string; body: unknown; auth: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

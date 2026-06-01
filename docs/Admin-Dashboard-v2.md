@@ -168,6 +168,7 @@ Actions:
 Hien thi:
 
 - MUI X Data Grid cho CIDR, scope, service, label, owner, priority, expiry, enabled.
+- Search/filter API-backed theo CIDR/label/owner/reason/service, scope, effective service, enabled state va expiry state.
 
 Actions:
 
@@ -267,7 +268,7 @@ Khong can migration moi neu dung cac cot hien co: `enabled`, `status`, `force_pa
 | Rules | `POST /v1/rules` | Operator/Admin | Create rule, rebuild snapshot |
 | Rules | `PATCH /v1/rules/{id}` | Operator/Admin | Update rule, rebuild snapshot |
 | Rules | `DELETE /v1/rules/{id}` | Operator/Admin | Soft-disable rule, rebuild snapshot |
-| Whitelist | `GET /v1/whitelist` | Authenticated | List whitelist entries |
+| Whitelist | `GET /v1/whitelist` | Authenticated | List whitelist entries; optional `q`, `scope`, `service_id`, `state`, `expiry` filters |
 | Whitelist | `POST /v1/whitelist` | Operator/Admin | Create entry, rebuild snapshot |
 | Whitelist | `PATCH /v1/whitelist/{id}` | Operator/Admin | Update entry, rebuild snapshot |
 | Whitelist | `DELETE /v1/whitelist/{id}` | Operator/Admin | Soft-disable entry, rebuild snapshot |

@@ -170,6 +170,14 @@ type WhitelistEntry struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type WhitelistEntryQuery struct {
+	Search    string
+	Scope     string
+	ServiceID string
+	State     string
+	Expiry    string
+}
+
 type RuleInput struct {
 	Reason       string          `json:"reason"`
 	ServiceID    string          `json:"service_id,omitempty"`

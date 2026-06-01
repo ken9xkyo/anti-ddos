@@ -568,6 +568,39 @@ describe('DashboardShell', () => {
     expect(calls.find((call) => call.path === '/v1/whitelist/w1' && call.method === 'DELETE')?.reason).toBe('partner window closed');
   });
 
+  it('filters whitelist entries through API query params', async () => {
+    const globalEntry = whitelistFixture();
+    const scopedEntry = { ...globalEntry, id: 'w2', cidr: '198.51.100.20/32', scope: 'service', service_id: 's1', label: 'api-customer' };
+    const disabledEntry = { ...globalEntry, id: 'w3', cidr: '203.0.113.50/32', label: 'legacy-partner', enabled: false };
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push(path);
+      if (init?.method) throw new Error(`unexpected mutation ${path}`);
+      if (path === '/v1/whitelist') return jsonResponse([globalEntry, scopedEntry, disabledEntry]);
+      if (path.includes('state=disabled')) return jsonResponse([disabledEntry]);
+      if (path.includes('q=api')) return jsonResponse([scopedEntry]);
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'whitelist');
+    expect(await screen.findByText('198.51.100.10/32')).toBeInTheDocument();
+
+    await fillField(/^search/i, 'api');
+    await waitFor(() => expect(calls).toContain('/v1/whitelist?q=api'));
+    await waitFor(() => expect(screen.getByText('198.51.100.20/32')).toBeInTheDocument());
+
+    await fillField(/^scope/i, 'service');
+    await waitFor(() => expect(calls).toContain('/v1/whitelist?q=api&scope=service'));
+
+    await fillField(/^service/i, 's1');
+    await waitFor(() => expect(calls).toContain('/v1/whitelist?q=api&scope=service&service_id=s1'));
+
+    await fillField(/^state/i, 'disabled');
+    await waitFor(() => expect(calls).toContain('/v1/whitelist?q=api&scope=service&service_id=s1&state=disabled'));
+    await waitFor(() => expect(screen.getByText('203.0.113.50/32')).toBeInTheDocument());
+  });
+
   it('runs feed create, edit, sync and soft-disable workflows with admin credentials', async () => {
     const onRefresh = vi.fn(async () => undefined);
     const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];

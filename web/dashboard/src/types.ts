@@ -206,6 +206,14 @@ export interface WhitelistEntry {
   updated_at: string;
 }
 
+export interface WhitelistFilters {
+  q?: string;
+  scope?: 'all' | 'global' | 'service';
+  service_id?: string;
+  state?: 'all' | 'enabled' | 'disabled';
+  expiry?: 'all' | 'valid' | 'expired' | 'none';
+}
+
 export interface BaselineProfile {
   id: string;
   service_id: string;

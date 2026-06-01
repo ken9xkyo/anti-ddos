@@ -389,10 +389,13 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 	return entry, tx.Commit(ctx)
 }
 
-func (s *Store) ListWhitelistEntries(ctx context.Context) ([]WhitelistEntry, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-          expires_at, enabled, created_at, updated_at
-FROM whitelist_entries ORDER BY priority, created_at DESC`)
+func (s *Store) ListWhitelistEntries(ctx context.Context, query WhitelistEntryQuery) ([]WhitelistEntry, error) {
+	where, args := whitelistEntryWhere(query)
+	rows, err := s.pool.Query(ctx, `SELECT w.id::text, w.ebpf_id, w.ip_or_cidr::text, w.scope, COALESCE(w.service_id::text, ''), w.label, w.reason, w.owner, w.priority,
+          w.expires_at, w.enabled, w.created_at, w.updated_at
+FROM whitelist_entries w
+LEFT JOIN backend_services bs ON bs.id = w.service_id
+`+where+` ORDER BY w.priority, w.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -406,6 +409,86 @@ FROM whitelist_entries ORDER BY priority, created_at DESC`)
 		out = append(out, entry)
 	}
 	return out, rows.Err()
+}
+
+func parseWhitelistEntryQuery(values map[string][]string) (WhitelistEntryQuery, error) {
+	query := WhitelistEntryQuery{
+		Search:    first(values, "q"),
+		Scope:     whitelistQueryValue(first(values, "scope"), "all"),
+		ServiceID: first(values, "service_id"),
+		State:     whitelistQueryValue(first(values, "state"), "all"),
+		Expiry:    whitelistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.Scope {
+	case "all", "global", "service":
+	default:
+		return query, fmt.Errorf("scope must be all, global, or service")
+	}
+	switch query.State {
+	case "all", "enabled", "disabled":
+	default:
+		return query, fmt.Errorf("state must be all, enabled, or disabled")
+	}
+	switch query.Expiry {
+	case "all", "valid", "expired", "none":
+	default:
+		return query, fmt.Errorf("expiry must be all, valid, expired, or none")
+	}
+	return query, nil
+}
+
+func whitelistQueryValue(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func whitelistEntryWhere(query WhitelistEntryQuery) (string, []any) {
+	clauses := make([]string, 0)
+	args := make([]any, 0)
+	add := func(clause string, value any) {
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf(clause, len(args)))
+	}
+
+	if search := strings.TrimSpace(query.Search); search != "" {
+		args = append(args, "%"+search+"%")
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(w.ip_or_cidr::text ILIKE $%d OR w.label ILIKE $%d OR w.owner ILIKE $%d OR w.reason ILIKE $%d OR COALESCE(bs.name, '') ILIKE $%d)`, idx, idx, idx, idx, idx))
+	}
+	switch whitelistQueryValue(query.Scope, "all") {
+	case "global":
+		add("w.scope = $%d", "global")
+	case "service":
+		add("w.scope = $%d", "service")
+	}
+	switch whitelistQueryValue(query.State, "all") {
+	case "enabled":
+		clauses = append(clauses, "w.enabled")
+	case "disabled":
+		clauses = append(clauses, "NOT w.enabled")
+	}
+	switch whitelistQueryValue(query.Expiry, "all") {
+	case "valid":
+		clauses = append(clauses, "(w.expires_at IS NULL OR w.expires_at > now())")
+	case "expired":
+		clauses = append(clauses, "w.expires_at IS NOT NULL AND w.expires_at <= now()")
+	case "none":
+		clauses = append(clauses, "w.expires_at IS NULL")
+	}
+	if serviceID := strings.TrimSpace(query.ServiceID); serviceID != "" {
+		if whitelistQueryValue(query.Scope, "all") == "service" {
+			add("w.service_id = $%d", serviceID)
+		} else {
+			add("(w.scope = 'global' OR w.service_id = $%d)", serviceID)
+		}
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
 func scanWhitelistEntry(row rowScanner, entry *WhitelistEntry) error {

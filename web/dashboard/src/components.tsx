@@ -98,8 +98,8 @@ export function Banner({ tone, children }: { tone: 'error' | 'warn' | 'info'; ch
   return <div className={`banner ${tone}`}>{icon}{children}</div>;
 }
 
-export function DataToolbar({ children }: { children: ReactNode }) {
-  return <div className="data-toolbar">{children}</div>;
+export function DataToolbar({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={['data-toolbar', className].filter(Boolean).join(' ')}>{children}</div>;
 }
 
 export function SearchField({

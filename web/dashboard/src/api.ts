@@ -25,6 +25,7 @@ import type {
   User,
   UserUpdateInput,
   WhitelistEntry,
+  WhitelistFilters,
   WhitelistInput
 } from './types';
 
@@ -174,8 +175,8 @@ export class ApiClient {
     });
   }
 
-  async whitelist(): Promise<WhitelistEntry[]> {
-    return asArray(await this.request<WhitelistEntry[] | null>('/v1/whitelist'));
+  async whitelist(filters: WhitelistFilters = {}): Promise<WhitelistEntry[]> {
+    return asArray(await this.request<WhitelistEntry[] | null>(`/v1/whitelist${whitelistFilterQuery(filters)}`));
   }
 
   async createWhitelist(input: WhitelistInput): Promise<WhitelistEntry> {
@@ -294,6 +295,19 @@ export class ApiClient {
 
 function asArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function whitelistFilterQuery(filters: WhitelistFilters): string {
+  const params = new URLSearchParams();
+  const q = filters.q?.trim();
+  if (q) params.set('q', q);
+  if (filters.scope && filters.scope !== 'all') params.set('scope', filters.scope);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
+  if (filters.state && filters.state !== 'all') params.set('state', filters.state);
+  if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : '';
 }
 
 function normalizeOverview(overview: DashboardOverview): DashboardOverview {

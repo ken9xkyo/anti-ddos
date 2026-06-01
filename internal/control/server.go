@@ -349,7 +349,12 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		entries, err := s.store.ListWhitelistEntries(r.Context())
+		query, err := parseWhitelistEntryQuery(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		entries, err := s.store.ListWhitelistEntries(r.Context(), query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req WhitelistInput

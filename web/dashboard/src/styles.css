@@ -473,6 +473,10 @@ button:focus-visible {
   grid-template-columns: minmax(220px, 1.5fr) minmax(140px, 0.7fr) minmax(140px, 0.7fr) auto;
 }
 
+.data-toolbar.whitelist-toolbar {
+  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(130px, 0.7fr));
+}
+
 .input-with-icon {
   position: relative;
   min-width: 0;
@@ -929,6 +933,7 @@ td {
     padding-right: 16px;
   }
 
+  .data-toolbar.whitelist-toolbar,
   .metric-grid,
   .data-toolbar,
   .filter-row,
