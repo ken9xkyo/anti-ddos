@@ -486,13 +486,18 @@ ORDER BY w.priority, w.ebpf_id`)
 	return out, rows.Err()
 }
 
+type blacklistSnapshotCandidate struct {
+	manual bool
+	entry  agent.PolicyCIDREntry
+}
+
 func snapshotBlacklist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {
-	rows, err := q.Query(ctx, `SELECT b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
+	rows, err := q.Query(ctx, `SELECT true, b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
 WHERE b.enabled AND (b.expires_at IS NULL OR b.expires_at > now())
 UNION ALL
-SELECT r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
+SELECT false, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
 FROM reputation_entries r
 JOIN feed_sources fs ON fs.id = r.source_id
 WHERE fs.enabled
@@ -504,22 +509,54 @@ ORDER BY 1`)
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]agent.PolicyCIDREntry, 0)
+	byCIDR := make(map[string]blacklistSnapshotCandidate)
 	for rows.Next() {
+		var manual bool
 		var entry agent.PolicyCIDREntry
 		var expires *time.Time
-		if err := rows.Scan(&entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
+		if err := rows.Scan(&manual, &entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
 			return nil, err
 		}
+		prefix, err := parseCIDR(entry.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("blacklist entry %d: %w", entry.EntryID, err)
+		}
+		entry.CIDR = prefix.String()
 		entry.Action = ActionDrop
 		entry.SourceType = 1
 		entry.Scope = PolicyScopeGlobal
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		out = append(out, entry)
+		next := blacklistSnapshotCandidate{manual: manual, entry: entry}
+		if current, ok := byCIDR[entry.CIDR]; !ok || blacklistCandidatePreferred(next, current) {
+			byCIDR[entry.CIDR] = next
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]agent.PolicyCIDREntry, 0, len(byCIDR))
+	for _, candidate := range byCIDR {
+		out = append(out, candidate.entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CIDR != out[j].CIDR {
+			return out[i].CIDR < out[j].CIDR
+		}
+		return out[i].EntryID < out[j].EntryID
+	})
+	return out, nil
+}
+
+func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool {
+	if next.manual != current.manual {
+		return next.manual
+	}
+	if next.entry.Score != current.entry.Score {
+		return next.entry.Score > current.entry.Score
+	}
+	return next.entry.EntryID < current.entry.EntryID
 }
 
 func snapshotRules(ctx context.Context, q dbQuerier) ([]agent.PolicyRule, error) {

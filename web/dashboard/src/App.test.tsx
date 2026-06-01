@@ -601,6 +601,93 @@ describe('DashboardShell', () => {
     await waitFor(() => expect(screen.getByText('203.0.113.50/32')).toBeInTheDocument());
   });
 
+  it('runs blacklist create, edit and soft-disable workflows', async () => {
+    const entry = blacklistFixture();
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      if (path === '/v1/blacklist' && !init?.method) return jsonResponse([entry]);
+      if (path === '/v1/blacklist' && init?.method === 'POST') return jsonResponse({ ...entry, id: 'b2', cidr: '203.0.113.44/32', score: 90 });
+      if (path === '/v1/blacklist/b1' && init?.method === 'PATCH') return jsonResponse({ ...entry, score: 95 });
+      if (path === '/v1/blacklist/b1' && init?.method === 'DELETE') return jsonResponse({ ...entry, enabled: false });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'blacklist');
+    expect(await screen.findByText('198.51.100.200/32')).toBeInTheDocument();
+
+    clickButtonByText(/add blacklist/i);
+    await fillField(/^cidr/i, '203.0.113.44/32');
+    await fillField(/^score/i, '90');
+    await fillField(/^reason/i, 'block scanner');
+    clickButtonByText(/save blacklist/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/blacklist' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await fillField(/^score/i, '95');
+    await fillField(/^reason/i, 'raise blacklist score');
+    clickButtonByText(/save blacklist/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/blacklist/b1' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^disable$/i);
+    await fillField(/^reason/i, 'attack stopped');
+    clickButtonByText(/disable entry/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/blacklist/b1' && call.method === 'DELETE')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/blacklist' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'block scanner',
+      cidr: '203.0.113.44/32',
+      source: 'manual',
+      action: 'drop',
+      score: 90,
+      enabled: true
+    });
+    expect(calls.find((call) => call.path === '/v1/blacklist/b1' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'raise blacklist score',
+      cidr: '198.51.100.200/32',
+      source: 'manual',
+      action: 'drop',
+      score: 95
+    });
+    expect(calls.find((call) => call.path === '/v1/blacklist/b1' && call.method === 'DELETE')?.reason).toBe('attack stopped');
+  });
+
+  it('filters blacklist entries and keeps viewers read-only', async () => {
+    const entry = blacklistFixture();
+    const disabledEntry = { ...entry, id: 'b2', cidr: '203.0.113.50/32', reason: 'old scanner', enabled: false };
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push(path);
+      if (init?.method) throw new Error(`unexpected mutation ${path}`);
+      if (path === '/v1/blacklist') return jsonResponse([entry, disabledEntry]);
+      if (path.includes('state=disabled')) return jsonResponse([disabledEntry]);
+      if (path.includes('q=scanner')) return jsonResponse([disabledEntry]);
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(viewerUser, 'blacklist');
+    expect(await screen.findByText('198.51.100.200/32')).toBeInTheDocument();
+    expect(screen.queryByText(/add blacklist/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText('read only').length).toBeGreaterThan(0);
+
+    await fillField(/^search/i, 'scanner');
+    await waitFor(() => expect(calls).toContain('/v1/blacklist?q=scanner'));
+    await waitFor(() => expect(screen.getByText('203.0.113.50/32')).toBeInTheDocument());
+
+    await fillField(/^source/i, 'manual');
+    await waitFor(() => expect(calls).toContain('/v1/blacklist?q=scanner&source=manual'));
+
+    await fillField(/^state/i, 'disabled');
+    await waitFor(() => expect(calls).toContain('/v1/blacklist?q=scanner&source=manual&state=disabled'));
+  });
+
   it('runs feed create, edit, sync and soft-disable workflows with admin credentials', async () => {
     const onRefresh = vi.fn(async () => undefined);
     const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
@@ -952,6 +1039,22 @@ function whitelistFixture() {
     label: 'trusted-host',
     owner: 'soc',
     priority: 100,
+    enabled: true,
+    created_at: '2026-05-28T11:00:00Z',
+    updated_at: '2026-05-28T11:00:00Z'
+  };
+}
+
+function blacklistFixture() {
+  return {
+    id: 'b1',
+    ebpf_id: 31,
+    cidr: '198.51.100.200/32',
+    score: 80,
+    action: 'drop',
+    source: 'manual',
+    rule_id: '',
+    reason: 'manual attack source',
     enabled: true,
     created_at: '2026-05-28T11:00:00Z',
     updated_at: '2026-05-28T11:00:00Z'

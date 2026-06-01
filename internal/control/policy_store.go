@@ -697,9 +697,12 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 	return entry, tx.Commit(ctx)
 }
 
-func (s *Store) ListBlacklistEntries(ctx context.Context) ([]BlacklistEntry, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at
-FROM manual_blacklist_entries ORDER BY created_at DESC`)
+func (s *Store) ListBlacklistEntries(ctx context.Context, query BlacklistEntryQuery) ([]BlacklistEntry, error) {
+	where, args := blacklistEntryWhere(query)
+	rows, err := s.pool.Query(ctx, `SELECT b.id::text, b.ebpf_id, b.ip_or_cidr::text, b.score, b.action, b.source, COALESCE(b.rule_id::text, ''), b.reason, b.expires_at, b.enabled, b.created_at, b.updated_at
+FROM manual_blacklist_entries b
+LEFT JOIN rules r ON r.id = b.rule_id
+`+where+` ORDER BY b.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -713,6 +716,68 @@ FROM manual_blacklist_entries ORDER BY created_at DESC`)
 		out = append(out, entry)
 	}
 	return out, rows.Err()
+}
+
+func parseBlacklistEntryQuery(values map[string][]string) (BlacklistEntryQuery, error) {
+	query := BlacklistEntryQuery{
+		Search: first(values, "q"),
+		Source: strings.TrimSpace(first(values, "source")),
+		State:  blacklistQueryValue(first(values, "state"), "all"),
+		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.State {
+	case "all", "enabled", "disabled":
+	default:
+		return query, fmt.Errorf("state must be all, enabled, or disabled")
+	}
+	switch query.Expiry {
+	case "all", "valid", "expired", "none":
+	default:
+		return query, fmt.Errorf("expiry must be all, valid, expired, or none")
+	}
+	return query, nil
+}
+
+func blacklistQueryValue(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
+	clauses := make([]string, 0)
+	args := make([]any, 0)
+
+	if search := strings.TrimSpace(query.Search); search != "" {
+		args = append(args, "%"+search+"%")
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(b.ip_or_cidr::text ILIKE $%d OR b.source ILIKE $%d OR b.reason ILIKE $%d OR COALESCE(b.rule_id::text, '') ILIKE $%d OR COALESCE(r.name, '') ILIKE $%d)`, idx, idx, idx, idx, idx))
+	}
+	if source := strings.TrimSpace(query.Source); source != "" {
+		args = append(args, source)
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf("LOWER(b.source) = LOWER($%d)", idx))
+	}
+	switch blacklistQueryValue(query.State, "all") {
+	case "enabled":
+		clauses = append(clauses, "b.enabled")
+	case "disabled":
+		clauses = append(clauses, "NOT b.enabled")
+	}
+	switch blacklistQueryValue(query.Expiry, "all") {
+	case "valid":
+		clauses = append(clauses, "(b.expires_at IS NULL OR b.expires_at > now())")
+	case "expired":
+		clauses = append(clauses, "b.expires_at IS NOT NULL AND b.expires_at <= now()")
+	case "none":
+		clauses = append(clauses, "b.expires_at IS NULL")
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
 func scanBlacklistEntry(row rowScanner, entry *BlacklistEntry) error {

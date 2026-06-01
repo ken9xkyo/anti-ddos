@@ -18,6 +18,7 @@ export const tabs = [
   { id: 'services', label: 'Services', section: 'Policy', icon: Router },
   { id: 'rules', label: 'Rules', section: 'Policy', icon: ListChecks },
   { id: 'whitelist', label: 'Whitelist', section: 'Policy', icon: ShieldCheck },
+  { id: 'blacklist', label: 'Blacklist', section: 'Policy', icon: Ban },
   { id: 'detection', label: 'Detection', section: 'Policy', icon: Activity },
   { id: 'reputation', label: 'Reputation', section: 'Intelligence', icon: Ban },
   { id: 'snapshots', label: 'Snapshots', section: 'Control', icon: DatabaseBackup },

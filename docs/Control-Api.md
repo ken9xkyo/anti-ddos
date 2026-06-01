@@ -275,8 +275,17 @@ Authenticated read, Operator/Admin mutation.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/blacklist` | none | `BlacklistEntry[]` | List blacklist entries |
+| GET | `/v1/blacklist` | none | `BlacklistEntry[]` | List manual blacklist entries |
 | POST | `/v1/blacklist` | `BlacklistInput` | `BlacklistEntry` | Create entry |
+| PATCH | `/v1/blacklist/{id}` | `BlacklistInput` | `BlacklistEntry` | Update entry |
+| DELETE | `/v1/blacklist/{id}` | reason via header | `BlacklistEntry` | Soft-disable entry |
+
+Optional list filters:
+
+- `q`: search CIDR, source, reason, rule UUID or rule name.
+- `source`: exact source filter, case-insensitive.
+- `state`: `all`, `enabled`, `disabled`.
+- `expiry`: `all`, `valid`, `expired`, `none`.
 
 `BlacklistInput`:
 
@@ -293,7 +302,7 @@ Authenticated read, Operator/Admin mutation.
 }
 ```
 
-No PATCH/DELETE blacklist route exists in the current server.
+Manual blacklist action must be `drop`. Create/update/disable rebuild policy snapshots. Effective snapshot generation de-duplicates exact CIDR keys; enabled manual entries take precedence over feed reputation entries for the same exact CIDR.
 
 ## 12. Feeds and reputation
 
@@ -567,7 +576,7 @@ Batch limit: max 1000 events.
 | Health | `GET /healthz`, `GET /metrics` |
 | Auth | `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me`, `POST /v1/me/password` |
 | Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, `POST /v1/users/{id}/password-reset`, `POST /v1/users/{id}/sessions/revoke` |
-| Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist` |
+| Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist`, `PATCH/DELETE /v1/blacklist/{id}` |
 | Feeds | `GET/POST /v1/feed-sources`, `GET/PATCH/DELETE /v1/feed-sources/{id}`, `POST /v1/feed-sources/{id}/sync`, `GET /v1/feed-runs`, `GET /v1/feed-conflicts` |
 | Alerts | `GET/POST /v1/alerts`, `GET /v1/alerts/{id}/deliveries`, `POST /v1/alerts/evaluate-isp-escalation`, `GET/POST /v1/telegram/config`, `POST /v1/telegram/test` |
 | Snapshots | `GET /v1/snapshots`, `GET /v1/snapshots/{version}`, `GET /v1/snapshots/diff`, `POST /v1/snapshots/build`, `POST /v1/snapshots/rollback` |

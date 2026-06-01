@@ -168,7 +168,7 @@ func (s *Store) InvestigateSecurityEvents(ctx context.Context, target string, li
 	if err != nil {
 		return nil, err
 	}
-	blacklist, err := s.ListBlacklistEntries(ctx)
+	blacklist, err := s.ListBlacklistEntries(ctx, BlacklistEntryQuery{})
 	if err != nil {
 		return nil, err
 	}

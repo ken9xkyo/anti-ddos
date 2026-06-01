@@ -182,6 +182,47 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"enabled":false`)
 
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", viewerToken, BlacklistInput{
+		Reason: "viewer should not block",
+		CIDR:   "198.51.100.201/32",
+		Source: "manual",
+		Action: "drop",
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", adminToken, BlacklistInput{
+		Reason:  "manual scanner block",
+		CIDR:    "198.51.100.200/32",
+		Source:  "manual",
+		Action:  "drop",
+		Score:   85,
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var blacklist BlacklistEntry
+	decodeTestBody(t, resp, &blacklist)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?q=scanner&source=manual&state=enabled&expiry=none", viewerToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, "198.51.100.200/32")
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+blacklist.ID, operatorToken, BlacklistInput{
+		Reason:  "raise scanner block score",
+		CIDR:    "198.51.100.200/32",
+		Source:  "manual",
+		Action:  "drop",
+		Score:   95,
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"score":95`)
+	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/blacklist/"+blacklist.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("X-Audit-Reason", "disable scanner block")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"enabled":false`)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?state=disabled", viewerToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, "198.51.100.200/32")
+
 	snapshots, err := store.ListSnapshots(ctx, false)
 	if err != nil {
 		t.Fatal(err)

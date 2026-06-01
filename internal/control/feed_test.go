@@ -198,6 +198,22 @@ func TestFeedSyncIntegration(t *testing.T) {
 	}
 	assertLatestSnapshotBlacklist(t, store, ctx, []string{"198.51.100.128/25", "203.0.113.0/24"}, []string{"198.51.100.0/25"})
 
+	manualDuplicate, err := store.CreateBlacklistEntry(ctx, adminActor, BlacklistInput{
+		Reason: "manual override duplicate feed cidr",
+		CIDR:   "203.0.113.0/24",
+		Source: "manual",
+		Action: "drop",
+		Score:  99,
+	}, "manual override duplicate feed cidr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLatestSnapshotBlacklistEntry(t, store, ctx, "203.0.113.0/24", manualDuplicate.EBPFID, 99, 1)
+	if _, err := store.DisableBlacklistEntry(ctx, adminActor, manualDuplicate.ID, "return duplicate to feed"); err != nil {
+		t.Fatal(err)
+	}
+	assertLatestSnapshotBlacklistEntry(t, store, ctx, "203.0.113.0/24", 0, 80, 1)
+
 	beforeVersion, err := store.LatestPolicyVersion(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -225,17 +241,7 @@ func TestFeedSyncIntegration(t *testing.T) {
 
 func assertLatestSnapshotBlacklist(t *testing.T, store *Store, ctx context.Context, want, absent []string) {
 	t.Helper()
-	snapshots, err := store.ListSnapshots(ctx, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshots) == 0 {
-		t.Fatal("no snapshots found")
-	}
-	var snapshot agent.PolicySnapshot
-	if err := json.Unmarshal(snapshots[0].Snapshot, &snapshot); err != nil {
-		t.Fatal(err)
-	}
+	snapshot := latestPolicySnapshot(t, store, ctx)
 	seen := map[string]bool{}
 	for _, entry := range snapshot.BlacklistV4 {
 		seen[entry.CIDR] = true
@@ -250,6 +256,47 @@ func assertLatestSnapshotBlacklist(t *testing.T, store *Store, ctx context.Conte
 			t.Fatalf("snapshot blacklist should suppress %s: %#v", cidr, snapshot.BlacklistV4)
 		}
 	}
+}
+
+func assertLatestSnapshotBlacklistEntry(t *testing.T, store *Store, ctx context.Context, cidr string, wantEntryID, wantScore uint32, wantCount int) {
+	t.Helper()
+	snapshot := latestPolicySnapshot(t, store, ctx)
+	count := 0
+	var matched agent.PolicyCIDREntry
+	for _, entry := range snapshot.BlacklistV4 {
+		if entry.CIDR == cidr {
+			count++
+			matched = entry
+		}
+	}
+	if count != wantCount {
+		t.Fatalf("snapshot blacklist count for %s = %d, want %d: %#v", cidr, count, wantCount, snapshot.BlacklistV4)
+	}
+	if wantCount == 0 {
+		return
+	}
+	if wantEntryID != 0 && matched.EntryID != wantEntryID {
+		t.Fatalf("snapshot blacklist %s entry id = %d, want %d: %#v", cidr, matched.EntryID, wantEntryID, matched)
+	}
+	if matched.Score != wantScore {
+		t.Fatalf("snapshot blacklist %s score = %d, want %d: %#v", cidr, matched.Score, wantScore, matched)
+	}
+}
+
+func latestPolicySnapshot(t *testing.T, store *Store, ctx context.Context) agent.PolicySnapshot {
+	t.Helper()
+	snapshots, err := store.ListSnapshots(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) == 0 {
+		t.Fatal("no snapshots found")
+	}
+	var snapshot agent.PolicySnapshot
+	if err := json.Unmarshal(snapshots[0].Snapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 func mustPrefix(t *testing.T, value string) netip.Prefix {

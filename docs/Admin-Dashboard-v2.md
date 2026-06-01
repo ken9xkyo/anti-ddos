@@ -178,7 +178,22 @@ Actions:
 - Scope `global` khong can service; scope `service` can service_id.
 - Disabled entry khong vao active snapshot tiep theo nhung van giu history.
 
-### 6.6 Detection
+### 6.6 Blacklist
+
+Hien thi:
+
+- MUI X Data Grid cho CIDR, source, score, rule id, expiry, enabled va reason.
+- Search/filter API-backed theo CIDR/source/reason/rule, source, enabled state va expiry state.
+
+Actions:
+
+- Operator/Admin create manual blacklist entry.
+- Operator/Admin edit manual blacklist entry.
+- Operator/Admin soft-disable bang `DELETE /v1/blacklist/{id}`.
+- Action luon la `drop`; non-drop action bi backend reject.
+- Disabled/expired manual blacklist khong vao active snapshot tiep theo nhung van giu history.
+
+### 6.7 Detection
 
 Muc tieu: observe posture, khong pha tron voi CRUD workflow.
 
@@ -186,9 +201,9 @@ Hien thi:
 
 - Anomalies: service, score, confidence, signals, recommendation, proposed TTL, source, status.
 - Baselines: service, interface, protocol/port, window, expected pps/bps/cps, confidence, approval.
-- Active rules: read-only posture. CRUD nam o tab Rules.
+- Active rules: read-only posture. CRUD nam o tab Rules; manual blacklist CRUD nam o tab Blacklist.
 
-### 6.7 Reputation
+### 6.8 Reputation
 
 Hien thi:
 
@@ -203,7 +218,7 @@ Actions:
 - Soft-disable bang `DELETE /v1/feed-sources/{id}`.
 - Sync bang `POST /v1/feed-sources/{id}/sync`.
 
-### 6.8 Snapshots
+### 6.9 Snapshots
 
 Hien thi:
 
@@ -217,7 +232,7 @@ Actions:
 - Rollback goi `/v1/snapshots/rollback` va tao snapshot moi tu selected version.
 - Raw snapshot khong bi keo vao polling overview mac dinh.
 
-### 6.9 Access
+### 6.10 Access
 
 Hien thi:
 
@@ -297,7 +312,7 @@ Bat buoc:
 
 - Reason required cho create/update/delete/rollback/reset/revoke.
 - Audit before/after cho policy va access mutations.
-- Audit entity type phai ro: `user`, `rule`, `whitelist`, `feed_source`, `snapshot`.
+- Audit entity type phai ro: `user`, `rule`, `whitelist`, `manual_blacklist_entry`, `feed_source`, `snapshot`.
 - Raw password, temporary password, bot token, credential value khong vao audit.
 - Feed `credential_ref` chi la reference, khong phai secret plaintext.
 
@@ -305,6 +320,7 @@ Snapshot rebuild:
 
 - Rule create/update/disable rebuild snapshot.
 - Whitelist create/update/disable rebuild snapshot.
+- Blacklist create/update/disable rebuild snapshot.
 - Feed enabled/disabled state change rebuild snapshot khi anh huong active blacklist.
 - Service create/update/disable rebuild snapshot theo existing flow.
 
@@ -339,6 +355,7 @@ Coverage can giu:
 - Operator/Admin visible actions.
 - Rule CRUD va soft-disable.
 - Whitelist CRUD va soft-disable.
+- Blacklist CRUD va soft-disable.
 - Feed CRUD/sync/soft-disable, Admin-only credential_ref.
 - User create/update/password reset/session revoke.
 - Snapshot diff va rollback confirmation.
@@ -353,7 +370,7 @@ Frontend:
 - Shell/theme: `web/dashboard/src/App.tsx`, `web/dashboard/src/DashboardShell.tsx`, `web/dashboard/src/muiTheme.ts`, `web/dashboard/src/styles.css`.
 - Shared admin UI: `web/dashboard/src/adminUi.tsx`.
 - Client/types/navigation: `web/dashboard/src/api.ts`, `web/dashboard/src/types.ts`, `web/dashboard/src/navigation.ts`.
-- Views: `AccessView`, `RulesAdminView`, `WhitelistAdminView`, `ReputationView`, `SnapshotsView`, `OverviewView`.
+- Views: `AccessView`, `RulesAdminView`, `WhitelistAdminView`, `BlacklistAdminView`, `ReputationView`, `SnapshotsView`, `OverviewView`.
 - Tests: `web/dashboard/src/App.test.tsx`, `web/dashboard/src/api.test.ts`.
 
 Backend:
@@ -370,7 +387,6 @@ Backend:
 - Dedicated self-service change-password/profile UI trong topbar.
 - Audit browser/timeline day du.
 - Raw snapshot object browser va side-by-side JSON diff nang cao.
-- Blacklist manual CRUD neu can ngoai feed/rule flow.
 - SSO/MFA/OIDC va user recovery flow.
 - Grafana deep links theo service/rule/agent.
 - Saved filters, URL state, export CSV cho grids.

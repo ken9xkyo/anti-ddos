@@ -379,6 +379,93 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 	return entry, tx.Commit(ctx)
 }
 
+func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id string, input BlacklistInput, reason string) (BlacklistEntry, error) {
+	if err := requireOperator(actor); err != nil {
+		return BlacklistEntry{}, err
+	}
+	if err := validateBlacklistInput(input); err != nil {
+		return BlacklistEntry{}, err
+	}
+	reason = mutationReason(reason, input.Reason)
+	if reason == "" {
+		return BlacklistEntry{}, errors.New("reason is required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return BlacklistEntry{}, err
+	}
+	defer tx.Rollback(ctx)
+	before, err := getBlacklistEntry(ctx, tx, id)
+	if err != nil {
+		return BlacklistEntry{}, err
+	}
+	var ruleID any
+	if strings.TrimSpace(input.RuleID) != "" {
+		ruleID = strings.TrimSpace(input.RuleID)
+	}
+	var expires any
+	if !input.ExpiresAt.IsZero() {
+		expires = input.ExpiresAt
+	}
+	var entry BlacklistEntry
+	err = scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET
+    ip_or_cidr=$2, score=$3, action=$4, source=$5, rule_id=$6, reason=$7,
+    expires_at=$8, enabled=$9, updated_at=now()
+WHERE id=$1
+RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`,
+		id,
+		input.CIDR,
+		input.Score,
+		normalizeBlacklistAction(input.Action),
+		input.Source,
+		ruleID,
+		reason,
+		expires,
+		boolDefault(input.Enabled, before.Enabled),
+	), &entry)
+	if err != nil {
+		return BlacklistEntry{}, err
+	}
+	if err := insertAudit(ctx, tx, actor, "update_blacklist", "manual_blacklist_entry", id, before, entry, reason, ""); err != nil {
+		return BlacklistEntry{}, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		return BlacklistEntry{}, err
+	}
+	return entry, tx.Commit(ctx)
+}
+
+func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, reason string) (BlacklistEntry, error) {
+	if err := requireOperator(actor); err != nil {
+		return BlacklistEntry{}, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return BlacklistEntry{}, errors.New("reason is required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return BlacklistEntry{}, err
+	}
+	defer tx.Rollback(ctx)
+	before, err := getBlacklistEntry(ctx, tx, id)
+	if err != nil {
+		return BlacklistEntry{}, err
+	}
+	var entry BlacklistEntry
+	if err := scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET enabled=false, reason=$2, updated_at=now()
+WHERE id=$1
+RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
+		return BlacklistEntry{}, err
+	}
+	if err := insertAudit(ctx, tx, actor, "disable_blacklist", "manual_blacklist_entry", id, before, entry, strings.TrimSpace(reason), ""); err != nil {
+		return BlacklistEntry{}, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		return BlacklistEntry{}, err
+	}
+	return entry, tx.Commit(ctx)
+}
+
 func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason string) (FeedSource, error) {
 	if err := requireOperator(actor); err != nil {
 		return FeedSource{}, err
@@ -451,8 +538,15 @@ FROM rules WHERE id=$1`, id), &rule)
 func getWhitelistEntry(ctx context.Context, q dbQuerier, id string) (WhitelistEntry, error) {
 	var entry WhitelistEntry
 	err := scanWhitelistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-          expires_at, enabled, created_at, updated_at
+	          expires_at, enabled, created_at, updated_at
 FROM whitelist_entries WHERE id=$1`, id), &entry)
+	return entry, err
+}
+
+func getBlacklistEntry(ctx context.Context, q dbQuerier, id string) (BlacklistEntry, error) {
+	var entry BlacklistEntry
+	err := scanBlacklistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at
+FROM manual_blacklist_entries WHERE id=$1`, id), &entry)
 	return entry, err
 }
 

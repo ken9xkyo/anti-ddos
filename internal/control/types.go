@@ -253,6 +253,13 @@ type BlacklistEntry struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type BlacklistEntryQuery struct {
+	Search string
+	Source string
+	State  string
+	Expiry string
+}
+
 type FeedSourceInput struct {
 	Reason                string          `json:"reason"`
 	Name                  string          `json:"name"`

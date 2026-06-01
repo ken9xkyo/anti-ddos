@@ -67,6 +67,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/rules", s.handleRules)
 	s.mux.HandleFunc("/v1/rules/", s.handleRuleByID)
 	s.mux.HandleFunc("/v1/blacklist", s.handleBlacklist)
+	s.mux.HandleFunc("/v1/blacklist/", s.handleBlacklistByID)
 	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
 	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
 	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
@@ -448,7 +449,12 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		entries, err := s.store.ListBlacklistEntries(r.Context())
+		query, err := parseBlacklistEntryQuery(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		entries, err := s.store.ListBlacklistEntries(r.Context(), query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req BlacklistInput
@@ -456,6 +462,32 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		entry, err := s.store.CreateBlacklistEntry(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleBlacklistByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/blacklist/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, errors.New("blacklist entry not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req BlacklistInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		entry, err := s.store.UpdateBlacklistEntry(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	case http.MethodDelete:
+		entry, err := s.store.DisableBlacklistEntry(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
 		writeResult(w, entry, err)
 	default:
 		methodNotAllowed(w)
@@ -887,6 +919,8 @@ func routeName(r *http.Request) string {
 		return "/v1/rules/{id}"
 	case path == "/v1/blacklist":
 		return "/v1/blacklist"
+	case strings.HasPrefix(path, "/v1/blacklist/"):
+		return "/v1/blacklist/{id}"
 	case path == "/v1/feed-sources":
 		return "/v1/feed-sources"
 	case strings.HasPrefix(path, "/v1/feed-sources/"):

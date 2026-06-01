@@ -225,6 +225,37 @@ describe('ApiClient', () => {
     ]);
   });
 
+  it('loads blacklist with encoded filters and omitted defaults', async () => {
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        path: input.toString(),
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      return jsonResponse([]);
+    }));
+
+    const client = new ApiClient();
+    client.setToken('operator-token');
+    await client.blacklist();
+    await client.blacklist({ q: ' scanner ', state: 'all', expiry: 'all' });
+    await client.blacklist({ q: '198.51.100.0/24', source: 'manual entry', state: 'enabled', expiry: 'valid' });
+    await client.createBlacklist({ reason: 'block scanner', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 90, enabled: true });
+    await client.updateBlacklist('b1', { reason: 'extend block', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 95, enabled: true });
+    await client.disableBlacklist('b1', 'attack stopped');
+
+    expect(calls).toEqual([
+      { path: '/v1/blacklist', method: undefined, body: undefined, reason: null },
+      { path: '/v1/blacklist?q=scanner', method: undefined, body: undefined, reason: null },
+      { path: '/v1/blacklist?q=198.51.100.0%2F24&source=manual+entry&state=enabled&expiry=valid', method: undefined, body: undefined, reason: null },
+      { path: '/v1/blacklist', method: 'POST', body: { reason: 'block scanner', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 90, enabled: true }, reason: null },
+      { path: '/v1/blacklist/b1', method: 'PATCH', body: { reason: 'extend block', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 95, enabled: true }, reason: null },
+      { path: '/v1/blacklist/b1', method: 'DELETE', body: undefined, reason: 'attack stopped' }
+    ]);
+  });
+
   it('configures Telegram with write-only bot token', async () => {
     const calls: Array<{ path: string; method?: string; body: unknown; auth: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

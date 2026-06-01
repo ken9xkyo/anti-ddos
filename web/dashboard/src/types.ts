@@ -214,6 +214,39 @@ export interface WhitelistFilters {
   expiry?: 'all' | 'valid' | 'expired' | 'none';
 }
 
+export interface BlacklistInput {
+  reason: string;
+  cidr: string;
+  score?: number;
+  action: string;
+  source: string;
+  rule_id?: string;
+  expires_at?: string;
+  enabled?: boolean;
+}
+
+export interface BlacklistEntry {
+  id: string;
+  ebpf_id: number;
+  cidr: string;
+  score?: number;
+  action: string;
+  source: string;
+  rule_id?: string;
+  reason: string;
+  expires_at?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BlacklistFilters {
+  q?: string;
+  source?: string;
+  state?: 'all' | 'enabled' | 'disabled';
+  expiry?: 'all' | 'valid' | 'expired' | 'none';
+}
+
 export interface BaselineProfile {
   id: string;
   service_id: string;

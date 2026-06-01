@@ -283,7 +283,7 @@ Implementation notes:
 | Map | Default max entries | Capacity note |
 |---|---:|---|
 | `whitelist_lpm` | 65,536 | Manual whitelist plus emergency allow entries |
-| `blacklist_lpm` | 1,000,000 | Aggregated feed entries; reject snapshot above capacity |
+| `blacklist_lpm` | 1,000,000 | Manual blacklist plus effective feed entries; reject snapshot above capacity |
 | `service_allowlist` | 16,384 | Protected IP/protocol/port tuples |
 | `tx_devmap` | 128 | Output interfaces used by service policies |
 | `rate_state` | 2,000,000 | LRU eviction prevents unbounded attack state |
@@ -620,6 +620,7 @@ erDiagram
 | `policy_snapshots` | Immutable effective policies | `version`, `checksum`, `snapshot`, `rollback_from`, `created_by` | `created_at`, `rollback_from` |
 | `policy_apply_status` | Agent apply result | `agent_id`, `policy_version`, `status`, `error`, `map_stats` | unique `agent_id,policy_version` |
 | `whitelist_entries` | Manual allow CIDRs | `ip_or_cidr`, `scope`, `service_id`, `label`, `reason`, `owner`, `priority`, `expires_at`, `enabled` | GiST `ip_or_cidr`, `scope`, `service_id`, `expires_at` |
+| `manual_blacklist_entries` | Manual block CIDRs | `ip_or_cidr`, `score`, `action`, `source`, `rule_id`, `reason`, `expires_at`, `enabled` | GiST `ip_or_cidr` |
 | `feed_sources` | Feed configuration | `name`, `type`, `url`, `enabled`, `required_for_production`, `interval_seconds`, `license_note`, `quota_metadata`, `secret_ref` | unique `name`, `enabled` |
 | `feed_runs` | Feed execution log | `source_id`, `started_at`, `finished_at`, `status`, `items_fetched`, `error` | `source_id,started_at` |
 | `reputation_entries` | Effective blacklist/reputation | `ip_or_cidr`, `source`, `score`, `status`, `first_seen_at`, `last_seen_at`, `expires_at` | GiST `ip_or_cidr`, `source`, `status` |
@@ -862,6 +863,8 @@ function sync_feed(source):
     aggregated = aggregate sibling CIDRs only when safe
     conflicts = compare aggregated entries with whitelist
     effective = aggregated minus entries suppressed by whitelist precedence
+    effective_blacklist = manual enabled entries plus effective feed entries
+    exact CIDR duplicates prefer manual entries, then higher score, then lower ebpf_id
 
     store reputation_entries and feed_conflicts
     build new policy snapshot if effective set changed

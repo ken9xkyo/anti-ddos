@@ -1,8 +1,8 @@
 # Project State
 
-Last updated: 2026-05-28
+Last updated: 2026-06-01
 
-Current work: Phase 08 - Threat Feed Sync completed; Phase 09 - Telegram ISP Runbook is next.
+Current work: Manual Blacklist CRUD completed as an Admin Dashboard/Control API enhancement after Phase 08; Phase 09 - Telegram ISP Runbook remains next.
 
 ## Decisions
 
@@ -35,6 +35,8 @@ Current work: Phase 08 - Threat Feed Sync completed; Phase 09 - Telegram ISP Run
 - Phase 08 Team Cymru HTTP feeds are IPv4-only and enforce a minimum 4-hour interval; IPv6 remains rejected because active policy supports IPv4 only.
 - Phase 08 feed failures record `feed_runs`/source status and keep the last valid reputation entries and policy snapshot unchanged. Telegram alert delivery for prolonged feed failures remains Phase 09.
 - Phase 08 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and dashboard unit/build gates only.
+- Manual Blacklist CRUD reuses `manual_blacklist_entries` and `PolicySnapshot.BlacklistV4`; no database migration, eBPF ABI change, or XDP C change is required.
+- Effective blacklist snapshot de-duplicates exact CIDR keys. Enabled manual blacklist entries take precedence over feed reputation for the same exact CIDR; same-source ties use score then `ebpf_id`.
 
 ## Phase Progress
 
@@ -49,6 +51,7 @@ Current work: Phase 08 - Threat Feed Sync completed; Phase 09 - Telegram ISP Run
 | 06 - Observability Dashboard | Done | `make phase6-verify` PASS on 2026-05-28; report `reports/phase-06-observability-dashboard.md`; Control/Agent metrics, sampled event ingestion/query, Prometheus-backed dashboard APIs, React/Vite dashboard, Grafana JSON and scrape config were verified. |
 | 07 - Rate Limit Baseline Auto-Enforce | Done | `make phase7-verify` PASS on 2026-05-28; report `reports/phase-07-rate-limit-baseline-auto-enforce.md`; XDP token buckets, rule selection, SYN CPS counters, baseline/anomaly APIs, conservative auto-enforce, TTL expiry, rollback, VETH lab and dashboard visibility were verified. |
 | 08 - Threat Feed Sync | Done | `make phase8-verify` PASS on 2026-05-28; report `reports/phase-08-threat-feed-sync.md`; feed source schema/API, parser pipeline, scheduler, safe aggregation, whitelist conflict suppression, snapshot inclusion, last-valid retention, metrics and dashboard visibility were verified. |
+| Manual Blacklist CRUD | Done | `GET/POST/PATCH/DELETE /v1/blacklist`, dashboard Blacklist tab, exact-CIDR snapshot de-dupe and docs/spec were added on 2026-06-01. |
 
 ## Current Host Facts
 
