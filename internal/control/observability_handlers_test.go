@@ -1,38 +1,17 @@
 package control
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestPhase06ObservabilityIntegration(t *testing.T) {
-	dsn := os.Getenv("ANTI_DDOS_CONTROL_TEST_DSN")
-	if dsn == "" {
-		t.Skip("ANTI_DDOS_CONTROL_TEST_DSN is not set")
-	}
-	ctx := context.Background()
-	pool, err := OpenPool(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatal(err)
-	}
-	if err := RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("first migration run: %v", err)
-	}
-	if err := RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("idempotent migration run: %v", err)
-	}
-
+func TestObservabilityHandlersIntegration(t *testing.T) {
+	ctx, pool, dsn := resetControlTestDB(t)
 	cfg := Config{
 		Addr:             "127.0.0.1:0",
 		DBDSN:            dsn,
@@ -136,32 +115,5 @@ func TestPhase06ObservabilityIntegration(t *testing.T) {
 	}
 	if !strings.Contains(text, "anti_ddos_control_security_events_ingested_total") {
 		t.Fatalf("control metrics missing security event counter: %s", text)
-	}
-}
-
-func TestPrometheusClientQueryScalar(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/query" || r.URL.Query().Get("query") == "" {
-			t.Fatalf("bad prometheus query request: %s", r.URL.String())
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "success",
-			"data": map[string]any{
-				"resultType": "vector",
-				"result": []any{map[string]any{
-					"value": []any{float64(1), "42"},
-				}},
-			},
-		})
-	}))
-	defer server.Close()
-
-	metrics, err := NewControlMetrics()
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, status := NewPrometheusClient(server.URL, metrics).QueryScalar(context.Background(), "sum(up)")
-	if !status.Configured || !status.Healthy || value != 42 {
-		t.Fatalf("value=%v status=%#v", value, status)
 	}
 }

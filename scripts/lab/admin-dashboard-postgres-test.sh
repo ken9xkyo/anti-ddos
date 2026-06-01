@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TEST_REGEX='Test(Phase05Integration|Phase06ObservabilityIntegration|Phase07BaselineAnomalyAutoEnforceIntegration|Phase08ThreatFeedSyncIntegration|Phase09TelegramAlertingIntegration|AdminDashboardCoverageIntegration)$'
+TEST_REGEX='Test(ControlCoreIntegration|ObservabilityHandlersIntegration|AnomalyAutoEnforceIntegration|FeedSyncIntegration|AlertingIntegration|AdminDashboardCoverageIntegration)$'
 
 if [[ -n "${ANTI_DDOS_CONTROL_TEST_DSN:-}" ]]; then
   go test ./internal/control -run "${TEST_REGEX}" -count=1

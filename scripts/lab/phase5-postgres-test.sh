@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ -n "${ANTI_DDOS_CONTROL_TEST_DSN:-}" ]]; then
-  go test ./internal/control -run TestPhase05Integration -count=1
+  go test ./internal/control -run TestControlCoreIntegration -count=1
   exit 0
 fi
 
@@ -46,4 +46,4 @@ if [[ -z "${port}" ]]; then
 fi
 
 ANTI_DDOS_CONTROL_TEST_DSN="postgres://postgres:${password}@127.0.0.1:${port}/${db}?sslmode=disable" \
-  go test ./internal/control -run TestPhase05Integration -count=1
+  go test ./internal/control -run TestControlCoreIntegration -count=1

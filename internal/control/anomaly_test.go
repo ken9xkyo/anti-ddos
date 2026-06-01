@@ -1,12 +1,10 @@
 package control
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,27 +12,8 @@ import (
 	"time"
 )
 
-func TestPhase07BaselineAnomalyAutoEnforceIntegration(t *testing.T) {
-	dsn := os.Getenv("ANTI_DDOS_CONTROL_TEST_DSN")
-	if dsn == "" {
-		t.Skip("ANTI_DDOS_CONTROL_TEST_DSN is not set")
-	}
-	ctx := context.Background()
-	pool, err := OpenPool(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Fatal(err)
-	}
-	if err := RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("first migration run: %v", err)
-	}
-	if err := RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("idempotent migration run: %v", err)
-	}
-
+func TestAnomalyAutoEnforceIntegration(t *testing.T) {
+	ctx, pool, dsn := resetControlTestDB(t)
 	var queryMu sync.Mutex
 	var queries []string
 	resetQueries := func() {
