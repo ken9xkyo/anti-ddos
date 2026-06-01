@@ -272,7 +272,7 @@ func TestAlertingIntegration(t *testing.T) {
 	defer feedServer.Close()
 	source, err := store.CreateFeedSource(ctx, adminActor, FeedSourceInput{
 		Reason:          "create failing feed",
-		Name:            "phase9-failing-feed",
+		Name:            "alerting-failing-feed",
 		Type:            "internal_json",
 		URL:             feedServer.URL,
 		Enabled:         boolPtr(true),

@@ -150,7 +150,7 @@ Phase 0 documents the expected source layout only. These directories should be c
 | `web/dashboard/` | Phase 06 | Dashboard frontend. |
 | `deploy/` | Phase 02 onward | systemd, Prometheus, Grafana, and lab deployment configs. |
 | `configs/examples/` | Phase 02 onward | Non-secret example configs and env templates. |
-| `scripts/lab/` | Phase 01 onward | Lab-only build, verifier, namespace, and benchmark helpers. |
+| `scripts/lab/` | Domain lab tests | Lab-only build, verifier, namespace, and benchmark helpers. |
 
 ## Readiness Gaps And Risks
 
@@ -181,4 +181,3 @@ Phase 0 documents the expected source layout only. These directories should be c
 | P00-T09 benchmark matrix | Done as input | See `docs/lab-readiness/benchmark-matrix.md`; no benchmark executed yet. |
 | P00-T10 secret handling baseline | Done | Secret refs and redaction baseline documented. |
 | P00-T11 Definition of Done for MVP | Partial | Phase plans define DoD; Phase 10 must finalize benchmark/UAT/runbook evidence. |
-

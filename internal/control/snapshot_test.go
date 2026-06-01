@@ -111,3 +111,38 @@ func TestMakePolicyServiceRequiresCompletePreResolvedMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectionDiffClassifiesSnapshotItems(t *testing.T) {
+	type item struct {
+		ID    string `json:"id"`
+		Value string `json:"value"`
+	}
+
+	diff := collectionDiff(
+		[]item{{ID: "1", Value: "same"}, {ID: "2", Value: "removed"}, {ID: "3", Value: "before"}},
+		[]item{{ID: "1", Value: "same"}, {ID: "3", Value: "after"}, {ID: "4", Value: "added"}},
+		func(value item) string { return value.ID },
+	)
+
+	if diff.Unchanged != 1 || len(diff.Added) != 1 || len(diff.Removed) != 1 || len(diff.Changed) != 1 {
+		t.Fatalf("unexpected diff: %#v", diff)
+	}
+	if diff.Added[0].Key != "4" || diff.Removed[0].Key != "2" || diff.Changed[0].Key != "3" {
+		t.Fatalf("unexpected diff keys: %#v", diff)
+	}
+	if !strings.Contains(string(diff.Changed[0].Before), "before") || !strings.Contains(string(diff.Changed[0].After), "after") {
+		t.Fatalf("changed values not marshaled: %#v", diff.Changed[0])
+	}
+}
+
+func TestSnapshotJSONHelpers(t *testing.T) {
+	if !jsonEqual(map[string]int{"a": 1}, map[string]int{"a": 1}) {
+		t.Fatal("jsonEqual should match equivalent values")
+	}
+	if jsonEqual(map[string]int{"a": 1}, map[string]int{"a": 2}) {
+		t.Fatal("jsonEqual should detect different values")
+	}
+	if got := string(marshalSnapshotValue(make(chan int))); got != "{}" {
+		t.Fatalf("marshalSnapshotValue() = %s, want {}", got)
+	}
+}

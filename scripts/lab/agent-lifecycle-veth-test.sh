@@ -3,8 +3,8 @@ set -euo pipefail
 
 AGENT_BIN="${AGENT_BIN:-build/agent/anti-ddos-agent}"
 BPF_OBJ="${BPF_OBJ:-build/bpf/xdp_data_plane.bpf.o}"
-WORK_DIR="${WORK_DIR:-build/phase2-veth}"
-RUN_ID="p2$$"
+WORK_DIR="${WORK_DIR:-build/agent-lifecycle-veth}"
+RUN_ID="al$$"
 NS="ns${RUN_ID}"
 HOST_IF="h${RUN_ID}"
 PEER_IF="p${RUN_ID}"
@@ -85,7 +85,7 @@ require_cmd ss
 require_cmd curl
 
 if [[ "$(id -u)" != "0" ]]; then
-	echo "phase2-veth-test must run as root for netns and XDP attach" >&2
+	echo "agent-lifecycle-veth-test must run as root for netns and XDP attach" >&2
 	exit 1
 fi
 if [[ ! -x "${AGENT_BIN}" ]]; then
@@ -136,4 +136,4 @@ curl -fsS "http://127.0.0.1:${PORT}/metrics" > "${METRICS_PATH}"
 grep -q 'anti_ddos_agent_up 1' "${METRICS_PATH}"
 stop_agent
 
-echo "PASS phase2 veth lifecycle"
+echo "PASS agent lifecycle veth"

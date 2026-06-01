@@ -33,11 +33,13 @@ AGENT_BUILD_DIR := $(BUILD_DIR)/agent
 
 VMLINUX := $(BPF_BUILD_DIR)/vmlinux.h
 BPF_OBJ := $(BPF_BUILD_DIR)/xdp_data_plane.bpf.o
+BPF_PASS_OBJ := $(BPF_BUILD_DIR)/xdp_pass.bpf.o
 BPF_TEST := $(TEST_BUILD_DIR)/xdp_fixture_test
 BPF_TEST_SRC := $(firstword $(wildcard tests/*/xdp_fixture_test.c))
 AGENT_BIN := $(AGENT_BUILD_DIR)/anti-ddos-agent
 CONTROL_API_BIN := $(BUILD_DIR)/control-api
 CONTROL_ADMIN_BIN := $(BUILD_DIR)/control-admin
+POLICYGEN_BIN := $(BUILD_DIR)/policygen
 SERVICES_UI_E2E := $(firstword $(wildcard scripts/e2e/*services_forwarding.py))
 
 BPF_CFLAGS := -g -O2 -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
@@ -50,8 +52,8 @@ COMPOSE_BUILD_SERVICES := control-api admin-dashboard
 COMPOSE_LOG_SERVICES := postgres control-api prometheus grafana admin-dashboard
 
 .PHONY: help usage
-.PHONY: bpf-build bpf-test agent-build agent-start agent-stop agent-remove go-build ui-build build
-.PHONY: go-test go-vet go-race ui-test lint integration-test admin-dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e test test-all
+.PHONY: bpf-build bpf-test policygen-build agent-build agent-start agent-stop agent-remove go-build ui-build build
+.PHONY: go-test go-vet go-race ui-test lint integration-test control-postgres-test control-core-postgres-test observability-postgres-test anomaly-auto-enforce-postgres-test threat-feed-postgres-test alerting-postgres-test dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e agent-lifecycle-veth-test devmap-forwarding-veth-test test test-all
 .PHONY: env-init compose-config compose-build dev-up dev-down dev-reset dev-ps dev-logs dev-health admin-bootstrap
 .PHONY: deploy deploy-down deploy-logs clean
 
@@ -88,7 +90,7 @@ help:
 	@printf '  make bpf-build                    Build/update build/bpf/xdp_data_plane.bpf.o\n'
 	@printf '  make bpf-test                     Run XDP fixture test against the BPF object\n'
 	@printf '  make agent-build                  Build build/agent/anti-ddos-agent for host execution\n'
-	@printf '  make go-build                     Build control-api, control-admin and host Agent\n'
+	@printf '  make go-build                     Build control-api, control-admin, policygen and host Agent\n'
 	@printf '  make ui-build                     Build Admin Dashboard assets\n'
 	@printf '  make compose-build                Build control-api and admin-dashboard images\n'
 	@printf '  make build                        Build BPF object, Go binaries and UI assets\n\n'
@@ -102,7 +104,15 @@ help:
 	@printf '  make go-vet                       Run go vet ./...\n'
 	@printf '  make ui-test                      Run dashboard unit tests\n'
 	@printf '  make lint                         Run go vet and optional golangci-lint\n'
-	@printf '  make integration-test             Run PostgreSQL admin dashboard integration test\n'
+	@printf '  make integration-test             Run all Control Plane PostgreSQL integration tests\n'
+	@printf '  make control-core-postgres-test   Run Control Core PostgreSQL integration test\n'
+	@printf '  make observability-postgres-test  Run Observability PostgreSQL integration test\n'
+	@printf '  make anomaly-auto-enforce-postgres-test Run anomaly auto-enforce PostgreSQL integration test\n'
+	@printf '  make threat-feed-postgres-test    Run Threat Feed PostgreSQL integration test\n'
+	@printf '  make alerting-postgres-test       Run Alerting PostgreSQL integration test\n'
+	@printf '  make dashboard-postgres-test      Run Dashboard API PostgreSQL integration test\n'
+	@printf '  make agent-lifecycle-veth-test    Run Agent lifecycle VETH/XDP lab test\n'
+	@printf '  make devmap-forwarding-veth-test  Run DEVMAP forwarding VETH/XDP lab test\n'
 	@printf '  make services-ui-e2e              Run protected services dashboard E2E test\n'
 	@printf '  make admin-dashboard-test         Run dashboard backend/UI verification bundle\n\n'
 	@printf 'Dev and deploy targets:\n'
@@ -149,6 +159,10 @@ bpf-build: $(BPF_OBJ)
 
 bpf-test: $(BPF_OBJ) $(BPF_TEST)
 	$(BPF_TEST) $(BPF_OBJ)
+
+policygen-build:
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build -o $(POLICYGEN_BIN) ./cmd/policygen
 
 agent-build: $(BPF_OBJ)
 	@mkdir -p $(AGENT_BUILD_DIR)
@@ -307,7 +321,7 @@ agent-remove: agent-stop
 		echo "BPF pin dir does not exist: $$pin_dir"; \
 	fi
 
-go-build: agent-build
+go-build: agent-build policygen-build
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(CONTROL_API_BIN) ./cmd/control-api
 	$(GO) build -o $(CONTROL_ADMIN_BIN) ./cmd/control-admin
@@ -336,14 +350,38 @@ lint: go-vet
 		echo "golangci-lint not found; skipping optional lint gate"; \
 	fi
 
-integration-test:
-	scripts/lab/admin-dashboard-postgres-test.sh
+integration-test: control-postgres-test
 
-admin-dashboard-postgres-test: integration-test
+control-postgres-test:
+	scripts/lab/control-postgres-test.sh
+
+control-core-postgres-test:
+	scripts/lab/control-core-postgres-test.sh
+
+observability-postgres-test:
+	scripts/lab/observability-postgres-test.sh
+
+anomaly-auto-enforce-postgres-test:
+	scripts/lab/anomaly-auto-enforce-postgres-test.sh
+
+threat-feed-postgres-test:
+	scripts/lab/threat-feed-postgres-test.sh
+
+alerting-postgres-test:
+	scripts/lab/alerting-postgres-test.sh
+
+dashboard-postgres-test:
+	scripts/lab/dashboard-postgres-test.sh
 
 admin-dashboard-ui-test: ui-test ui-build
 
 admin-dashboard-test: lint go-race integration-test ui-test ui-build
+
+agent-lifecycle-veth-test: agent-build
+	scripts/lab/agent-lifecycle-veth-test.sh
+
+devmap-forwarding-veth-test: agent-build policygen-build $(BPF_PASS_OBJ)
+	scripts/lab/devmap-forwarding-veth-test.sh
 
 services-ui-e2e:
 	@if [ -z "$(SERVICES_UI_E2E)" ]; then \
@@ -436,6 +474,10 @@ $(VMLINUX):
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 $(BPF_OBJ): bpf/xdp_data_plane.bpf.c include/anti_ddos/bpf_contract.h $(VMLINUX)
+	@mkdir -p $(BPF_BUILD_DIR)
+	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
+
+$(BPF_PASS_OBJ): bpf/xdp_pass.bpf.c $(VMLINUX)
 	@mkdir -p $(BPF_BUILD_DIR)
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 

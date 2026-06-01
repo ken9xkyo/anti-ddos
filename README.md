@@ -83,6 +83,9 @@ make test-all
 ```
 
 Mot so integration test PostgreSQL se tu dung PostgreSQL container rieng khi khong co `ANTI_DDOS_CONTROL_TEST_DSN`.
+Co the chay rieng theo domain bang cac target `control-core-postgres-test`, `observability-postgres-test`,
+`anomaly-auto-enforce-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` va
+`dashboard-postgres-test`.
 
 ## Chay Node Agent Tren Host
 

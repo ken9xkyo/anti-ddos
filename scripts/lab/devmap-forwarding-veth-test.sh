@@ -2,11 +2,11 @@
 set -euo pipefail
 
 AGENT_BIN="${AGENT_BIN:-build/agent/anti-ddos-agent}"
-POLICYGEN_BIN="${POLICYGEN_BIN:-build/phase4-policygen}"
+POLICYGEN_BIN="${POLICYGEN_BIN:-build/policygen}"
 BPF_OBJ="${BPF_OBJ:-build/bpf/xdp_data_plane.bpf.o}"
 PASS_BPF_OBJ="${PASS_BPF_OBJ:-build/bpf/xdp_pass.bpf.o}"
-WORK_DIR="${WORK_DIR:-build/phase4-devmap-veth}"
-RUN_ID="p4$$"
+WORK_DIR="${WORK_DIR:-build/devmap-forwarding-veth}"
+RUN_ID="df$$"
 CLIENT_NS="c${RUN_ID}"
 BACKEND_NS="b${RUN_ID}"
 WAN_HOST_IF="wh${RUN_ID}"
@@ -15,7 +15,7 @@ BACKEND_HOST_IF="bh${RUN_ID}"
 BACKEND_PEER_IF="bp${RUN_ID}"
 PIN_DIR="/sys/fs/bpf/anti-ddos-${RUN_ID}"
 SNAPSHOT_PATH="${WORK_DIR}/last-valid-snapshot.json"
-BOOTSTRAP_POLICY="${WORK_DIR}/phase4-policy.json"
+BOOTSTRAP_POLICY="${WORK_DIR}/forwarding-policy.json"
 LOG_PATH="${WORK_DIR}/agent.log"
 METRICS_PATH="${WORK_DIR}/metrics.txt"
 CAPTURE_PATH="${WORK_DIR}/backend-capture.txt"
@@ -52,7 +52,7 @@ cleanup() {
 	fi
 	rm -rf "${PIN_DIR}"
 	if [[ "${KEEP_WORK_DIR:-0}" == "1" || "${status}" != "0" ]]; then
-		echo "preserved phase4 work dir: ${WORK_DIR}" >&2
+		echo "preserved devmap forwarding work dir: ${WORK_DIR}" >&2
 	else
 		rm -rf "${WORK_DIR}"
 	fi
@@ -183,7 +183,7 @@ dst = sys.argv[1]
 port = int(sys.argv[2])
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(1)
-sock.sendto(b"phase4", (dst, port))
+sock.sendto(b"devmap-forwarding", (dst, port))
 sock.close()
 PY
 }
@@ -194,7 +194,7 @@ require_cmd curl
 require_cmd python3
 
 if [[ "$(id -u)" != "0" ]]; then
-	echo "phase4-devmap-veth-test must run as root for netns and XDP attach" >&2
+	echo "devmap-forwarding-veth-test must run as root for netns and XDP attach" >&2
 	exit 1
 fi
 if [[ ! -x "${AGENT_BIN}" ]]; then
@@ -297,4 +297,4 @@ grep -q 'anti_ddos_redirected_packets_total{.*service_id="40".*} 1' "${METRICS_P
 grep -q 'anti_ddos_not_allowed_service_total{protocol="17"} 1' "${METRICS_PATH}"
 grep -q 'anti_ddos_neighbor_resolution_status{.*service_id="40".*} 1' "${METRICS_PATH}"
 
-echo "PASS phase4 devmap veth forwarding"
+echo "PASS devmap forwarding veth"

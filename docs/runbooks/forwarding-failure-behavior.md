@@ -20,4 +20,4 @@ Phase 04 forwarding is fail-closed. A packet is redirected only after it matches
 
 ## VETH Lab Note
 
-`make phase4-veth-test` attaches the production XDP program only to a temporary WAN veth. The backend peer uses a minimal `xdp_pass` program so native XDP redirect through veth is observable in the namespace lab. This helper is not part of the production forwarding path.
+`make devmap-forwarding-veth-test` attaches the production XDP program only to a temporary WAN veth. The backend peer uses a minimal `xdp_pass` program so native XDP redirect through veth is observable in the namespace lab. This helper is not part of the production forwarding path.

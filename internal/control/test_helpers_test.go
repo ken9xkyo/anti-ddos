@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,4 +99,49 @@ func doTestHTTP(t *testing.T, req *http.Request) *testHTTPResponse {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func requireHTTPStatus(t *testing.T, resp *testHTTPResponse, want int) {
+	t.Helper()
+	if resp.Code != want {
+		t.Fatalf("status=%d want=%d body=%s", resp.Code, want, resp.Body.String())
+	}
+}
+
+func requireHTTPStatusOneOf(t *testing.T, resp *testHTTPResponse, wants ...int) {
+	t.Helper()
+	for _, want := range wants {
+		if resp.Code == want {
+			return
+		}
+	}
+	t.Fatalf("status=%d want one of %v body=%s", resp.Code, wants, resp.Body.String())
+}
+
+func requireBodyContains(t *testing.T, resp *testHTTPResponse, want string) {
+	t.Helper()
+	if !strings.Contains(resp.Body.String(), want) {
+		t.Fatalf("response body missing %q: %s", want, resp.Body.String())
+	}
+}
+
+func decodeTestBody(t *testing.T, resp *testHTTPResponse, out any) {
+	t.Helper()
+	if err := json.Unmarshal(resp.Body.Bytes(), out); err != nil {
+		t.Fatalf("decode body %s: %v", resp.Body.String(), err)
+	}
+}
+
+func uint32String(value uint32) string {
+	if value == 0 {
+		return "0"
+	}
+	var buf [10]byte
+	i := len(buf)
+	for value > 0 {
+		i--
+		buf[i] = byte('0' + value%10)
+		value /= 10
+	}
+	return string(buf[i:])
 }
