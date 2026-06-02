@@ -56,7 +56,7 @@ export function DashboardShell({
           <Shield size={25} />
           <div>
             <h1>Anti-DDoS</h1>
-            <p>Admin Dashboard v2</p>
+            <p>Admin Dashboard</p>
           </div>
         </div>
         <nav className="side-nav" aria-label="Dashboard views">
