@@ -14,14 +14,6 @@ MVP này tập trung vào một node Ubuntu 24.04, IPv4, native XDP, policy snap
 | Control Plane | Control API, PostgreSQL | Quản lý người dùng, dịch vụ, policy, feed, snapshot, audit và rollback |
 | Management Plane | Admin Dashboard, Prometheus, Grafana | Hiển thị thời gian thực, metrics, điều tra event và dashboard vận hành |
 
-## Trạng thái repo
-
-- Phase 01-08 đã hoàn tất theo trạng thái dự án trong `.specs/project/STATE.md` và `.specs/project/ROADMAP.md`.
-- Phase 09 Telegram ISP Runbook đang được lên kế hoạch.
-- Control API, Admin CLI, Agent và React/Vite Admin Dashboard đã có mã nguồn trong repo.
-- Prometheus scrape config và Grafana dashboard có sẵn trong `deploy/`.
-- Compose lab stack chạy PostgreSQL, Control API, Prometheus, Grafana và Admin Dashboard. Node Agent vẫn chạy trên host để tránh đưa quyền XDP/NIC vào container.
-
 ## Cảnh báo an toàn XDP/NIC
 
 Không attach XDP vào NIC thật nếu chưa xác nhận rõ vai trò của WAN/LAN/output interface và inventory của protected backend service. Các lệnh khởi động nhanh bằng Docker Compose chỉ khởi động management/control stack; chúng không attach XDP và không tác động trực tiếp tới lưu lượng production.
