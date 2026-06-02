@@ -85,15 +85,20 @@ Có thể chạy riêng theo nhóm bằng các target `control-core-postgres-tes
 Prometheus trong compose thu thập metrics từ Agent qua `host.docker.internal:9091`. Agent chỉ nên chạy sau khi đã chốt interface lab/an toàn:
 
 ```bash
-make agent-build
-
-sudo env \
-  ANTI_DDOS_WAN_IFACE=<approved-lab-or-wan-iface> \
-  ANTI_DDOS_XDP_OBJECT=build/bpf/xdp_data_plane.bpf.o \
-  ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091 \
-  ANTI_DDOS_CONTROL_URL=http://127.0.0.1:8080 \
-  ANTI_DDOS_AGENT_TOKEN=<same-value-as-ANTI_DDOS_AGENT_SHARED_TOKEN> \
-  build/agent/anti-ddos-agent
+make -n AGENT_WAN_IFACE=enp94s0f0 AGENT_OUTPUT_IFACES=enp134s0f1 agent-start
+make -n AGENT_WAN_IFACE=enp94s0f0 AGENT_OUTPUT_IFACES=enp134s0f1 agent-remove
 ```
 
 Nếu chưa có interface được phê duyệt, hãy dùng các script lab VETH thay vì Agent trên NIC thật.
+
+### Lưu ý DEVMAP trên output NIC
+
+Với native XDP forwarding, một số driver như `ixgbe` cần output interface cũng có XDP TX queues trước khi nhận packet từ `tx_devmap`. Nếu Agent chạy `xdp_entry` trên WAN ingress nhưng redirect tới backend bị timeout và tracepoint báo `xdp_redirect_err err=-95`, hãy attach chương trình pass-through tối thiểu lên interface hướng backend:
+
+```bash
+make build/bpf/xdp_pass.bpf.o
+sudo ip link set dev <backend-output-iface> xdpdrv obj build/bpf/xdp_pass.bpf.o sec xdp
+bpftool net
+```
+
+Ví dụ lab đã xác thực: `enp94s0f0` chạy `xdp_entry`, `enp134s0f1` chạy `xdp_pass`, service `118.107.78.137:2283/tcp` redirect thành công qua DEVMAP. Không thay thế một XDP program đang chạy trên output NIC nếu chưa có phê duyệt vận hành. Lệnh attach này là trạng thái runtime; sau reboot, NIC reset hoặc detach XDP cần attach lại cho đến khi Agent quản lý output XDP tự động.

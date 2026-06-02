@@ -14,6 +14,8 @@ AGENT_PROCESS ?= anti-ddos-agent
 AGENT_STOP_TIMEOUT ?= 10
 AGENT_FORCE ?= 0
 AGENT_WAN_IFACE ?= $(ANTI_DDOS_WAN_IFACE)
+AGENT_OUTPUT_IFACES ?= $(ANTI_DDOS_OUTPUT_IFACES)
+AGENT_OUTPUT_XDP_MODE ?=
 AGENT_BPF_PIN_DIR ?= $(if $(ANTI_DDOS_BPF_PIN_DIR),$(ANTI_DDOS_BPF_PIN_DIR),/sys/fs/bpf/anti-ddos)
 AGENT_LOG_FILE ?= $(AGENT_BUILD_DIR)/anti-ddos-agent.log
 AGENT_PID_FILE ?= $(AGENT_BUILD_DIR)/anti-ddos-agent.pid
@@ -74,10 +76,10 @@ help:
 	@printf '    make dev-health\n\n'
 	@printf '  Host Agent lifecycle:\n'
 	@printf '    make agent-build\n'
-	@printf '    make AGENT_WAN_IFACE=<approved-lab-or-wan-iface> agent-start\n'
+	@printf '    make AGENT_WAN_IFACE=<approved-wan-iface> AGENT_OUTPUT_IFACES=<backend-iface> agent-start\n'
 	@printf '    tail -f $(AGENT_LOG_FILE)\n'
 	@printf '    make agent-stop\n'
-	@printf '    make AGENT_WAN_IFACE=<approved-lab-or-wan-iface> agent-remove\n\n'
+	@printf '    make AGENT_WAN_IFACE=<approved-wan-iface> AGENT_OUTPUT_IFACES=<backend-iface> agent-remove\n\n'
 	@printf '  Test gates:\n'
 	@printf '    make test                       Fast local gate: BPF, Go, UI tests/build\n'
 	@printf '    make test-all                   Full local gate with lint, race and integration tests\n'
@@ -95,10 +97,10 @@ help:
 	@printf '  make compose-build                Build control-api and admin-dashboard images\n'
 	@printf '  make build                        Build BPF object, Go binaries and UI assets\n\n'
 	@printf 'Host Agent targets:\n'
-	@printf '  make agent-start                  Start host Agent in background; requires AGENT_WAN_IFACE\n'
+	@printf '  make agent-start                  Start host Agent; optionally attach xdp_pass on AGENT_OUTPUT_IFACES\n'
 	@printf '  make agent-stop                   Send SIGTERM to background Agent and wait for exit\n'
 	@printf '  make AGENT_FORCE=1 agent-stop     Send SIGKILL if Agent does not stop in time\n'
-	@printf '  make agent-remove                 Stop Agent, unpin BPF link, detach legacy XDP, remove pins\n\n'
+	@printf '  make agent-remove                 Stop Agent, detach Agent XDP and xdp_pass output programs, remove pins\n\n'
 	@printf 'Test targets:\n'
 	@printf '  make go-test                      Run go test ./...\n'
 	@printf '  make go-vet                       Run go vet ./...\n'
@@ -134,6 +136,11 @@ help:
 	@printf '  ADMIN_PASSWORD                    Non-interactive admin bootstrap password\n'
 	@printf '  AGENT_WAN_IFACE                   Interface for XDP attach/detach\n'
 	@printf '  ANTI_DDOS_WAN_IFACE               Env fallback for AGENT_WAN_IFACE\n'
+	@printf '  AGENT_OUTPUT_IFACES               Space-separated backend/output interfaces for xdp_pass\n'
+	@printf '  ANTI_DDOS_OUTPUT_IFACES           Env fallback for AGENT_OUTPUT_IFACES\n'
+	@printf '  ANTI_DDOS_OUTPUT_IFACE            Single-output fallback when AGENT_OUTPUT_IFACES is empty\n'
+	@printf '  ANTI_DDOS_LAN_IFACE               Legacy single-output fallback when output iface vars are empty\n'
+	@printf '  AGENT_OUTPUT_XDP_MODE             Output xdp_pass mode: native or generic, default follows AGENT_XDP_MODE\n'
 	@printf '  AGENT_TOKEN                       Host Agent token; falls back to .env values\n'
 	@printf '  AGENT_METRICS_ADDR                Host Agent metrics bind, default: 0.0.0.0:9091\n'
 	@printf '  AGENT_CONTROL_URL                 Control API URL, default: http://127.0.0.1:8080\n'
@@ -148,8 +155,10 @@ help:
 	@printf '  AGENT_FORCE                       Use 1 to SIGKILL after stop timeout\n\n'
 	@printf 'Safety notes:\n'
 	@printf '  - Compose starts management/control services only; the Node Agent runs on host.\n'
-	@printf '  - agent-start runs in the background and can attach XDP. Use only an approved lab/WAN interface.\n'
-	@printf '  - agent-remove removes the pinned BPF link before using ip link xdp off.\n'
+	@printf '  - agent-start runs in the background and can attach XDP. Use only approved WAN/output interfaces.\n'
+	@printf '  - agent-start refuses to replace a non-xdp_pass program on output interfaces.\n'
+	@printf '  - agent-remove removes the pinned BPF link before using ip link xdp off on the WAN interface.\n'
+	@printf '  - agent-remove detaches output interfaces only when their XDP program is xdp_pass.\n'
 	@printf '  - Use make -n <target> to inspect commands before running risky operations.\n'
 
 usage: help
@@ -168,7 +177,7 @@ agent-build: $(BPF_OBJ)
 	@mkdir -p $(AGENT_BUILD_DIR)
 	$(GO) build -o $(AGENT_BIN) ./cmd/agent
 
-agent-start: agent-build
+agent-start: agent-build $(BPF_PASS_OBJ)
 	@set -eu; \
 	if [ -f .env ]; then \
 		set -a; . ./.env; set +a; \
@@ -196,18 +205,58 @@ agent-start: agent-build
 	if [ -z "$$token" ]; then token="$${ANTI_DDOS_AGENT_TOKEN:-$${ANTI_DDOS_AGENT_SHARED_TOKEN:-}}"; fi; \
 	xdp_mode="$(AGENT_XDP_MODE)"; \
 	if [ -z "$$xdp_mode" ]; then xdp_mode="$${ANTI_DDOS_XDP_MODE:-native}"; fi; \
+	output_xdp_mode="$(AGENT_OUTPUT_XDP_MODE)"; \
+	if [ -z "$$output_xdp_mode" ]; then output_xdp_mode="$${ANTI_DDOS_OUTPUT_XDP_MODE:-}"; fi; \
+	if [ -z "$$output_xdp_mode" ]; then output_xdp_mode="$$xdp_mode"; fi; \
+	case "$$output_xdp_mode" in \
+		native) output_xdp_attach_arg="xdpdrv" ;; \
+		generic) output_xdp_attach_arg="xdpgeneric" ;; \
+		*) echo "AGENT_OUTPUT_XDP_MODE/ANTI_DDOS_OUTPUT_XDP_MODE must be native or generic, got $$output_xdp_mode" >&2; exit 1 ;; \
+	esac; \
 	allow_fallback="$(AGENT_ALLOW_GENERIC_FALLBACK)"; \
 	if [ -z "$$allow_fallback" ]; then allow_fallback="$${ANTI_DDOS_XDP_ALLOW_GENERIC_FALLBACK:-false}"; fi; \
 	safe_detach="$(AGENT_SAFE_DETACH_ON_EXIT)"; \
 	if [ -z "$$safe_detach" ]; then safe_detach="$${ANTI_DDOS_SAFE_DETACH_ON_EXIT:-false}"; fi; \
 	pin_dir="$(AGENT_BPF_PIN_DIR)"; \
 	if [ -z "$$pin_dir" ]; then pin_dir="$${ANTI_DDOS_BPF_PIN_DIR:-/sys/fs/bpf/anti-ddos}"; fi; \
+	output_ifaces="$(AGENT_OUTPUT_IFACES)"; \
+	if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_OUTPUT_IFACES:-}"; fi; \
+	if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_OUTPUT_IFACE:-}"; fi; \
+	if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_LAN_IFACE:-}"; fi; \
 	log_file="$(AGENT_LOG_FILE)"; \
 	pid_file="$(AGENT_PID_FILE)"; \
 	start_wait="$(AGENT_START_WAIT)"; \
 	mkdir -p "$$(dirname "$$log_file")" "$$(dirname "$$pid_file")"; \
 	if [ -n "$$control_url" ] && [ -z "$$token" ]; then \
 		echo "warning: ANTI_DDOS_AGENT_TOKEN is empty; Control API sync may be rejected" >&2; \
+	fi; \
+	attached_output_ifaces=""; \
+	if [ -n "$$output_ifaces" ]; then \
+		for output_iface in $$output_ifaces; do \
+			if [ "$$output_iface" = "$$iface" ]; then \
+				echo "output interface $$output_iface must not equal AGENT_WAN_IFACE" >&2; \
+				exit 1; \
+			fi; \
+			if ! ip link show dev "$$output_iface" >/dev/null 2>&1; then \
+				echo "output interface $$output_iface not found" >&2; \
+				exit 1; \
+			fi; \
+			output_link="$$(ip -d link show dev "$$output_iface")"; \
+			if printf '%s\n' "$$output_link" | grep -q 'prog/xdp'; then \
+				if printf '%s\n' "$$output_link" | grep -q 'name xdp_pass'; then \
+					echo "xdp_pass already attached on output interface $$output_iface"; \
+				else \
+					echo "output interface $$output_iface already has a non-xdp_pass XDP program; refusing to replace it" >&2; \
+					exit 1; \
+				fi; \
+			else \
+				echo "attaching xdp_pass on output interface $$output_iface with $$output_xdp_mode XDP"; \
+				$(SUDO) ip link set dev "$$output_iface" "$$output_xdp_attach_arg" obj "$(BPF_PASS_OBJ)" sec xdp; \
+				attached_output_ifaces="$$attached_output_ifaces $$output_iface"; \
+			fi; \
+		done; \
+	else \
+		echo "AGENT_OUTPUT_IFACES/ANTI_DDOS_OUTPUT_IFACES/ANTI_DDOS_OUTPUT_IFACE is not set; skipping output xdp_pass attach"; \
 	fi; \
 	echo "starting $(AGENT_PROCESS) on $$iface in background"; \
 	printf '\n[%s] starting $(AGENT_PROCESS) on %s\n' "$$(date -Is)" "$$iface" >> "$$log_file"; \
@@ -229,6 +278,14 @@ agent-start: agent-build
 		echo "$(AGENT_PROCESS) failed to stay running; launcher pid $$launcher_pid" >&2; \
 		echo "last log lines from $$log_file:" >&2; \
 		tail -n 40 "$$log_file" >&2 || true; \
+		if [ -n "$$attached_output_ifaces" ]; then \
+			for output_iface in $$attached_output_ifaces; do \
+				if ip -d link show dev "$$output_iface" 2>/dev/null | grep -q 'name xdp_pass'; then \
+					echo "detaching xdp_pass from $$output_iface after failed start"; \
+					$(SUDO) ip link set dev "$$output_iface" xdp off || true; \
+				fi; \
+			done; \
+		fi; \
 		rm -f -- "$$pid_file"; \
 		exit 1; \
 	fi; \
@@ -271,11 +328,15 @@ agent-stop:
 agent-remove: agent-stop
 	@set -eu; \
 	iface="$(AGENT_WAN_IFACE)"; \
+	output_ifaces="$(AGENT_OUTPUT_IFACES)"; \
 	pin_dir="$(AGENT_BPF_PIN_DIR)"; \
 	detach_output=""; \
 	if [ -f .env ]; then \
 		set -a; . ./.env; set +a; \
 		if [ -z "$$iface" ]; then iface="$${ANTI_DDOS_WAN_IFACE:-}"; fi; \
+		if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_OUTPUT_IFACES:-}"; fi; \
+		if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_OUTPUT_IFACE:-}"; fi; \
+		if [ -z "$$output_ifaces" ]; then output_ifaces="$${ANTI_DDOS_LAN_IFACE:-}"; fi; \
 		pin_dir="$${ANTI_DDOS_BPF_PIN_DIR:-$$pin_dir}"; \
 	fi; \
 	case "$$pin_dir" in \
@@ -313,6 +374,31 @@ agent-remove: agent-stop
 	else \
 		echo "AGENT_WAN_IFACE/ANTI_DDOS_WAN_IFACE is not set; skipping explicit XDP detach"; \
 		echo "removing pinned BPF links can detach the Agent-managed XDP program"; \
+	fi; \
+	if [ -n "$$output_ifaces" ]; then \
+		for output_iface in $$output_ifaces; do \
+			if [ -n "$$iface" ] && [ "$$output_iface" = "$$iface" ]; then \
+				echo "skipping output xdp_pass detach for WAN interface $$output_iface"; \
+				continue; \
+			fi; \
+			if ! ip link show dev "$$output_iface" >/dev/null 2>&1; then \
+				echo "output interface $$output_iface not found; skipping xdp_pass detach"; \
+				continue; \
+			fi; \
+			output_link="$$(ip -d link show dev "$$output_iface")"; \
+			if printf '%s\n' "$$output_link" | grep -q 'prog/xdp'; then \
+				if printf '%s\n' "$$output_link" | grep -q 'name xdp_pass'; then \
+					echo "detaching xdp_pass from output interface $$output_iface"; \
+					$(SUDO) ip link set dev "$$output_iface" xdp off; \
+				else \
+					echo "output interface $$output_iface has a non-xdp_pass XDP program; leaving it attached"; \
+				fi; \
+			else \
+				echo "output interface $$output_iface has no XDP program"; \
+			fi; \
+		done; \
+	else \
+		echo "AGENT_OUTPUT_IFACES/ANTI_DDOS_OUTPUT_IFACES/ANTI_DDOS_OUTPUT_IFACE is not set; skipping output xdp_pass detach"; \
 	fi; \
 	if [ -e "$$pin_dir" ]; then \
 		echo "removing BPF pins under $$pin_dir"; \

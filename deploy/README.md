@@ -16,4 +16,4 @@ make deploy
 make dev-health
 ```
 
-Runbook chi tiet: [docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md).
+Runbook chi tiet: [docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md). Khi chay Agent host voi native DEVMAP tren NIC that, doc them phan `Native DEVMAP Output Interface` trong runbook de attach `xdp_pass` cho backend/output NIC neu driver can XDP TX queues.

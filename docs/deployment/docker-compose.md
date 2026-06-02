@@ -130,6 +130,33 @@ sudo env \
 
 `ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync.
 
+### Native DEVMAP Output Interface
+
+Voi native XDP forwarding, output interface dung trong service policy co the can XDP TX queues de nhan packet tu `tx_devmap`. Tren `ixgbe`, neu output NIC khong co XDP program nao attached, kernel co the tra `xdp_redirect_err err=-95` (`EOPNOTSUPP`) cho redirect tu WAN ingress sang output ifindex.
+
+Khi dung native DEVMAP tren NIC that, attach pass-through XDP len moi backend/output interface duoc service policy su dung:
+
+```bash
+make build/bpf/xdp_pass.bpf.o
+sudo ip link set dev enp134s0f1 xdpdrv obj build/bpf/xdp_pass.bpf.o sec xdp
+bpftool net
+```
+
+Vi du da xac thuc trong lab:
+
+```text
+enp94s0f0(4): xdp_entry
+enp134s0f1(7): xdp_pass
+```
+
+Sau khi attach, `dmesg` cua `ixgbe` nen hien `XDP Queue count` khac `0` cho output NIC. Kiem tra redirect bang:
+
+```bash
+sudo bpftrace -e 'tracepoint:xdp:xdp_redirect_err { printf("redirect_err if=%d to=%d err=%d map=%d idx=%d\n", args->ifindex, args->to_ifindex, args->err, args->map_id, args->map_index); } tracepoint:xdp:xdp_devmap_xmit { printf("devmap_xmit from=%d to=%d sent=%d drops=%d err=%d\n", args->from_ifindex, args->to_ifindex, args->sent, args->drops, args->err); }'
+```
+
+Thanh cong khi thay `devmap_xmit ... sent=1 drops=0 err=0` va khong con `redirect_err err=-95`. Khong replace XDP program san co tren output NIC neu chua co phe duyet van hanh. Attach `xdp_pass` la trang thai runtime, can thuc hien lai sau reboot, NIC reset hoac detach XDP cho den khi Agent quan ly output XDP tu dong.
+
 ## Ports Mac Dinh
 
 | Service | URL |
@@ -228,4 +255,5 @@ curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active'
 | Admin Dashboard login that bai | Dam bao da bootstrap Admin va dung password moi tao |
 | Grafana khong co du lieu | Kiem tra Prometheus datasource va target `anti-ddos-control` |
 | Agent target `DOWN` | Day la binh thuong neu Agent host chua chay; khi chay Agent can bind `ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091` |
+| Client timeout nhung service map va `tx_devmap` dung | Kiem tra `bpftrace` tracepoint XDP; neu co `xdp_redirect_err err=-95` tren `ixgbe`, attach `build/bpf/xdp_pass.bpf.o` len output NIC de tao XDP TX queues |
 | Port conflict | Doi `*_PORT` trong `.env` |
