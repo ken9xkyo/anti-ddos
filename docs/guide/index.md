@@ -18,18 +18,18 @@ Backend vẫn là lớp enforce RBAC chính. UI ẩn control nguy hiểm với r
 
 | Nhóm | Trang | Hướng dẫn |
 |---|---|---|
-| Operations | `Overview` | [overview.md](overview.md) |
-| Operations | `Incidents` | [incidents.md](incidents.md) |
-| Policy | `Services` | [services.md](services.md) |
-| Policy | `Rules` | [rules.md](rules.md) |
-| Policy | `Whitelist` | [whitelist.md](whitelist.md) |
-| Policy | `Blacklist` | [blacklist.md](blacklist.md) |
-| Policy | `Detection` | [detection.md](detection.md) |
-| Intelligence | `Reputation` | [reputation.md](reputation.md) |
-| Control | `Snapshots` | [snapshots.md](snapshots.md) |
-| Control | `Access` | [access.md](access.md) |
-| Infrastructure | `Fleet` | [fleet.md](fleet.md) |
-| Infrastructure | `Investigation` | [investigation.md](investigation.md) |
+| Operation | `Dashboard` | [overview.md](overview.md) |
+| Operation | `Incidents` | [incidents.md](incidents.md) |
+| Operation | `Detections` | [detection.md](detection.md) |
+| Operation | `Events` | [investigation.md](investigation.md) |
+| Configuration | `Services` | [services.md](services.md) |
+| Configuration | `Rules` | [rules.md](rules.md) |
+| Configuration | `Whitelist` | [whitelist.md](whitelist.md) |
+| Configuration | `Blacklist` | [blacklist.md](blacklist.md) |
+| Threat Intelligence | `Reputation` | [reputation.md](reputation.md) |
+| Setting | `Snapshots` | [snapshots.md](snapshots.md) |
+| Setting | `Accounts` | [access.md](access.md) |
+| Setting | `Nodes` | [fleet.md](fleet.md) |
 
 Luồng đăng nhập, thanh điều hướng, topbar, refresh và logout được mô tả trong [login-and-shell.md](login-and-shell.md).
 
@@ -46,7 +46,7 @@ Luồng đăng nhập, thanh điều hướng, topbar, refresh và logout đư�
 
 Sau khi đăng nhập, dashboard gọi các endpoint `/v1` của Control API để lấy overview, agents, services, rules, events, baselines, anomalies, feed sources, feed runs, feed conflicts, Telegram config và alerts. Dữ liệu chính được refresh định kỳ khoảng 3 giây và cũng có thể refresh thủ công từ topbar.
 
-Các trang CRUD như `Rules`, `Whitelist`, `Blacklist`, `Snapshots`, `Access` và một số phần của `Reputation` có luồng tải riêng khi mở trang hoặc sau khi thao tác. Điều này giúp overview không phải kéo dữ liệu nặng như raw snapshot trong vòng polling mặc định.
+Các trang CRUD như `Rules`, `Whitelist`, `Blacklist`, `Snapshots`, `Accounts` và một số phần của `Reputation` có luồng tải riêng khi mở trang hoặc sau khi thao tác. Điều này giúp overview không phải kéo dữ liệu nặng như raw snapshot trong vòng polling mặc định.
 
 ## Trạng thái chung
 

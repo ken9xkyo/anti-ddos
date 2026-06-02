@@ -93,26 +93,27 @@ def goto_tab(page: Page, label: str) -> None:
 
 def assert_shell_navigation(page: Page) -> None:
     for tab in [
-        "Overview",
+        "Dashboard",
         "Incidents",
+        "Detections",
+        "Events",
         "Services",
         "Rules",
         "Whitelist",
-        "Detection",
+        "Blacklist",
         "Reputation",
         "Snapshots",
-        "Access",
-        "Fleet",
-        "Investigation",
+        "Accounts",
+        "Nodes",
     ]:
         goto_tab(page, tab)
-    goto_tab(page, "Overview")
+    goto_tab(page, "Dashboard")
     page.get_by_role("button", name=re.compile(r"refresh", re.I)).click()
     expect(page.get_by_text("Packets/s", exact=True)).to_be_visible(timeout=15000)
 
 
 def assert_overview(page: Page, seed: SeedData) -> None:
-    goto_tab(page, "Overview")
+    goto_tab(page, "Dashboard")
     expect_visible_text(page, "prometheus healthy")
     expect_visible_text(page, "198.51.100.0/24")
     expect_visible_text(page, seed.service["name"])
@@ -121,7 +122,7 @@ def assert_overview(page: Page, seed: SeedData) -> None:
 
 
 def assert_admin_only_visibility(page: Page) -> None:
-    goto_tab(page, "Access")
+    goto_tab(page, "Accounts")
     expect(page.get_by_role("button", name=re.compile(r"Add user", re.I))).to_be_visible(timeout=15000)
     goto_tab(page, "Incidents")
     expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_be_visible()
@@ -147,7 +148,7 @@ def assert_viewer_read_only(page: Page, seed: SeedData) -> None:
     expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_disabled()
     expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_have_count(0)
 
-    goto_tab(page, "Access")
+    goto_tab(page, "Accounts")
     expect(page.get_by_role("button", name=re.compile(r"Add user", re.I))).to_have_count(0)
     expect(page.get_by_role("button", name=re.compile(r"^Reset$", re.I))).to_have_count(0)
 
@@ -258,7 +259,7 @@ def assert_whitelist_workflow(page: Page, seed: SeedData) -> None:
 
 
 def assert_detection(page: Page, seed: SeedData) -> None:
-    goto_tab(page, "Detection")
+    goto_tab(page, "Detections")
     expect_visible_text(page, seed.service["name"], timeout=20000)
     expect_visible_text(page, "approved")
     expect_visible_text(page, re.compile(r"pps_spike|auto_enforced", re.I))
@@ -304,7 +305,7 @@ def assert_snapshots_workflow(page: Page) -> None:
 
 
 def assert_fleet(page: Page) -> None:
-    goto_tab(page, "Fleet")
+    goto_tab(page, "Nodes")
     expect_visible_text(page, "auto-admin-dashboard-node-a", timeout=20000)
     expect_visible_text(page, "native")
     expect_visible_text(page, "backend0")
@@ -312,7 +313,7 @@ def assert_fleet(page: Page) -> None:
 
 
 def assert_investigation(page: Page) -> None:
-    goto_tab(page, "Investigation")
+    goto_tab(page, "Events")
     expect_visible_text(page, "198.51.100.10", timeout=20000)
     page.get_by_label(re.compile(r"^Target", re.I)).fill("198.51.100.10")
     page.get_by_role("button", name=re.compile(r"Investigate", re.I)).click()
@@ -347,7 +348,7 @@ def assert_admin_reputation_credentials(page: Page, seed: SeedData, feed_url: st
 
 
 def assert_access_workflow(page: Page, seed: SeedData) -> None:
-    goto_tab(page, "Access")
+    goto_tab(page, "Accounts")
     username = f"{seed.prefix}-managed"
     expect_visible_text(page, seed.operator_username, timeout=20000)
     page.get_by_role("button", name=re.compile(r"Add user", re.I)).click()
@@ -383,7 +384,7 @@ def assert_responsive_smoke(browser, base_url: str, seed: SeedData) -> None:
         page = context.new_page()
         try:
             login(page, base_url, seed.viewer_username, seed.viewer_password)
-            for tab in ("Overview", "Services", "Fleet"):
+            for tab in ("Dashboard", "Services", "Nodes"):
                 goto_tab(page, tab)
                 expect(page.locator(".topbar h1")).to_be_visible()
             has_overlap = page.evaluate("""() => {

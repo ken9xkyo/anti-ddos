@@ -11,8 +11,7 @@ Tất cả role đều dùng luồng này: `viewer`, `operator` và `admin`. Quy
 ## Thành phần UI
 
 - Màn hình đăng nhập hiển thị thương hiệu `Anti-DDoS Operations`, trường `Username`, trường `Password` và nút `Sign in`.
-- Sidebar hiển thị các tab: `Overview`, `Incidents`, `Services`, `Rules`, `Whitelist`, `Detection`, `Reputation`, `Snapshots`, `Access`, `Fleet`, `Investigation`.
-- Mỗi item sidebar có nhãn trang và nhóm menu như `Operations`, `Policy`, `Intelligence`, `Control`, `Infrastructure`.
+- Sidebar hiển thị menu 2 cấp: `Operation` gồm `Dashboard`, `Incidents`, `Detections`, `Events`; `Configuration` gồm `Services`, `Rules`, `Whitelist`, `Blacklist`; `Threat Intelligence` gồm `Reputation`; `Setting` gồm `Snapshots`, `Accounts`, `Nodes`.
 - Topbar hiển thị tiêu đề trang hiện tại, chip `username · role`, freshness pill, nút refresh và nút logout.
 - Banner lỗi xuất hiện dưới topbar khi request tới dashboard hoặc API thất bại.
 - Panel `Loading dashboard data` xuất hiện khi shell đã đăng nhập nhưng chưa có dữ liệu dashboard.
@@ -27,7 +26,7 @@ Tất cả role đều dùng luồng này: `viewer`, `operator` và `admin`. Quy
 
 1. Nhập username và password.
 2. Chọn `Sign in`.
-3. Sau khi đăng nhập thành công, dashboard vào thẳng `Overview`.
+3. Sau khi đăng nhập thành công, dashboard vào thẳng `Dashboard`.
 4. Dùng sidebar để chuyển trang.
 5. Chọn nút refresh trên topbar khi cần lấy dữ liệu ngay thay vì chờ polling.
 6. Chọn logout để xóa token trong trình duyệt và quay lại màn hình đăng nhập.

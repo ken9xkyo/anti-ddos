@@ -9,7 +9,11 @@ Entry points:
 - Backend mutations: `internal/control/admin_console.go`
 - Snapshot diff: `internal/control/snapshot_diff.go`
 
-Tabs added: `rules`, `whitelist`, `blacklist`, `snapshots`, `access`.
+Navigation labels are grouped in `web/dashboard/src/navigation.ts`:
+- `Operation`: Dashboard (`overview`), Incidents, Detections (`detection`), Events (`investigation`)
+- `Configuration`: Services, Rules, Whitelist, Blacklist
+- `Threat Intelligence`: Reputation
+- `Setting`: Snapshots, Accounts (`access`), Nodes (`fleet`)
 
 Backend semantics:
 - Rule/whitelist/blacklist/feed deletes are soft-disable and rebuild policy snapshots.

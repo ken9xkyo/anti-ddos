@@ -48,6 +48,16 @@ describe('DashboardShell', () => {
     expect(screen.getByText('198.51.100.0/24')).toBeInTheDocument();
   });
 
+  it('renders grouped admin navigation labels', () => {
+    renderShell(viewerUser);
+    for (const group of ['Operation', 'Configuration', 'Threat Intelligence', 'Setting']) {
+      expect(screen.getByText(group)).toBeInTheDocument();
+    }
+    for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'Reputation', 'Snapshots', 'Accounts', 'Nodes']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+  });
+
   it('keeps viewer read-only', () => {
     renderShell(viewerUser, 'services');
     expect(screen.queryByRole('button', { name: /add service/i })).not.toBeInTheDocument();

@@ -33,7 +33,7 @@ Ngoai pham vi increment nay:
 | AD2-REQ-001 | Dashboard la ops console, khong landing page | Done | Shell render truc tiep sau login |
 | AD2-REQ-002 | MUI Community + MUI X Data Grid + MUI X Charts tren React/Vite hien tai | Done | `package.json`, build gate |
 | AD2-REQ-003 | Viewer read-only, Operator/Admin operational mutations, Admin access/secret mutations | Done | Vitest RBAC coverage |
-| AD2-REQ-004 | User Management console | Done | Access tab + Go endpoints |
+| AD2-REQ-004 | User Management console | Done | Accounts menu + Go endpoints |
 | AD2-REQ-005 | Rule CRUD voi soft-disable | Done | Rules tab + Go endpoints |
 | AD2-REQ-006 | Whitelist CRUD voi soft-disable | Done | Whitelist tab + Go endpoints |
 | AD2-REQ-007 | Feed CRUD/sync/soft-disable, Admin-only credential_ref | Done | Reputation tab + Go endpoints |
@@ -61,17 +61,18 @@ Nguyen tac:
 
 | View | Nhom | Muc dich | Data loading |
 |---|---|---|---|
-| Overview | Operations | Tong quan traffic, decisions, health, current signal | Polling dashboard endpoints |
-| Incidents | Operations | Alerting, Telegram, ISP manual runbook | Polling dashboard endpoints + mutation theo action |
-| Services | Policy | Protected service registry | Polling dashboard endpoints |
-| Rules | Policy | Rule CRUD | Lazy-load `/v1/rules` khi vao tab |
-| Whitelist | Policy | Allow-list CRUD | Lazy-load `/v1/whitelist` khi vao tab |
-| Detection | Policy | Observe anomalies/baselines/active rules | Polling dashboard endpoints, read-only posture |
-| Reputation | Intelligence | Feed CRUD/sync + run/conflict visibility | Polling feed summary + lazy/action refresh |
-| Snapshots | Control | Snapshot list, semantic diff, rollback | Lazy-load `/v1/snapshots?include_snapshot=false` |
-| Access | Control | Local user management | Lazy-load `/v1/users` khi vao tab |
-| Fleet | Infrastructure | Agents, XDP mode, interfaces, map utilization | Polling dashboard endpoints |
-| Investigation | Infrastructure | Sampled event search | Recent events + `/v1/security-events/investigate` |
+| Dashboard | Operation | Tong quan traffic, decisions, health, current signal | Polling dashboard endpoints |
+| Incidents | Operation | Alerting, Telegram, ISP manual runbook | Polling dashboard endpoints + mutation theo action |
+| Detections | Operation | Observe anomalies/baselines/active rules | Polling dashboard endpoints, read-only posture |
+| Events | Operation | Sampled event search | Recent events + `/v1/security-events/investigate` |
+| Services | Configuration | Protected service registry | Polling dashboard endpoints |
+| Rules | Configuration | Rule CRUD | Lazy-load `/v1/rules` khi vao tab |
+| Whitelist | Configuration | Allow-list CRUD | Lazy-load `/v1/whitelist` khi vao tab |
+| Blacklist | Configuration | Manual/feed block-list visibility and manual CRUD | Lazy-load `/v1/blacklist/entries` khi vao tab |
+| Reputation | Threat Intelligence | Feed CRUD/sync + run/conflict visibility | Polling feed summary + lazy/action refresh |
+| Snapshots | Setting | Snapshot list, semantic diff, rollback | Lazy-load `/v1/snapshots?include_snapshot=false` |
+| Accounts | Setting | Local user management | Lazy-load `/v1/users` khi vao tab |
+| Nodes | Setting | Agents, XDP mode, interfaces, map utilization | Polling dashboard endpoints |
 
 Top bar:
 
@@ -104,7 +105,7 @@ UX constraints:
 
 ## 6. Feature spec
 
-### 6.1 Overview
+### 6.1 Dashboard
 
 Muc tieu: mot man hinh cho tinh trang Control Plane va data plane signal.
 
@@ -193,7 +194,7 @@ Actions:
 - Action luon la `drop`; non-drop action bi backend reject.
 - Disabled/expired manual blacklist khong vao active snapshot tiep theo nhung van giu history.
 
-### 6.7 Detection
+### 6.7 Detections
 
 Muc tieu: observe posture, khong pha tron voi CRUD workflow.
 
@@ -232,7 +233,7 @@ Actions:
 - Rollback goi `/v1/snapshots/rollback` va tao snapshot moi tu selected version.
 - Raw snapshot khong bi keo vao polling overview mac dinh.
 
-### 6.10 Access
+### 6.10 Accounts
 
 Hien thi:
 
@@ -247,7 +248,7 @@ Actions:
 - Admin revoke sessions bang `/v1/users/{id}/sessions/revoke`.
 - Backend co `/v1/me/password` de user doi password va clear `force_password_change`; dedicated self-service UI la backlog nho neu can expose trong topbar/profile.
 
-### 6.10 Fleet
+### 6.11 Nodes
 
 Hien thi:
 
@@ -256,7 +257,7 @@ Hien thi:
 - Interfaces: name, role, ifindex, MAC, link speed.
 - Map utilization neu agent report.
 
-### 6.11 Investigation
+### 6.12 Events
 
 Hien thi:
 

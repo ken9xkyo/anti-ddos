@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { Banner, FreshnessPill } from './components';
 import { formatTime } from './format';
-import { tabs, type Tab } from './navigation';
+import { navGroups, tabLabel, type Tab } from './navigation';
 import { OverviewView } from './views/OverviewView';
 import { IncidentsView } from './views/IncidentsView';
 import { ServicesView } from './views/ServicesView';
@@ -60,16 +60,28 @@ export function DashboardShell({
           </div>
         </div>
         <nav className="side-nav" aria-label="Dashboard views">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button key={tab.id} className={tab.id === activeTab ? 'active' : ''} onClick={() => setActiveTab(tab.id)} type="button">
-                <Icon size={16} />
-                <span>{tab.label}</span>
-                <small>{tab.section}</small>
-              </button>
-            );
-          })}
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <div className="nav-group-label">{group.label}</div>
+              <div className="nav-group-items">
+                {group.items.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      className={tab.id === activeTab ? 'active' : ''}
+                      onClick={() => setActiveTab(tab.id)}
+                      type="button"
+                      aria-current={tab.id === activeTab ? 'page' : undefined}
+                    >
+                      <Icon size={16} />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
       </aside>
 
@@ -77,7 +89,7 @@ export function DashboardShell({
         <header className="topbar">
           <div>
             <p className="eyebrow">Operations console</p>
-            <h1>{tabs.find((tab) => tab.id === activeTab)?.label ?? activeTab}</h1>
+            <h1>{tabLabel(activeTab)}</h1>
           </div>
           <div className="topbar-actions">
             <span className="user-chip">{user.username} · {user.role}</span>

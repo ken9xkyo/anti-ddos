@@ -152,7 +152,7 @@ services:
       control-api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${ADMIN_DASHBOARD_PORT:-8088}:8080"
+      - "0.0.0.0:${ADMIN_DASHBOARD_PORT:-8088}:8080"
     networks:
       - anti-ddos-mgmt
     security_opt:

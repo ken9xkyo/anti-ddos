@@ -12,22 +12,46 @@ import {
   Users
 } from 'lucide-react';
 
-export const tabs = [
-  { id: 'overview', label: 'Overview', section: 'Operations', icon: Gauge },
-  { id: 'incidents', label: 'Incidents', section: 'Operations', icon: AlertTriangle },
-  { id: 'services', label: 'Services', section: 'Policy', icon: Router },
-  { id: 'rules', label: 'Rules', section: 'Policy', icon: ListChecks },
-  { id: 'whitelist', label: 'Whitelist', section: 'Policy', icon: ShieldCheck },
-  { id: 'blacklist', label: 'Blacklist', section: 'Policy', icon: Ban },
-  { id: 'detection', label: 'Detection', section: 'Policy', icon: Activity },
-  { id: 'reputation', label: 'Reputation', section: 'Intelligence', icon: Ban },
-  { id: 'snapshots', label: 'Snapshots', section: 'Control', icon: DatabaseBackup },
-  { id: 'access', label: 'Access', section: 'Control', icon: Users },
-  { id: 'fleet', label: 'Fleet', section: 'Infrastructure', icon: Server },
-  { id: 'investigation', label: 'Investigation', section: 'Infrastructure', icon: Search }
+export const navGroups = [
+  {
+    label: 'Operation',
+    items: [
+      { id: 'overview', label: 'Dashboard', icon: Gauge },
+      { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
+      { id: 'detection', label: 'Detections', icon: Activity },
+      { id: 'investigation', label: 'Events', icon: Search }
+    ]
+  },
+  {
+    label: 'Configuration',
+    items: [
+      { id: 'services', label: 'Services', icon: Router },
+      { id: 'rules', label: 'Rules', icon: ListChecks },
+      { id: 'whitelist', label: 'Whitelist', icon: ShieldCheck },
+      { id: 'blacklist', label: 'Blacklist', icon: Ban }
+    ]
+  },
+  {
+    label: 'Threat Intelligence',
+    items: [
+      { id: 'reputation', label: 'Reputation', icon: Ban }
+    ]
+  },
+  {
+    label: 'Setting',
+    items: [
+      { id: 'snapshots', label: 'Snapshots', icon: DatabaseBackup },
+      { id: 'access', label: 'Accounts', icon: Users },
+      { id: 'fleet', label: 'Nodes', icon: Server }
+    ]
+  }
 ] as const;
 
-export type Tab = (typeof tabs)[number]['id'];
+export type Tab = (typeof navGroups)[number]['items'][number]['id'];
+
+export const tabs = navGroups.flatMap((group) => (
+  group.items.map((item) => ({ ...item, section: group.label }))
+));
 
 export function tabLabel(tab: Tab): string {
   return tabs.find((item) => item.id === tab)?.label ?? tab;
