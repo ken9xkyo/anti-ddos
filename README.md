@@ -1,67 +1,68 @@
 # Anti-DDoS Scrubbing Gateway eBPF/XDP
 
-Anti-DDoS Scrubbing Gateway la he thong loc DDoS L3/L4 dat truoc backend service. Traffic di vao WAN NIC cua scrubbing server duoc xu ly som bang XDP/eBPF; chi traffic hop le theo protected service allowlist moi duoc L2 MAC rewrite va chuyen tiep bang `XDP_REDIRECT` qua DEVMAP toi backend-facing interface.
+Anti-DDoS Scrubbing Gateway là hệ thống lọc DDoS L3/L4 đặt trước các dịch vụ backend. Lưu lượng đi vào WAN NIC của scrubbing server được xử lý sớm bằng XDP/eBPF; chỉ lưu lượng hợp lệ theo allowlist của protected service mới được L2 MAC rewrite và chuyển tiếp bằng `XDP_REDIRECT` qua DEVMAP tới interface hướng backend.
 
-MVP nay tap trung vao mot node Ubuntu 24.04, IPv4, native XDP, policy snapshot an toan, dashboard van hanh, Prometheus/Grafana va audit/RBAC. He thong khong terminate TLS, khong proxy HTTP, khong xu ly L7/DPI va khong thay the WAF.
+MVP này tập trung vào một node Ubuntu 24.04, IPv4, native XDP, policy snapshot an toàn, dashboard vận hành, Prometheus/Grafana và audit/RBAC. Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
 
-## Thanh Phan Chinh
+## Thành phần chính
 
-| Plane | Thanh phan | Vai tro |
+| Plane | Thành phần | Vai trò |
 |---|---|---|
-| Data Plane | XDP/eBPF, eBPF maps | Parse packet, drop/rate-limit/redirect, ghi counters va sampled events |
-| Forwarding Plane | L2 MAC rewrite, DEVMAP | Chi redirect traffic sach toi backend/service da khai bao |
-| Node Plane | Node Agent | Load/attach/rollback XDP, sync policy snapshot, expose `/metrics` |
-| Control Plane | Control API, PostgreSQL | Quan ly users, services, policies, feeds, snapshots, audit va rollback |
-| Management Plane | Admin Dashboard, Prometheus, Grafana | Hien thi realtime, metric, dieu tra event va dashboard van hanh |
+| Data Plane | XDP/eBPF, eBPF maps | Phân tích packet, drop/rate-limit/redirect, ghi bộ đếm và sự kiện lấy mẫu |
+| Forwarding Plane | L2 MAC rewrite, DEVMAP | Chỉ redirect lưu lượng sạch tới backend/service đã khai báo |
+| Node Plane | Node Agent | Load/attach/rollback XDP, đồng bộ policy snapshot, expose `/metrics` |
+| Control Plane | Control API, PostgreSQL | Quản lý người dùng, dịch vụ, policy, feed, snapshot, audit và rollback |
+| Management Plane | Admin Dashboard, Prometheus, Grafana | Hiển thị thời gian thực, metrics, điều tra event và dashboard vận hành |
 
-## Trang Thai Repo
+## Trạng thái repo
 
-- Phase 01-09 da co verification report trong `docs/reports/`.
-- Control API, Admin CLI, Agent va React/Vite Admin Dashboard da co source trong repo.
-- Prometheus scrape config va Grafana dashboard co san trong `deploy/`.
-- Compose lab stack chay PostgreSQL, Control API, Prometheus, Grafana va Admin Dashboard. Node Agent van chay tren host de tranh dua quyen XDP/NIC vao container.
+- Phase 01-08 đã hoàn tất theo trạng thái dự án trong `.specs/project/STATE.md` và `.specs/project/ROADMAP.md`.
+- Phase 09 Telegram ISP Runbook đang được lên kế hoạch.
+- Control API, Admin CLI, Agent và React/Vite Admin Dashboard đã có mã nguồn trong repo.
+- Prometheus scrape config và Grafana dashboard có sẵn trong `deploy/`.
+- Compose lab stack chạy PostgreSQL, Control API, Prometheus, Grafana và Admin Dashboard. Node Agent vẫn chạy trên host để tránh đưa quyền XDP/NIC vào container.
 
-## Canh Bao An Toan XDP/NIC
+## Cảnh báo an toàn XDP/NIC
 
-Khong attach XDP vao NIC that neu chua xac nhan ro WAN/LAN/output interface role va protected backend service inventory. Cac lenh quick start Docker Compose chi khoi dong management/control stack; chung khong attach XDP va khong tac dong truc tiep toi traffic production.
+Không attach XDP vào NIC thật nếu chưa xác nhận rõ vai trò của WAN/LAN/output interface và inventory của protected backend service. Các lệnh khởi động nhanh bằng Docker Compose chỉ khởi động management/control stack; chúng không attach XDP và không tác động trực tiếp tới lưu lượng production.
 
-Khi can chay Agent, uu tien VETH/lab interface. Neu chay tren NIC that, can co phe duyet van hanh rieng va rollback plan.
+Khi cần chạy Agent, hãy ưu tiên VETH/lab interface. Nếu chạy trên NIC thật, cần có phê duyệt vận hành riêng và rollback plan.
 
-## Quick Start Docker Compose
+## Khởi động nhanh bằng Docker Compose
 
-Yeu cau: Docker Engine va Docker Compose plugin.
+Yêu cầu: Docker Engine và Docker Compose plugin.
 
 ```bash
 make env-init
-# Sua cac gia tri change-me-* trong .env truoc khi dung ngoai lab local.
+# Sửa các giá trị change-me-* trong .env trước khi dùng ngoài lab cục bộ.
 
 make compose-config
 make deploy
 make dev-health
 ```
 
-Bootstrap Admin dau tien:
+Khởi tạo Admin đầu tiên:
 
 ```bash
 make admin-bootstrap
 ```
 
-Non-interactive lab use:
+Dùng trong lab không tương tác:
 
 ```bash
 ADMIN_PASSWORD='replace-with-a-strong-password' make admin-bootstrap
 ```
 
-Mo cac giao dien:
+Mở các giao diện:
 
 - Admin Dashboard: `http://127.0.0.1:8088`
 - Control API: `http://127.0.0.1:8080`
 - Prometheus: `http://127.0.0.1:9090`
 - Grafana: `http://127.0.0.1:3000`
 
-Tai lieu chi tiet: [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md).
+Tài liệu chi tiết: [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md).
 
-## Workflow Dev/Test/Deploy
+## Quy trình Dev/Test/Deploy
 
 ```bash
 make help
@@ -70,26 +71,26 @@ make dev-logs
 make dev-down
 ```
 
-Kiem thu nhanh:
+Kiểm thử nhanh:
 
 ```bash
 make test
 ```
 
-Gate day du hon cho admin dashboard va integration PostgreSQL:
+Bộ kiểm thử đầy đủ hơn cho admin dashboard và integration PostgreSQL:
 
 ```bash
 make test-all
 ```
 
-Mot so integration test PostgreSQL se tu dung PostgreSQL container rieng khi khong co `ANTI_DDOS_CONTROL_TEST_DSN`.
-Co the chay rieng theo domain bang cac target `control-core-postgres-test`, `observability-postgres-test`,
-`anomaly-auto-enforce-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` va
+Một số kiểm thử tích hợp PostgreSQL sẽ tự dùng PostgreSQL container riêng khi không có `ANTI_DDOS_CONTROL_TEST_DSN`.
+Có thể chạy riêng theo nhóm bằng các target `control-core-postgres-test`, `observability-postgres-test`,
+`anomaly-auto-enforce-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` và
 `dashboard-postgres-test`.
 
-## Chay Node Agent Tren Host
+## Chạy Node Agent trên host
 
-Prometheus trong compose scrape Agent qua `host.docker.internal:9091`. Agent chi nen chay sau khi da chot interface lab/an toan:
+Prometheus trong compose thu thập metrics từ Agent qua `host.docker.internal:9091`. Agent chỉ nên chạy sau khi đã chốt interface lab/an toàn:
 
 ```bash
 make agent-build
@@ -103,4 +104,4 @@ sudo env \
   build/agent/anti-ddos-agent
 ```
 
-Neu chua co interface duoc phe duyet, dung cac lab script VETH thay vi Agent tren NIC that.
+Nếu chưa có interface được phê duyệt, hãy dùng các script lab VETH thay vì Agent trên NIC thật.
