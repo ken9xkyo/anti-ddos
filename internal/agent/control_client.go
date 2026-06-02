@@ -126,6 +126,7 @@ func RunControlSync(ctx context.Context, cfg Config, runtime *Runtime, metrics *
 				continue
 			}
 			result, applyErr := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
+				Context:            ctx,
 				SnapshotPath:       cfg.SnapshotPath,
 				ObjectChecksum:     runtime.ObjectChecksum,
 				MemoryBudgetBytes:  cfg.PolicyMemoryBudgetBytes,

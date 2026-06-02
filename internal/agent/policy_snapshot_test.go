@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -266,6 +267,27 @@ func TestApplyPolicySnapshotFailsBeforeMapChangesWhenForwardingResolutionFails(t
 	}
 }
 
+func TestApplyPolicySnapshotPassesContextToForwardingResolver(t *testing.T) {
+	runtime := newPolicyApplyTestRuntime(t, false)
+	snapshot := signedUnresolvedTestPolicySnapshot(t, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	resolver := &policyApplyTestResolver{}
+
+	result, err := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
+		Context:            ctx,
+		ObjectChecksum:     "obj",
+		Now:                time.Now(),
+		ForwardingResolver: resolver,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ApplyPolicySnapshot() error = %v, want context.Canceled", err)
+	}
+	if result.ErrorStage != "resolve_forwarding" {
+		t.Fatalf("unexpected failure result: %#v", result)
+	}
+}
+
 func TestApplyPolicySnapshotFlipsRuntimeAndPersistsLastValid(t *testing.T) {
 	runtime := newPolicyApplyTestRuntime(t, false)
 	path := filepath.Join(t.TempDir(), "last-valid.json")
@@ -453,8 +475,11 @@ type policyApplyTestResolver struct {
 	err   error
 }
 
-func (r *policyApplyTestResolver) ResolveService(req ServiceResolveRequest) (ResolvedService, error) {
+func (r *policyApplyTestResolver) ResolveService(ctx context.Context, req ServiceResolveRequest) (ResolvedService, error) {
 	r.calls++
+	if err := ctx.Err(); err != nil {
+		return ResolvedService{}, err
+	}
 	if r.err != nil {
 		return ResolvedService{}, r.err
 	}

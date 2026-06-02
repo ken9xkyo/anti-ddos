@@ -8,7 +8,7 @@ Phase 04 forwarding is fail-closed. A packet is redirected only after it matches
 |---|---|---|
 | Service not allowlisted | XDP drops with `REASON_NOT_ALLOWED_SERVICE`; backend must receive nothing. | Check `anti_ddos_not_allowed_service_total` by protocol and confirm service registry/snapshot input. |
 | Output interface missing or down | Agent resolver rejects the service before policy publish; active snapshot stays unchanged. | Check Agent apply error, link state, ifindex, and intended WAN/LAN/output role. |
-| Neighbor unresolved or MAC missing | Resolver rejects publish; if stale/corrupt map value reaches XDP, packet drops with `REASON_NEIGHBOR_UNRESOLVED`. | Check `ip neigh`, backend/next-hop reachability, and `anti_ddos_neighbor_resolution_status`. |
+| Neighbor unresolved or MAC missing | Agent first asks the kernel to resolve/refresh the neighbor with netlink `NTF_USE` and polls briefly. If MAC is still missing or unresolved, resolver rejects publish; if stale/corrupt map value reaches XDP, packet drops with `REASON_NEIGHBOR_UNRESOLVED`. | Check `ip neigh`, backend/next-hop reachability, and `anti_ddos_neighbor_resolution_status`. Operator ping should not be required for normal service enable. |
 | Missing or wrong DEVMAP target | Redirect helper falls back to `XDP_DROP`; XDP increments `REASON_REDIRECT_ERROR`. | Check `tx_devmap` entry, output ifindex, map capacity, and `anti_ddos_redirect_errors_total`. |
 | Backend return path asymmetric | Forward packet keeps original source/destination IP; return traffic may bypass the gateway. | Confirm backend routing and upstream ACLs; do not troubleshoot this as NAT failure. |
 

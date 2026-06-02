@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,6 +16,7 @@ const (
 )
 
 type PolicyApplyOptions struct {
+	Context            context.Context
 	SnapshotPath       string
 	ObjectChecksum     string
 	Now                time.Time
@@ -51,6 +53,10 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 	if options.ObjectChecksum == "" {
 		options.ObjectChecksum = runtime.ObjectChecksum
 	}
+	ctx := options.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	result := PolicyApplyResult{
 		Version: snapshot.Version,
@@ -80,7 +86,7 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 		return failPolicyApply(result, "validate", err)
 	}
 
-	snapshot, err = resolvePolicySnapshotServices(snapshot, options.ForwardingResolver)
+	snapshot, err = resolvePolicySnapshotServices(ctx, snapshot, options.ForwardingResolver)
 	if err != nil {
 		return failPolicyApply(result, "resolve_forwarding", err)
 	}
@@ -181,7 +187,7 @@ func failPolicyApply(result PolicyApplyResult, stage string, err error) (PolicyA
 	return result, err
 }
 
-func resolvePolicySnapshotServices(snapshot PolicySnapshot, resolver ForwardingResolver) (PolicySnapshot, error) {
+func resolvePolicySnapshotServices(ctx context.Context, snapshot PolicySnapshot, resolver ForwardingResolver) (PolicySnapshot, error) {
 	snapshot = normalizePolicySnapshot(snapshot)
 	for i, service := range snapshot.Services {
 		if !serviceNeedsResolution(service) {
@@ -190,7 +196,7 @@ func resolvePolicySnapshotServices(snapshot PolicySnapshot, resolver ForwardingR
 		if resolver == nil {
 			return PolicySnapshot{}, fmt.Errorf("service %d forwarding metadata is unresolved and no resolver is configured", service.ServiceID)
 		}
-		resolved, err := resolver.ResolveService(ServiceResolveRequest{
+		resolved, err := resolver.ResolveService(ctx, ServiceResolveRequest{
 			ServiceID:          service.ServiceID,
 			ForwardingPolicyID: service.ForwardingPolicyID,
 			DstV4:              service.DstV4,

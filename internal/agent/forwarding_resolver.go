@@ -1,14 +1,21 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+)
+
+const (
+	defaultNeighborProbeTimeout  = 2 * time.Second
+	defaultNeighborProbeInterval = 100 * time.Millisecond
 )
 
 type ServiceResolveRequest struct {
@@ -31,13 +38,14 @@ type ResolvedService struct {
 }
 
 type ForwardingResolver interface {
-	ResolveService(ServiceResolveRequest) (ResolvedService, error)
+	ResolveService(context.Context, ServiceResolveRequest) (ResolvedService, error)
 }
 
 type netlinkClient interface {
 	LinkByName(string) (netlink.Link, error)
 	RouteGet(net.IP) ([]netlink.Route, error)
 	NeighList(int, int) ([]netlink.Neigh, error)
+	NeighSet(*netlink.Neigh) error
 }
 
 type systemNetlinkClient struct{}
@@ -54,21 +62,61 @@ func (systemNetlinkClient) NeighList(linkIndex, family int) ([]netlink.Neigh, er
 	return netlink.NeighList(linkIndex, family)
 }
 
+func (systemNetlinkClient) NeighSet(neighbor *netlink.Neigh) error {
+	return netlink.NeighSet(neighbor)
+}
+
 type NetlinkForwardingResolver struct {
-	client netlinkClient
+	client                netlinkClient
+	neighborProbeTimeout  time.Duration
+	neighborProbeInterval time.Duration
 }
 
-func NewNetlinkForwardingResolver() *NetlinkForwardingResolver {
-	return &NetlinkForwardingResolver{client: systemNetlinkClient{}}
+// NetlinkForwardingResolverOption customizes netlink forwarding resolution.
+type NetlinkForwardingResolverOption func(*NetlinkForwardingResolver)
+
+// WithNeighborProbeTiming configures the active neighbor probe wait window.
+func WithNeighborProbeTiming(timeout, interval time.Duration) NetlinkForwardingResolverOption {
+	return func(r *NetlinkForwardingResolver) {
+		if timeout < 0 {
+			timeout = 0
+		}
+		if interval < 0 {
+			interval = 0
+		}
+		r.neighborProbeTimeout = timeout
+		r.neighborProbeInterval = interval
+	}
 }
 
-func newNetlinkForwardingResolver(client netlinkClient) *NetlinkForwardingResolver {
-	return &NetlinkForwardingResolver{client: client}
+// NewNetlinkForwardingResolver creates a resolver backed by host netlink.
+func NewNetlinkForwardingResolver(options ...NetlinkForwardingResolverOption) *NetlinkForwardingResolver {
+	return newNetlinkForwardingResolver(systemNetlinkClient{}, options...)
 }
 
-func (r *NetlinkForwardingResolver) ResolveService(req ServiceResolveRequest) (ResolvedService, error) {
+func newNetlinkForwardingResolver(client netlinkClient, options ...NetlinkForwardingResolverOption) *NetlinkForwardingResolver {
+	resolver := &NetlinkForwardingResolver{
+		client:                client,
+		neighborProbeTimeout:  defaultNeighborProbeTimeout,
+		neighborProbeInterval: defaultNeighborProbeInterval,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(resolver)
+		}
+	}
+	return resolver
+}
+
+func (r *NetlinkForwardingResolver) ResolveService(ctx context.Context, req ServiceResolveRequest) (ResolvedService, error) {
 	if r == nil || r.client == nil {
 		return ResolvedService{}, errors.New("nil forwarding resolver")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return ResolvedService{}, fmt.Errorf("resolve forwarding cancelled: %w", err)
 	}
 	dstIP, err := parseResolveV4(req.DstV4)
 	if err != nil {
@@ -110,20 +158,9 @@ func (r *NetlinkForwardingResolver) ResolveService(req ServiceResolveRequest) (R
 		neighborIP = dstIP
 	}
 
-	neighs, err := r.client.NeighList(attrs.Index, netlink.FAMILY_V4)
+	neighbor, dstMAC, err := r.resolveNeighbor(ctx, attrs.Index, req.OutputInterface, neighborIP)
 	if err != nil {
-		return ResolvedService{}, fmt.Errorf("neighbor lookup on %s: %w", req.OutputInterface, err)
-	}
-	neighbor, ok := selectNeighbor(neighs, neighborIP)
-	if !ok {
-		return ResolvedService{}, fmt.Errorf("neighbor %s on %s is unresolved", neighborIP.String(), req.OutputInterface)
-	}
-	dstMAC, err := validateHardwareAddr(neighbor.HardwareAddr)
-	if err != nil {
-		return ResolvedService{}, fmt.Errorf("neighbor %s MAC: %w", neighborIP.String(), err)
-	}
-	if !isResolvedNeighborState(neighbor.State) {
-		return ResolvedService{}, fmt.Errorf("neighbor %s on %s is %s", neighborIP.String(), req.OutputInterface, neighborStateName(neighbor.State))
+		return ResolvedService{}, err
 	}
 
 	return ResolvedService{
@@ -147,6 +184,116 @@ func (r *NetlinkForwardingResolver) ResolveService(req ServiceResolveRequest) (R
 		NeighborTarget:  neighborIP.String(),
 		NeighborState:   neighborStateName(neighbor.State),
 	}, nil
+}
+
+func (r *NetlinkForwardingResolver) resolveNeighbor(ctx context.Context, ifindex int, ifname string, target net.IP) (netlink.Neigh, net.HardwareAddr, error) {
+	neighbor, dstMAC, resolved, _, err := r.lookupResolvedNeighbor(ifindex, ifname, target)
+	if err != nil {
+		return netlink.Neigh{}, nil, err
+	}
+	if resolved {
+		return neighbor, dstMAC, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return netlink.Neigh{}, nil, fmt.Errorf("neighbor probe for %s on %s cancelled: %w", target.String(), ifname, err)
+	}
+	if err := r.probeNeighbor(ifindex, ifname, target); err != nil {
+		return netlink.Neigh{}, nil, err
+	}
+	return r.waitForResolvedNeighbor(ctx, ifindex, ifname, target)
+}
+
+func (r *NetlinkForwardingResolver) lookupResolvedNeighbor(ifindex int, ifname string, target net.IP) (netlink.Neigh, net.HardwareAddr, bool, string, error) {
+	neighs, err := r.client.NeighList(ifindex, netlink.FAMILY_V4)
+	if err != nil {
+		return netlink.Neigh{}, nil, false, "", fmt.Errorf("neighbor lookup on %s: %w", ifname, err)
+	}
+	neighbor, ok := selectNeighbor(neighs, target)
+	if !ok {
+		return netlink.Neigh{}, nil, false, "missing", nil
+	}
+	state := neighborStateName(neighbor.State)
+	if !isResolvedNeighborState(neighbor.State) {
+		return neighbor, nil, false, state, nil
+	}
+	dstMAC, err := validateHardwareAddr(neighbor.HardwareAddr)
+	if err != nil {
+		return netlink.Neigh{}, nil, false, state, fmt.Errorf("neighbor %s MAC: %w", target.String(), err)
+	}
+	return neighbor, dstMAC, true, state, nil
+}
+
+func (r *NetlinkForwardingResolver) probeNeighbor(ifindex int, ifname string, target net.IP) error {
+	neighbor := &netlink.Neigh{
+		LinkIndex: ifindex,
+		Family:    netlink.FAMILY_V4,
+		State:     unix.NUD_NONE,
+		Type:      unix.RTN_UNICAST,
+		Flags:     netlink.NTF_USE,
+		IP:        cloneIP(target),
+	}
+	if err := r.client.NeighSet(neighbor); err != nil {
+		return fmt.Errorf("neighbor probe for %s on %s: %w", target.String(), ifname, err)
+	}
+	return nil
+}
+
+func (r *NetlinkForwardingResolver) waitForResolvedNeighbor(ctx context.Context, ifindex int, ifname string, target net.IP) (netlink.Neigh, net.HardwareAddr, error) {
+	if r.neighborProbeTimeout <= 0 || r.neighborProbeInterval <= 0 {
+		return r.checkResolvedNeighborAfterProbe(ctx, ifindex, ifname, target)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, r.neighborProbeTimeout)
+	defer cancel()
+	for {
+		if err := waitCtx.Err(); err != nil {
+			return netlink.Neigh{}, nil, r.neighborWaitError(ctx, ifname, target, "")
+		}
+		neighbor, dstMAC, resolved, lastState, err := r.lookupResolvedNeighbor(ifindex, ifname, target)
+		if err != nil {
+			return netlink.Neigh{}, nil, err
+		}
+		if resolved {
+			return neighbor, dstMAC, nil
+		}
+		timer := time.NewTimer(r.neighborProbeInterval)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return netlink.Neigh{}, nil, r.neighborWaitError(ctx, ifname, target, lastState)
+		case <-timer.C:
+		}
+	}
+}
+
+func (r *NetlinkForwardingResolver) checkResolvedNeighborAfterProbe(ctx context.Context, ifindex int, ifname string, target net.IP) (netlink.Neigh, net.HardwareAddr, error) {
+	if err := ctx.Err(); err != nil {
+		return netlink.Neigh{}, nil, r.neighborWaitError(ctx, ifname, target, "")
+	}
+	neighbor, dstMAC, resolved, lastState, err := r.lookupResolvedNeighbor(ifindex, ifname, target)
+	if err != nil {
+		return netlink.Neigh{}, nil, err
+	}
+	if resolved {
+		return neighbor, dstMAC, nil
+	}
+	return netlink.Neigh{}, nil, r.neighborWaitError(context.Background(), ifname, target, lastState)
+}
+
+func (r *NetlinkForwardingResolver) neighborWaitError(ctx context.Context, ifname string, target net.IP, lastState string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("neighbor probe for %s on %s cancelled: %w", target.String(), ifname, err)
+	}
+	message := fmt.Sprintf("neighbor %s on %s is unresolved after probe timeout %s", target.String(), ifname, r.neighborProbeTimeout)
+	if lastState != "" && lastState != "missing" {
+		message += fmt.Sprintf(" (last state %s)", lastState)
+	}
+	return errors.New(message)
 }
 
 func validateResolveRequest(req ServiceResolveRequest) error {
@@ -196,6 +343,12 @@ func selectNeighbor(neighs []netlink.Neigh, target net.IP) (netlink.Neigh, bool)
 		}
 	}
 	return netlink.Neigh{}, false
+}
+
+func cloneIP(ip net.IP) net.IP {
+	out := make(net.IP, len(ip))
+	copy(out, ip)
+	return out
 }
 
 func validateHardwareAddr(mac net.HardwareAddr) (net.HardwareAddr, error) {

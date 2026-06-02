@@ -3,6 +3,7 @@
 
 Last updated: 2026-06-02
 
+- [agent-neighbor-probe](agent-neighbor-probe.md) - Agent probes neighbor with NTF_USE before fail-closed | flow | agent, forwarding, neighbor
 - [telegram-token-config](telegram-token-config.md) - Telegram token is DB raw + API/UI masked | flow | telegram, secrets, dashboard
 - [phase4-service-forwarding-ui](phase4-service-forwarding-ui.md) - UI service add uses Agent interface metadata | flow | phase4, dashboard, forwarding
 - [ixgbe-devmap-target-xdp-pass](ixgbe-devmap-target-xdp-pass.md) - ixgbe DEVMAP target needs pass-through XDP queues | gotcha | xdp, devmap, ixgbe, forwarding
