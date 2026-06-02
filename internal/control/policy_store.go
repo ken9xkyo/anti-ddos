@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -718,6 +719,44 @@ LEFT JOIN rules r ON r.id = b.rule_id
 	return out, rows.Err()
 }
 
+func (s *Store) ListBlacklistEntryRows(ctx context.Context, query BlacklistEntriesQuery) (BlacklistEntriesPage, error) {
+	query = normalizeBlacklistEntriesQuery(query)
+	where, args := blacklistEntriesWhere(query)
+	page := BlacklistEntriesPage{Page: query.Page, PageSize: query.PageSize}
+
+	countSQL := blacklistEntriesCTE() + ` SELECT count(*) FROM combined c ` + where
+	var total int64
+	if err := s.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return page, err
+	}
+	page.Total = uint32(total)
+
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	args = append(args, int64(query.PageSize), int64(query.Page)*int64(query.PageSize))
+	rows, err := s.pool.Query(ctx, blacklistEntriesCTE()+`
+SELECT c.id, c.ebpf_id, c.cidr, c.score, c.action, c.source, c.source_name, c.rule_id, c.reason, c.expires_at,
+       c.enabled, c.status, c.origin, c.editable, c.created_at, c.updated_at
+FROM combined c
+`+where+fmt.Sprintf(` ORDER BY c.created_at DESC, c.origin, c.cidr, c.id LIMIT $%d OFFSET $%d`, limitArg, offsetArg), args...)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	page.Items = make([]BlacklistEntryRow, 0)
+	for rows.Next() {
+		var row BlacklistEntryRow
+		if err := scanBlacklistEntryRow(rows, &row); err != nil {
+			return page, err
+		}
+		page.Items = append(page.Items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	return page, nil
+}
+
 func parseBlacklistEntryQuery(values map[string][]string) (BlacklistEntryQuery, error) {
 	query := BlacklistEntryQuery{
 		Search: first(values, "q"),
@@ -738,12 +777,79 @@ func parseBlacklistEntryQuery(values map[string][]string) (BlacklistEntryQuery, 
 	return query, nil
 }
 
+func parseBlacklistEntriesQuery(values map[string][]string) (BlacklistEntriesQuery, error) {
+	query := BlacklistEntriesQuery{
+		Search: first(values, "q"),
+		Source: strings.TrimSpace(first(values, "source")),
+		Origin: blacklistQueryValue(first(values, "origin"), "all"),
+		State:  blacklistQueryValue(first(values, "state"), "all"),
+		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.Origin {
+	case "all", "manual", "feed":
+	default:
+		return query, fmt.Errorf("origin must be all, manual, or feed")
+	}
+	switch query.State {
+	case "all", "enabled", "disabled":
+	default:
+		return query, fmt.Errorf("state must be all, enabled, or disabled")
+	}
+	switch query.Expiry {
+	case "all", "valid", "expired", "none":
+	default:
+		return query, fmt.Errorf("expiry must be all, valid, expired, or none")
+	}
+	page, err := parseOptionalUintQuery(values, "page")
+	if err != nil {
+		return query, err
+	}
+	pageSize, err := parseOptionalUintQuery(values, "page_size")
+	if err != nil {
+		return query, err
+	}
+	query.Page = page
+	query.PageSize = pageSize
+	return normalizeBlacklistEntriesQuery(query), nil
+}
+
 func blacklistQueryValue(value, fallback string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return fallback
 	}
 	return value
+}
+
+func normalizeBlacklistEntriesQuery(query BlacklistEntriesQuery) BlacklistEntriesQuery {
+	if query.Origin == "" {
+		query.Origin = "all"
+	}
+	if query.State == "" {
+		query.State = "all"
+	}
+	if query.Expiry == "" {
+		query.Expiry = "all"
+	}
+	if query.PageSize == 0 {
+		query.PageSize = 25
+	}
+	if query.PageSize > 100 {
+		query.PageSize = 100
+	}
+	return query
+}
+
+func parseOptionalUintQuery(values map[string][]string, key string) (uint32, error) {
+	raw := strings.TrimSpace(first(values, key))
+	if raw == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative integer", key)
+	}
+	return uint32(parsed), nil
 }
 
 func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
@@ -780,6 +886,98 @@ func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
+func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
+	clauses := make([]string, 0)
+	args := make([]any, 0)
+
+	if search := strings.TrimSpace(query.Search); search != "" {
+		args = append(args, "%"+search+"%")
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(c.cidr ILIKE $%d OR c.source ILIKE $%d OR c.source_name ILIKE $%d OR c.reason ILIKE $%d OR c.rule_id ILIKE $%d OR c.rule_name ILIKE $%d OR c.status ILIKE $%d)`, idx, idx, idx, idx, idx, idx, idx))
+	}
+	if source := strings.TrimSpace(query.Source); source != "" {
+		args = append(args, source)
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf("(LOWER(c.source) = LOWER($%d) OR LOWER(c.source_name) = LOWER($%d))", idx, idx))
+	}
+	switch blacklistQueryValue(query.Origin, "all") {
+	case "manual":
+		clauses = append(clauses, "c.origin = 'manual'")
+	case "feed":
+		clauses = append(clauses, "c.origin = 'feed'")
+	}
+	switch blacklistQueryValue(query.State, "all") {
+	case "enabled":
+		clauses = append(clauses, "c.enabled")
+	case "disabled":
+		clauses = append(clauses, "NOT c.enabled")
+	}
+	switch blacklistQueryValue(query.Expiry, "all") {
+	case "valid":
+		clauses = append(clauses, "(c.expires_at IS NULL OR c.expires_at > now())")
+	case "expired":
+		clauses = append(clauses, "c.expires_at IS NOT NULL AND c.expires_at <= now()")
+	case "none":
+		clauses = append(clauses, "c.expires_at IS NULL")
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func blacklistEntriesCTE() string {
+	return `WITH combined AS (
+SELECT b.id::text AS id,
+       b.ebpf_id AS ebpf_id,
+       b.ip_or_cidr::text AS cidr,
+       b.score AS score,
+       b.action AS action,
+       b.source AS source,
+       ''::text AS source_name,
+       COALESCE(b.rule_id::text, '') AS rule_id,
+       b.reason AS reason,
+       b.expires_at AS expires_at,
+       b.enabled AS enabled,
+       CASE WHEN b.enabled THEN 'enabled' ELSE 'disabled' END AS status,
+       'manual'::text AS origin,
+       true AS editable,
+       b.created_at AS created_at,
+       b.updated_at AS updated_at,
+       COALESCE(r.name, '') AS rule_name
+FROM manual_blacklist_entries b
+LEFT JOIN rules r ON r.id = b.rule_id
+UNION ALL
+SELECT re.id::text AS id,
+       re.ebpf_id AS ebpf_id,
+       re.ip_or_cidr::text AS cidr,
+       re.score AS score,
+       re.action AS action,
+       CASE
+           WHEN LOWER(fs.type) IN ('abuseipdb', 'abuseipdb_v2') THEN 'abuseipdb'
+           WHEN LOWER(fs.type) IN ('spamhaus', 'spamhaus_drop') THEN 'spamhaus_drop'
+           WHEN LOWER(fs.type) IN ('team_cymru', 'cymru', 'bogon', 'fullbogon') THEN 'team_cymru'
+           WHEN LOWER(fs.type) IN ('internal', 'internal_http_json', 'json') THEN 'internal_json'
+           ELSE LOWER(fs.type)
+       END AS source,
+       fs.name AS source_name,
+       ''::text AS rule_id,
+       re.reason AS reason,
+       re.expires_at AS expires_at,
+       (fs.enabled AND re.status = 'active') AS enabled,
+       re.status AS status,
+       'feed'::text AS origin,
+       false AS editable,
+       re.first_seen_at AS created_at,
+       re.last_seen_at AS updated_at,
+       ''::text AS rule_name
+FROM reputation_entries re
+JOIN feed_sources fs ON fs.id = re.source_id
+WHERE re.status <> 'inactive'
+  AND re.action = 'drop'
+)`
+}
+
 func scanBlacklistEntry(row rowScanner, entry *BlacklistEntry) error {
 	var expires *time.Time
 	if err := row.Scan(
@@ -793,6 +991,32 @@ func scanBlacklistEntry(row rowScanner, entry *BlacklistEntry) error {
 		&entry.Reason,
 		&expires,
 		&entry.Enabled,
+		&entry.CreatedAt,
+		&entry.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	entry.ExpiresAt = expires
+	return nil
+}
+
+func scanBlacklistEntryRow(row rowScanner, entry *BlacklistEntryRow) error {
+	var expires *time.Time
+	if err := row.Scan(
+		&entry.ID,
+		&entry.EBPFID,
+		&entry.CIDR,
+		&entry.Score,
+		&entry.Action,
+		&entry.Source,
+		&entry.SourceName,
+		&entry.RuleID,
+		&entry.Reason,
+		&expires,
+		&entry.Enabled,
+		&entry.Status,
+		&entry.Origin,
+		&entry.Editable,
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
 	); err != nil {

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, FormControlLabel, Stack, TextField } from '@mui/material';
-import { GridColDef } from '@mui/x-data-grid';
+import { GridColDef, GridPaginationModel } from '@mui/x-data-grid';
 import { Ban, Plus, Save, Trash2 } from 'lucide-react';
 import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { DataToolbar, PanelHeader, SearchField, StatusPill } from '../components';
 import { formatDateTime } from '../format';
-import type { BlacklistEntry, BlacklistFilters, BlacklistInput } from '../types';
+import type { BlacklistEntriesPage, BlacklistEntryRow, BlacklistFilters, BlacklistInput } from '../types';
 
 type BlacklistForm = {
   reason: string;
@@ -29,21 +29,24 @@ const emptyForm: BlacklistForm = {
 };
 
 export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
-  const [entries, setEntries] = useState<BlacklistEntry[]>([]);
+  const [pageData, setPageData] = useState<BlacklistEntriesPage>({ items: [], total: 0, page: 0, page_size: 25 });
+  const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
-  const [filters, setFilters] = useState<BlacklistFilters>({ state: 'all', expiry: 'all' });
+  const [filters, setFilters] = useState<BlacklistFilters>({ origin: 'all', state: 'all', expiry: 'all' });
   const [mode, setMode] = useState<'create' | 'edit' | ''>('');
-  const [target, setTarget] = useState<BlacklistEntry | null>(null);
+  const [target, setTarget] = useState<BlacklistEntryRow | null>(null);
   const [form, setForm] = useState<BlacklistForm>(emptyForm);
-  const [disableTarget, setDisableTarget] = useState<BlacklistEntry | null>(null);
+  const [disableTarget, setDisableTarget] = useState<BlacklistEntryRow | null>(null);
   const [reason, setReason] = useState('disable blacklist entry');
   const firstLoad = useRef(true);
 
-  const load = async (nextFilters: BlacklistFilters) => {
+  const entries = pageData.items;
+
+  const load = async (nextFilters: BlacklistFilters, nextPagination: GridPaginationModel) => {
     try {
       setLoading(true);
-      setEntries(await api.blacklist(nextFilters));
+      setPageData(await api.blacklistEntries(nextFilters, nextPagination.page, nextPagination.pageSize));
       setResult('');
     } catch (err) {
       setResult(err instanceof Error ? err.message : 'load blacklist failed');
@@ -56,25 +59,46 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
     const delay = firstLoad.current ? 0 : 250;
     firstLoad.current = false;
     const timer = window.setTimeout(() => {
-      void load(filters);
+      void load(filters, paginationModel);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [filters]);
+  }, [filters, paginationModel]);
+
+  const updateFilters = (patch: Partial<BlacklistFilters>) => {
+    setFilters((current) => ({ ...current, ...patch }));
+    setPaginationModel((current) => ({ ...current, page: 0 }));
+  };
 
   const hasActiveFilters = Boolean(
     filters.q?.trim() ||
     filters.source?.trim() ||
+    (filters.origin && filters.origin !== 'all') ||
     (filters.state && filters.state !== 'all') ||
     (filters.expiry && filters.expiry !== 'all')
   );
 
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'cidr', headerName: 'CIDR', flex: 1, minWidth: 155 },
-    { field: 'source', headerName: 'Source', width: 120 },
+    { field: 'origin', headerName: 'Origin', width: 105 },
+    {
+      field: 'source',
+      headerName: 'Source',
+      width: 160,
+      valueGetter: (_, row) => row.source_name ? `${row.source_name} (${row.source})` : row.source
+    },
     { field: 'score', headerName: 'Score', width: 90 },
     { field: 'rule_id', headerName: 'Rule ID', width: 155, valueGetter: (_, row) => row.rule_id || 'none' },
     { field: 'expires_at', headerName: 'Expires', width: 150, valueFormatter: (value) => formatDateTime(value as string | undefined) },
-    { field: 'enabled', headerName: 'State', width: 105, renderCell: (params) => <StatusPill state={params.value ? 'warn' : 'off'} text={params.value ? 'enabled' : 'disabled'} /> },
+    {
+      field: 'enabled',
+      headerName: 'State',
+      width: 120,
+      renderCell: (params) => {
+        const row = params.row as BlacklistEntryRow;
+        const text = row.origin === 'feed' ? row.status ?? (row.enabled ? 'active' : 'disabled') : row.enabled ? 'enabled' : 'disabled';
+        return <StatusPill state={row.enabled ? 'warn' : 'off'} text={text} />;
+      }
+    },
     { field: 'reason', headerName: 'Reason', flex: 1, minWidth: 170 },
     {
       field: 'actions',
@@ -82,7 +106,8 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
       width: 150,
       sortable: false,
       renderCell: (params) => {
-        const row = params.row as BlacklistEntry;
+        const row = params.row as BlacklistEntryRow;
+        if (!row.editable || row.origin !== 'manual') return <span className="muted">feed read only</span>;
         if (!canMutate) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
@@ -103,7 +128,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
     setMode('create');
   };
 
-  const openEdit = (entry: BlacklistEntry) => {
+  const openEdit = (entry: BlacklistEntryRow) => {
     setTarget(entry);
     setForm({
       reason: `update ${entry.cidr}`,
@@ -128,7 +153,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
         setResult(`${input.cidr} created`);
       }
       setMode('');
-      await load(filters);
+      await load(filters, paginationModel);
     } catch (err) {
       setResult(err instanceof Error ? err.message : 'blacklist mutation failed');
     }
@@ -140,7 +165,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
       await api.disableBlacklist(disableTarget.id, reason);
       setResult(`${disableTarget.cidr} disabled`);
       setDisableTarget(null);
-      await load(filters);
+      await load(filters, paginationModel);
     } catch (err) {
       setResult(err instanceof Error ? err.message : 'disable blacklist failed');
     }
@@ -152,15 +177,23 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
         <PanelHeader
           icon={<Ban size={18} />}
           title="Blacklist CRUD"
-          eyebrow={hasActiveFilters ? `${entries.length} matching block entries` : `${entries.length} block entries`}
+          eyebrow={hasActiveFilters ? `${pageData.total} matching block entries` : `${pageData.total} block entries`}
           actions={canMutate ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add blacklist</button> : null}
         />
         <DataToolbar className="whitelist-toolbar">
-          <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => setFilters({ ...filters, q: value })} placeholder="cidr, source, reason, rule" />
-          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => setFilters({ ...filters, source: value })} placeholder="manual" />
+          <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => updateFilters({ q: value })} placeholder="cidr, source, reason, rule" />
+          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => updateFilters({ source: value })} placeholder="manual, abuseipdb" />
+          <label>
+            Origin
+            <select value={filters.origin ?? 'all'} onChange={(event) => updateFilters({ origin: event.target.value as BlacklistFilters['origin'] })}>
+              <option value="all">All</option>
+              <option value="manual">Manual</option>
+              <option value="feed">Feed</option>
+            </select>
+          </label>
           <label>
             State
-            <select value={filters.state ?? 'all'} onChange={(event) => setFilters({ ...filters, state: event.target.value as BlacklistFilters['state'] })}>
+            <select value={filters.state ?? 'all'} onChange={(event) => updateFilters({ state: event.target.value as BlacklistFilters['state'] })}>
               <option value="all">All</option>
               <option value="enabled">Enabled</option>
               <option value="disabled">Disabled</option>
@@ -168,7 +201,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
           </label>
           <label>
             Expiry
-            <select value={filters.expiry ?? 'all'} onChange={(event) => setFilters({ ...filters, expiry: event.target.value as BlacklistFilters['expiry'] })}>
+            <select value={filters.expiry ?? 'all'} onChange={(event) => updateFilters({ expiry: event.target.value as BlacklistFilters['expiry'] })}>
               <option value="all">All</option>
               <option value="valid">Valid</option>
               <option value="expired">Expired</option>
@@ -179,7 +212,18 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
         <InlineResult result={result} />
       </section>
 
-      <AdminGrid rows={entries} columns={columns} loading={loading} emptyText={hasActiveFilters ? 'No blacklist entries match the current filters' : 'No blacklist entries configured'} height={540} />
+      <AdminGrid
+        rows={entries}
+        columns={columns}
+        loading={loading}
+        emptyText={hasActiveFilters ? 'No blacklist entries match the current filters' : 'No blacklist entries configured'}
+        height={540}
+        rowCount={pageData.total}
+        paginationMode="server"
+        paginationModel={paginationModel}
+        onPaginationModelChange={setPaginationModel}
+        getRowId={(row) => `${row.origin}:${row.id}`}
+      />
 
       <AdminDrawer
         open={mode !== ''}

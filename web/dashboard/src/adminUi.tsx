@@ -7,20 +7,30 @@ import {
   TextField,
   Typography
 } from '@mui/material';
-import { DataGrid, GridColDef, GridRowsProp } from '@mui/x-data-grid';
+import { DataGrid, GridColDef, GridPaginationModel, GridRowsProp } from '@mui/x-data-grid';
 
 export function AdminGrid({
   rows,
   columns,
   loading,
   emptyText = 'No rows',
-  height = 430
+  height = 430,
+  rowCount,
+  paginationMode,
+  paginationModel,
+  onPaginationModelChange,
+  getRowId
 }: {
   rows: GridRowsProp;
   columns: GridColDef[];
   loading?: boolean;
   emptyText?: string;
   height?: number;
+  rowCount?: number;
+  paginationMode?: 'client' | 'server';
+  paginationModel?: GridPaginationModel;
+  onPaginationModelChange?: (model: GridPaginationModel) => void;
+  getRowId?: (row: any) => string;
 }) {
   return (
     <Box className="mui-grid-shell" sx={{ height, minHeight: height, width: '100%' }}>
@@ -31,6 +41,11 @@ export function AdminGrid({
         disableRowSelectionOnClick
         pageSizeOptions={[10, 25, 50]}
         initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
+        rowCount={rowCount}
+        paginationMode={paginationMode}
+        paginationModel={paginationModel}
+        onPaginationModelChange={onPaginationModelChange}
+        getRowId={getRowId}
         density="compact"
         localeText={{ noRowsLabel: emptyText }}
         sx={{

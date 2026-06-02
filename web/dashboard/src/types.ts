@@ -240,11 +240,26 @@ export interface BlacklistEntry {
   updated_at: string;
 }
 
+export interface BlacklistEntryRow extends BlacklistEntry {
+  source_name?: string;
+  status?: string;
+  origin: 'manual' | 'feed';
+  editable: boolean;
+}
+
 export interface BlacklistFilters {
   q?: string;
   source?: string;
+  origin?: 'all' | 'manual' | 'feed';
   state?: 'all' | 'enabled' | 'disabled';
   expiry?: 'all' | 'valid' | 'expired' | 'none';
+}
+
+export interface BlacklistEntriesPage {
+  items: BlacklistEntryRow[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface BaselineProfile {

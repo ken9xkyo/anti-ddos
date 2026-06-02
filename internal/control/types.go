@@ -260,6 +260,42 @@ type BlacklistEntryQuery struct {
 	Expiry string
 }
 
+type BlacklistEntriesQuery struct {
+	Search   string
+	Source   string
+	Origin   string
+	State    string
+	Expiry   string
+	Page     uint32
+	PageSize uint32
+}
+
+type BlacklistEntryRow struct {
+	ID         string     `json:"id"`
+	EBPFID     uint32     `json:"ebpf_id"`
+	CIDR       string     `json:"cidr"`
+	Score      uint32     `json:"score,omitempty"`
+	Action     string     `json:"action"`
+	Source     string     `json:"source"`
+	SourceName string     `json:"source_name,omitempty"`
+	RuleID     string     `json:"rule_id,omitempty"`
+	Reason     string     `json:"reason"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	Enabled    bool       `json:"enabled"`
+	Status     string     `json:"status,omitempty"`
+	Origin     string     `json:"origin"`
+	Editable   bool       `json:"editable"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type BlacklistEntriesPage struct {
+	Items    []BlacklistEntryRow `json:"items"`
+	Total    uint32              `json:"total"`
+	Page     uint32              `json:"page"`
+	PageSize uint32              `json:"page_size"`
+}
+
 type FeedSourceInput struct {
 	Reason                string          `json:"reason"`
 	Name                  string          `json:"name"`

@@ -4,7 +4,9 @@ import type {
   AnomalyEvaluation,
   AuditEvent,
   BaselineProfile,
+  BlacklistEntriesPage,
   BlacklistEntry,
+  BlacklistEntryRow,
   BlacklistFilters,
   BlacklistInput,
   DashboardData,
@@ -207,6 +209,10 @@ export class ApiClient {
     return asArray(await this.request<BlacklistEntry[] | null>(`/v1/blacklist${blacklistFilterQuery(filters)}`));
   }
 
+  async blacklistEntries(filters: BlacklistFilters = {}, page = 0, pageSize = 25): Promise<BlacklistEntriesPage> {
+    return normalizeBlacklistEntriesPage(await this.request<BlacklistEntriesPage | null>(`/v1/blacklist/entries${blacklistEntriesQuery(filters, page, pageSize)}`), page, pageSize);
+  }
+
   async createBlacklist(input: BlacklistInput): Promise<BlacklistEntry> {
     return this.request<BlacklistEntry>('/v1/blacklist', {
       method: 'POST',
@@ -348,6 +354,30 @@ function blacklistFilterQuery(filters: BlacklistFilters): string {
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();
   return encoded ? `?${encoded}` : '';
+}
+
+function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize: number): string {
+  const params = new URLSearchParams();
+  const q = filters.q?.trim();
+  if (q) params.set('q', q);
+  const source = filters.source?.trim();
+  if (source) params.set('source', source);
+  if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
+  if (filters.state && filters.state !== 'all') params.set('state', filters.state);
+  if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
+  params.set('page', String(page));
+  params.set('page_size', String(pageSize));
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : '';
+}
+
+function normalizeBlacklistEntriesPage(value: BlacklistEntriesPage | null | undefined, page: number, pageSize: number): BlacklistEntriesPage {
+  return {
+    items: asArray<BlacklistEntryRow>(value?.items),
+    total: value?.total ?? 0,
+    page: value?.page ?? page,
+    page_size: value?.page_size ?? pageSize
+  };
 }
 
 function normalizeOverview(overview: DashboardOverview): DashboardOverview {

@@ -67,6 +67,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/rules", s.handleRules)
 	s.mux.HandleFunc("/v1/rules/", s.handleRuleByID)
 	s.mux.HandleFunc("/v1/blacklist", s.handleBlacklist)
+	s.mux.HandleFunc("/v1/blacklist/entries", s.handleBlacklistEntries)
 	s.mux.HandleFunc("/v1/blacklist/", s.handleBlacklistByID)
 	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
 	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
@@ -466,6 +467,24 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (s *Server) handleBlacklistEntries(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	query, err := parseBlacklistEntriesQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	entries, err := s.store.ListBlacklistEntryRows(r.Context(), query)
+	writeResult(w, entries, err)
 }
 
 func (s *Server) handleBlacklistByID(w http.ResponseWriter, r *http.Request) {
@@ -934,6 +953,8 @@ func routeName(r *http.Request) string {
 		return "/v1/rules/{id}"
 	case path == "/v1/blacklist":
 		return "/v1/blacklist"
+	case path == "/v1/blacklist/entries":
+		return "/v1/blacklist/entries"
 	case strings.HasPrefix(path, "/v1/blacklist/"):
 		return "/v1/blacklist/{id}"
 	case path == "/v1/feed-sources":

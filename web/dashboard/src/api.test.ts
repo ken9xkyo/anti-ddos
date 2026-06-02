@@ -242,6 +242,8 @@ describe('ApiClient', () => {
     await client.blacklist();
     await client.blacklist({ q: ' scanner ', state: 'all', expiry: 'all' });
     await client.blacklist({ q: '198.51.100.0/24', source: 'manual entry', state: 'enabled', expiry: 'valid' });
+    await client.blacklistEntries();
+    await client.blacklistEntries({ q: '203.0.113.8', source: 'abuseipdb', origin: 'feed', state: 'enabled', expiry: 'valid' }, 2, 50);
     await client.createBlacklist({ reason: 'block scanner', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 90, enabled: true });
     await client.updateBlacklist('b1', { reason: 'extend block', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 95, enabled: true });
     await client.disableBlacklist('b1', 'attack stopped');
@@ -250,6 +252,8 @@ describe('ApiClient', () => {
       { path: '/v1/blacklist', method: undefined, body: undefined, reason: null },
       { path: '/v1/blacklist?q=scanner', method: undefined, body: undefined, reason: null },
       { path: '/v1/blacklist?q=198.51.100.0%2F24&source=manual+entry&state=enabled&expiry=valid', method: undefined, body: undefined, reason: null },
+      { path: '/v1/blacklist/entries?page=0&page_size=25', method: undefined, body: undefined, reason: null },
+      { path: '/v1/blacklist/entries?q=203.0.113.8&source=abuseipdb&origin=feed&state=enabled&expiry=valid&page=2&page_size=50', method: undefined, body: undefined, reason: null },
       { path: '/v1/blacklist', method: 'POST', body: { reason: 'block scanner', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 90, enabled: true }, reason: null },
       { path: '/v1/blacklist/b1', method: 'PATCH', body: { reason: 'extend block', cidr: '198.51.100.20/32', source: 'manual', action: 'drop', score: 95, enabled: true }, reason: null },
       { path: '/v1/blacklist/b1', method: 'DELETE', body: undefined, reason: 'attack stopped' }

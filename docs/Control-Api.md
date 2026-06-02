@@ -276,6 +276,7 @@ Authenticated read, Operator/Admin mutation.
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/blacklist` | none | `BlacklistEntry[]` | List manual blacklist entries |
+| GET | `/v1/blacklist/entries` | none | `BlacklistEntriesPage` | List paginated manual and feed blacklist rows |
 | POST | `/v1/blacklist` | `BlacklistInput` | `BlacklistEntry` | Create entry |
 | PATCH | `/v1/blacklist/{id}` | `BlacklistInput` | `BlacklistEntry` | Update entry |
 | DELETE | `/v1/blacklist/{id}` | reason via header | `BlacklistEntry` | Soft-disable entry |
@@ -284,8 +285,41 @@ Optional list filters:
 
 - `q`: search CIDR, source, reason, rule UUID or rule name.
 - `source`: exact source filter, case-insensitive.
+- `origin`: `all`, `manual`, `feed` on `/v1/blacklist/entries`.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
+- `page`: zero-based page on `/v1/blacklist/entries`; default `0`.
+- `page_size`: page size on `/v1/blacklist/entries`; default `25`, max `100`.
+
+`BlacklistEntriesPage`:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "ebpf_id": 31,
+      "cidr": "203.0.113.8/32",
+      "score": 100,
+      "action": "drop",
+      "source": "abuseipdb",
+      "source_name": "abuseipdb-fixture",
+      "reason": "feed evidence",
+      "enabled": true,
+      "status": "active",
+      "origin": "feed",
+      "editable": false,
+      "created_at": "2026-06-01T00:00:00Z",
+      "updated_at": "2026-06-01T00:00:00Z"
+    }
+  ],
+  "total": 1,
+  "page": 0,
+  "page_size": 25
+}
+```
+
+Feed rows come from non-inactive `reputation_entries` with `action='drop'` joined to `feed_sources`; `source=abuseipdb` matches the normalized feed type or exact feed source name case-insensitively. Feed rows are read-only (`editable=false`) and cannot be mutated through `PATCH` or `DELETE /v1/blacklist/{id}`.
 
 `BlacklistInput`:
 

@@ -272,6 +272,41 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		t.Fatalf("sync did not use raw key: %#v", seenKeys)
 	}
 
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist", adminToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var manualOnly []BlacklistEntry
+	decodeTestBody(t, resp, &manualOnly)
+	if len(manualOnly) != 0 {
+		t.Fatalf("manual blacklist endpoint should not include feed rows: %#v", manualOnly)
+	}
+
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist/entries?origin=feed&source=abuseipdb&q=203.0.113.8&state=enabled&expiry=valid&page=0&page_size=1", adminToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var blacklistPage BlacklistEntriesPage
+	decodeTestBody(t, resp, &blacklistPage)
+	if blacklistPage.Total != 1 || blacklistPage.Page != 0 || blacklistPage.PageSize != 1 || len(blacklistPage.Items) != 1 {
+		t.Fatalf("unexpected combined blacklist page: %#v", blacklistPage)
+	}
+	feedRow := blacklistPage.Items[0]
+	if feedRow.CIDR != "203.0.113.8/32" || feedRow.Origin != "feed" || feedRow.Editable || feedRow.Source != "abuseipdb" || feedRow.SourceName != "abuseipdb-fixture" || feedRow.Status != "active" || !feedRow.Enabled {
+		t.Fatalf("unexpected abuseipdb blacklist row: %#v", feedRow)
+	}
+
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+feedRow.ID, adminToken, BlacklistInput{
+		Reason:  "should not mutate feed row",
+		CIDR:    feedRow.CIDR,
+		Source:  "manual",
+		Action:  "drop",
+		Score:   feedRow.Score,
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusBadRequest)
+	deleteReq, _ := http.NewRequest(http.MethodDelete, server.URL+"/v1/blacklist/"+feedRow.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteReq.Header.Set("X-Audit-Reason", "should not disable feed row")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusBadRequest)
+
 	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/feed-sources/"+source.ID, adminToken, FeedSourceInput{
 		Reason:                "clear credential",
 		Name:                  source.Name,
