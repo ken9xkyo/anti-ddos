@@ -41,22 +41,6 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 - UDP source-port blocking adds eBPF ABI reason `REASON_UDP_AMP_SOURCE_PORT = 11` and A/B maps `udp_src_port_blocks_a/b`. XDP applies it after protected service match, whitelist precedence and blacklist precedence; whitelisted sources bypass it.
 - Snapshot feature flag `udp_src_port_block` is emitted only when active UDP source-port blocks exist. Rollout guard: deploy the new BPF/Agent first, then enable entries deliberately; no real NIC attach during verification.
 
-## Phase Progress
-
-| Phase | Status | Evidence |
-|---|---|---|
-| 00 - Foundation Lab Readiness | Ready for Phase 01 with gaps carried | Lab readiness docs exist; backend inventory, interface roles, PostgreSQL, Prometheus, native attach and benchmarks remain open. |
-| 01 - XDP Data Plane Skeleton | Done | `make phase1-verify` PASS on 2026-05-28; report `reports/phase-01-xdp-data-plane-skeleton.md`; verifier log `build/bpf/verifier.log`. |
-| 02 - Agent Lifecycle | Done | `make phase2-verify` PASS on 2026-05-28; report `reports/phase-02-agent-lifecycle.md`; VETH lifecycle test attached XDP to a temporary veth, scraped `/metrics`, verified pinned link restart behavior, and cleaned up with safe detach. |
-| 03 - Policy Snapshot Map Sync | Done | `make phase3-verify` PASS on 2026-05-28; report `reports/phase-03-policy-snapshot-map-sync.md`; policy snapshot validation, A/B map apply, devmap update, runtime flip, rollback and last-valid persistence passed. |
-| 04 - DEVMAP Forwarding and Service Allowlist | Done | `make phase4-verify` PASS on 2026-05-28; report `reports/phase-04-devmap-forwarding-service-allowlist.md`; packet fixtures and VETH namespace test verified allowlisted DEVMAP redirect with MAC rewrite and fail-closed service miss. |
-| 05 - Control Plane Core | Done | `make phase5-verify` PASS on 2026-05-28; report `reports/phase-05-control-plane-core.md`; Control API/Admin CLI, PostgreSQL migrations, local auth/RBAC, audit, policy CRUD, snapshot builder, rollback and Agent register/heartbeat/fetch/ack were verified. |
-| 06 - Observability Dashboard | Done | `make phase6-verify` PASS on 2026-05-28; report `reports/phase-06-observability-dashboard.md`; Control/Agent metrics, sampled event ingestion/query, Prometheus-backed dashboard APIs, React/Vite dashboard, Grafana JSON and scrape config were verified. |
-| 07 - Rate Limit Baseline Auto-Enforce | Done | `make phase7-verify` PASS on 2026-05-28; report `reports/phase-07-rate-limit-baseline-auto-enforce.md`; XDP token buckets, rule selection, SYN CPS counters, baseline/anomaly APIs, conservative auto-enforce, TTL expiry, rollback, VETH lab and dashboard visibility were verified. |
-| 08 - Threat Feed Sync | Done | `make phase8-verify` PASS on 2026-05-28; report `reports/phase-08-threat-feed-sync.md`; feed source schema/API, parser pipeline, scheduler, safe aggregation, whitelist conflict suppression, snapshot inclusion, last-valid retention, metrics and dashboard visibility were verified. |
-| Manual Blacklist CRUD | Done | `GET/POST/PATCH/DELETE /v1/blacklist`, dashboard Blacklist tab, exact-CIDR snapshot de-dupe and docs/spec were added on 2026-06-01. |
-| UDP Reflection Source-Port Blocking | Done | `GET/POST/PATCH/DELETE /v1/udp-source-port-blocks`, disabled seed ports, dashboard UDP Ports tab, snapshot diff, BPF maps/reason and XDP fixture were added on 2026-06-03. |
-
 ## Current Host Facts
 
 - OS: Ubuntu 24.04.3 LTS (`noble`).
