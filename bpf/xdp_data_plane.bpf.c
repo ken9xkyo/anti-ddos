@@ -58,6 +58,22 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, __u32);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_blocks_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, __u32);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_blocks_b SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_ALLOWLIST);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, struct service_key);
@@ -363,6 +379,17 @@ lookup_active_service(__u32 active_slot, const struct packet_meta *meta)
 	return bpf_map_lookup_elem(&service_allowlist_b, &key);
 }
 
+static __always_inline struct udp_src_port_block_value *
+lookup_active_udp_src_port_block(__u32 active_slot, __u16 src_port)
+{
+	__u32 key = src_port;
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&udp_src_port_blocks_a, &key);
+
+	return bpf_map_lookup_elem(&udp_src_port_blocks_b, &key);
+}
+
 static __always_inline struct rule_value *
 lookup_active_rule(__u32 active_slot, __u32 rule_id)
 {
@@ -648,6 +675,7 @@ int xdp_entry(struct xdp_md *ctx)
 	struct runtime_config_value *cfg;
 	struct cidr_policy_value *whitelist;
 	struct cidr_policy_value *blacklist;
+	struct udp_src_port_block_value *udp_src_port_block;
 	struct service_value *service;
 	struct rule_value *rule;
 	__u8 whitelist_applies = 0;
@@ -729,6 +757,17 @@ int xdp_entry(struct xdp_md *ctx)
 		count_packet(&meta);
 		maybe_sample(&meta, cfg);
 		return XDP_DROP;
+	}
+
+	if (!whitelist_applies && meta.proto == L4_UDP) {
+		udp_src_port_block = lookup_active_udp_src_port_block(cfg->active_slot, meta.src_port);
+		if (udp_src_port_block) {
+			meta.action = ACTION_DROP;
+			meta.reason = REASON_UDP_AMP_SOURCE_PORT;
+			count_packet(&meta);
+			maybe_sample(&meta, cfg);
+			return XDP_DROP;
+		}
 	}
 
 	if (service->neighbor_status != NEIGHBOR_RESOLVED) {

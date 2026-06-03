@@ -223,6 +223,46 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, "198.51.100.200/32")
 
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/udp-source-port-blocks?q=NTP&state=disabled", viewerToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"port":123`)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", viewerToken, UDPSourcePortBlockInput{
+		Reason: "viewer should not block UDP port",
+		Port:   65000,
+		Label:  "test-reflection",
+		Owner:  "soc",
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", adminToken, UDPSourcePortBlockInput{
+		Reason:  "block UDP reflection source port",
+		Port:    65000,
+		Label:   "test-reflection",
+		Owner:   "soc",
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var udpPortBlock UDPSourcePortBlock
+	decodeTestBody(t, resp, &udpPortBlock)
+	activeSnapshot := latestPolicySnapshot(t, store, ctx)
+	if len(activeSnapshot.UDPSourcePortBlocks) != 1 || activeSnapshot.UDPSourcePortBlocks[0].Port != 65000 {
+		t.Fatalf("active snapshot missing UDP source port block: %#v", activeSnapshot.UDPSourcePortBlocks)
+	}
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/udp-source-port-blocks/"+udpPortBlock.ID, operatorToken, UDPSourcePortBlockInput{
+		Reason:  "rename UDP reflection source port",
+		Port:    65000,
+		Label:   "renamed-reflection",
+		Owner:   "soc",
+		Enabled: boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"label":"renamed-reflection"`)
+	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/udp-source-port-blocks/"+udpPortBlock.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("X-Audit-Reason", "disable UDP reflection source port")
+	resp = doTestHTTP(t, deleteReq)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, `"enabled":false`)
+
 	snapshots, err := store.ListSnapshots(ctx, false)
 	if err != nil {
 		t.Fatal(err)

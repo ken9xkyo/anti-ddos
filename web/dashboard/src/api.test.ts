@@ -260,6 +260,37 @@ describe('ApiClient', () => {
     ]);
   });
 
+  it('loads UDP source port blocks with encoded filters and audit deletes', async () => {
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        path: input.toString(),
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      return jsonResponse([]);
+    }));
+
+    const client = new ApiClient();
+    client.setToken('operator-token');
+    await client.udpSourcePortBlocks();
+    await client.udpSourcePortBlocks({ q: ' ntp ', state: 'all', expiry: 'all' });
+    await client.udpSourcePortBlocks({ q: 'source/port', state: 'enabled', expiry: 'valid' });
+    await client.createUDPSourcePortBlock({ reason: 'block ntp reflection', port: 123, label: 'NTP', owner: 'soc', enabled: true });
+    await client.updateUDPSourcePortBlock('u1', { reason: 'rename ntp reflection', port: 123, label: 'NTP reflection', owner: 'soc', enabled: true });
+    await client.disableUDPSourcePortBlock('u1', 'attack stopped');
+
+    expect(calls).toEqual([
+      { path: '/v1/udp-source-port-blocks', method: undefined, body: undefined, reason: null },
+      { path: '/v1/udp-source-port-blocks?q=ntp', method: undefined, body: undefined, reason: null },
+      { path: '/v1/udp-source-port-blocks?q=source%2Fport&state=enabled&expiry=valid', method: undefined, body: undefined, reason: null },
+      { path: '/v1/udp-source-port-blocks', method: 'POST', body: { reason: 'block ntp reflection', port: 123, label: 'NTP', owner: 'soc', enabled: true }, reason: null },
+      { path: '/v1/udp-source-port-blocks/u1', method: 'PATCH', body: { reason: 'rename ntp reflection', port: 123, label: 'NTP reflection', owner: 'soc', enabled: true }, reason: null },
+      { path: '/v1/udp-source-port-blocks/u1', method: 'DELETE', body: undefined, reason: 'attack stopped' }
+    ]);
+  });
+
   it('configures Telegram with write-only bot token', async () => {
     const calls: Array<{ path: string; method?: string; body: unknown; auth: string | null }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

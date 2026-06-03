@@ -27,11 +27,12 @@ type PolicySnapshot struct {
 	ObjectChecksum string   `json:"object_checksum"`
 	FeatureFlags   []string `json:"feature_flags,omitempty"`
 
-	Runtime     PolicyRuntimeConfig `json:"runtime"`
-	WhitelistV4 []PolicyCIDREntry   `json:"whitelist_v4,omitempty"`
-	BlacklistV4 []PolicyCIDREntry   `json:"blacklist_v4,omitempty"`
-	Services    []PolicyService     `json:"services,omitempty"`
-	Rules       []PolicyRule        `json:"rules,omitempty"`
+	Runtime             PolicyRuntimeConfig        `json:"runtime"`
+	WhitelistV4         []PolicyCIDREntry          `json:"whitelist_v4,omitempty"`
+	BlacklistV4         []PolicyCIDREntry          `json:"blacklist_v4,omitempty"`
+	UDPSourcePortBlocks []PolicyUDPSourcePortBlock `json:"udp_source_port_blocks,omitempty"`
+	Services            []PolicyService            `json:"services,omitempty"`
+	Rules               []PolicyRule               `json:"rules,omitempty"`
 }
 
 type PolicyRuntimeConfig struct {
@@ -49,6 +50,12 @@ type PolicyCIDREntry struct {
 	ServiceID       uint32 `json:"service_id,omitempty"`
 	Score           uint32 `json:"score,omitempty"`
 	RuleID          uint32 `json:"rule_id,omitempty"`
+	ExpiresAtUnixNS uint64 `json:"expires_at_unix_ns,omitempty"`
+}
+
+type PolicyUDPSourcePortBlock struct {
+	EntryID         uint32 `json:"entry_id"`
+	Port            uint16 `json:"port"`
 	ExpiresAtUnixNS uint64 `json:"expires_at_unix_ns,omitempty"`
 }
 
@@ -106,15 +113,16 @@ type PolicySnapshotStats struct {
 }
 
 type canonicalPolicySnapshot struct {
-	SchemaVersion  int                 `json:"schema_version"`
-	Version        uint32              `json:"version"`
-	ObjectChecksum string              `json:"object_checksum"`
-	FeatureFlags   []string            `json:"feature_flags,omitempty"`
-	Runtime        PolicyRuntimeConfig `json:"runtime"`
-	WhitelistV4    []PolicyCIDREntry   `json:"whitelist_v4,omitempty"`
-	BlacklistV4    []PolicyCIDREntry   `json:"blacklist_v4,omitempty"`
-	Services       []PolicyService     `json:"services,omitempty"`
-	Rules          []PolicyRule        `json:"rules,omitempty"`
+	SchemaVersion       int                        `json:"schema_version"`
+	Version             uint32                     `json:"version"`
+	ObjectChecksum      string                     `json:"object_checksum"`
+	FeatureFlags        []string                   `json:"feature_flags,omitempty"`
+	Runtime             PolicyRuntimeConfig        `json:"runtime"`
+	WhitelistV4         []PolicyCIDREntry          `json:"whitelist_v4,omitempty"`
+	BlacklistV4         []PolicyCIDREntry          `json:"blacklist_v4,omitempty"`
+	UDPSourcePortBlocks []PolicyUDPSourcePortBlock `json:"udp_source_port_blocks,omitempty"`
+	Services            []PolicyService            `json:"services,omitempty"`
+	Rules               []PolicyRule               `json:"rules,omitempty"`
 }
 
 var supportedPolicyFeatureFlags = map[string]struct{}{
@@ -122,6 +130,7 @@ var supportedPolicyFeatureFlags = map[string]struct{}{
 	"ipv4":               {},
 	"ab_policy_maps":     {},
 	"tx_devmap":          {},
+	"udp_src_port_block": {},
 }
 
 func LoadPolicySnapshot(path string) (PolicySnapshot, error) {
@@ -228,15 +237,16 @@ func VerifyPolicySnapshot(snapshot PolicySnapshot, options PolicySnapshotVerifyO
 func canonicalizePolicySnapshot(snapshot PolicySnapshot) (canonicalPolicySnapshot, error) {
 	snapshot = normalizePolicySnapshot(snapshot)
 	return canonicalPolicySnapshot{
-		SchemaVersion:  snapshot.SchemaVersion,
-		Version:        snapshot.Version,
-		ObjectChecksum: snapshot.ObjectChecksum,
-		FeatureFlags:   snapshot.FeatureFlags,
-		Runtime:        snapshot.Runtime,
-		WhitelistV4:    snapshot.WhitelistV4,
-		BlacklistV4:    snapshot.BlacklistV4,
-		Services:       snapshot.Services,
-		Rules:          snapshot.Rules,
+		SchemaVersion:       snapshot.SchemaVersion,
+		Version:             snapshot.Version,
+		ObjectChecksum:      snapshot.ObjectChecksum,
+		FeatureFlags:        snapshot.FeatureFlags,
+		Runtime:             snapshot.Runtime,
+		WhitelistV4:         snapshot.WhitelistV4,
+		BlacklistV4:         snapshot.BlacklistV4,
+		UDPSourcePortBlocks: snapshot.UDPSourcePortBlocks,
+		Services:            snapshot.Services,
+		Rules:               snapshot.Rules,
 	}, nil
 }
 
@@ -245,6 +255,7 @@ func normalizePolicySnapshot(snapshot PolicySnapshot) PolicySnapshot {
 	snapshot.FeatureFlags = append([]string(nil), snapshot.FeatureFlags...)
 	snapshot.WhitelistV4 = append([]PolicyCIDREntry(nil), snapshot.WhitelistV4...)
 	snapshot.BlacklistV4 = append([]PolicyCIDREntry(nil), snapshot.BlacklistV4...)
+	snapshot.UDPSourcePortBlocks = append([]PolicyUDPSourcePortBlock(nil), snapshot.UDPSourcePortBlocks...)
 	snapshot.Services = append([]PolicyService(nil), snapshot.Services...)
 	snapshot.Rules = append([]PolicyRule(nil), snapshot.Rules...)
 	if snapshot.Runtime.MalformedPolicy == 0 {
@@ -256,6 +267,14 @@ func normalizePolicySnapshot(snapshot PolicySnapshot) PolicySnapshot {
 	})
 	sort.Slice(snapshot.BlacklistV4, func(i, j int) bool {
 		return cidrEntryLess(snapshot.BlacklistV4[i], snapshot.BlacklistV4[j])
+	})
+	sort.Slice(snapshot.UDPSourcePortBlocks, func(i, j int) bool {
+		left := snapshot.UDPSourcePortBlocks[i]
+		right := snapshot.UDPSourcePortBlocks[j]
+		if left.Port != right.Port {
+			return left.Port < right.Port
+		}
+		return left.EntryID < right.EntryID
 	})
 	sort.Slice(snapshot.Services, func(i, j int) bool {
 		left := snapshot.Services[i]
@@ -307,6 +326,8 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 			return ExpectedMaps["whitelist_v4_a"].MaxEntries
 		case "blacklist_v4":
 			return ExpectedMaps["blacklist_v4_a"].MaxEntries
+		case "udp_source_port_blocks":
+			return ExpectedMaps["udp_src_port_blocks_a"].MaxEntries
 		case "service_allowlist":
 			return ExpectedMaps["service_allowlist_a"].MaxEntries
 		case "rule_config":
@@ -371,6 +392,18 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 		blacklistKeys[mapKey] = struct{}{}
 	}
 	addStat("blacklist_v4", uint32(len(snapshot.BlacklistV4)), unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
+
+	udpPortKeys := make(map[uint16]struct{}, len(snapshot.UDPSourcePortBlocks))
+	for _, entry := range snapshot.UDPSourcePortBlocks {
+		if entry.ExpiresAtUnixNS != 0 && entry.ExpiresAtUnixNS <= nowNS {
+			errs = append(errs, fmt.Errorf("udp_source_port_blocks entry %d is expired", entry.EntryID))
+		}
+		if _, ok := udpPortKeys[entry.Port]; ok {
+			errs = append(errs, fmt.Errorf("duplicate udp_source_port_blocks port %d", entry.Port))
+		}
+		udpPortKeys[entry.Port] = struct{}{}
+	}
+	addStat("udp_source_port_blocks", uint32(len(snapshot.UDPSourcePortBlocks)), unsafe.Sizeof(uint32(0)), unsafe.Sizeof(UDPSourcePortBlockValue{}))
 
 	serviceKeys := make(map[ServiceKey]struct{}, len(snapshot.Services))
 	devmapTargets := make(map[uint32]uint32)
@@ -465,6 +498,14 @@ func cidrPolicyValue(entry PolicyCIDREntry) CIDRPolicyValue {
 		ServiceID:       entry.ServiceID,
 		Score:           entry.Score,
 		RuleID:          entry.RuleID,
+		ExpiresAtUnixNS: entry.ExpiresAtUnixNS,
+	}
+}
+
+func udpSourcePortBlockMapEntry(entry PolicyUDPSourcePortBlock) (uint32, UDPSourcePortBlockValue) {
+	return uint32(entry.Port), UDPSourcePortBlockValue{
+		EntryID:         entry.EntryID,
+		Port:            uint32(entry.Port),
 		ExpiresAtUnixNS: entry.ExpiresAtUnixNS,
 	}
 }

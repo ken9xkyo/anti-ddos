@@ -296,6 +296,34 @@ type BlacklistEntriesPage struct {
 	PageSize uint32              `json:"page_size"`
 }
 
+type UDPSourcePortBlockInput struct {
+	Reason    string    `json:"reason"`
+	Port      uint16    `json:"port"`
+	Label     string    `json:"label,omitempty"`
+	Owner     string    `json:"owner"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	Enabled   *bool     `json:"enabled,omitempty"`
+}
+
+type UDPSourcePortBlock struct {
+	ID        string     `json:"id"`
+	EBPFID    uint32     `json:"ebpf_id"`
+	Port      uint16     `json:"port"`
+	Label     string     `json:"label,omitempty"`
+	Reason    string     `json:"reason"`
+	Owner     string     `json:"owner"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+type UDPSourcePortBlockQuery struct {
+	Search string
+	State  string
+	Expiry string
+}
+
 type FeedSourceInput struct {
 	Reason                string          `json:"reason"`
 	Name                  string          `json:"name"`
@@ -480,14 +508,15 @@ type SnapshotCollectionDiff struct {
 }
 
 type SnapshotDiff struct {
-	FromVersion    uint32                 `json:"from_version"`
-	ToVersion      uint32                 `json:"to_version"`
-	ObjectChecksum SnapshotDiffValue      `json:"object_checksum"`
-	Runtime        *SnapshotDiffChange    `json:"runtime,omitempty"`
-	Services       SnapshotCollectionDiff `json:"services"`
-	WhitelistV4    SnapshotCollectionDiff `json:"whitelist_v4"`
-	BlacklistV4    SnapshotCollectionDiff `json:"blacklist_v4"`
-	Rules          SnapshotCollectionDiff `json:"rules"`
+	FromVersion         uint32                 `json:"from_version"`
+	ToVersion           uint32                 `json:"to_version"`
+	ObjectChecksum      SnapshotDiffValue      `json:"object_checksum"`
+	Runtime             *SnapshotDiffChange    `json:"runtime,omitempty"`
+	Services            SnapshotCollectionDiff `json:"services"`
+	WhitelistV4         SnapshotCollectionDiff `json:"whitelist_v4"`
+	BlacklistV4         SnapshotCollectionDiff `json:"blacklist_v4"`
+	UDPSourcePortBlocks SnapshotCollectionDiff `json:"udp_source_port_blocks"`
+	Rules               SnapshotCollectionDiff `json:"rules"`
 }
 
 type AgentInterface struct {

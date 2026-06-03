@@ -53,7 +53,7 @@ describe('DashboardShell', () => {
     for (const group of ['Operation', 'Configuration', 'Threat Intelligence', 'Setting']) {
       expect(screen.getByText(group)).toBeInTheDocument();
     }
-    for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'Reputation', 'Snapshots', 'Accounts', 'Nodes']) {
+    for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Reputation', 'Snapshots', 'Accounts', 'Nodes']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
   });
@@ -704,6 +704,90 @@ describe('DashboardShell', () => {
     await waitFor(() => expect(calls).toContain('/v1/blacklist/entries?q=scanner&source=manual&state=disabled&page=0&page_size=25'));
   });
 
+  it('runs UDP source port create, edit and soft-disable workflows', async () => {
+    const entry = udpPortFixture();
+    const calls: Array<{ path: string; method?: string; body: unknown; reason: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        reason: new Headers(init?.headers).get('X-Audit-Reason')
+      });
+      if (path.startsWith('/v1/udp-source-port-blocks') && !init?.method) return jsonResponse([entry]);
+      if (path === '/v1/udp-source-port-blocks' && init?.method === 'POST') return jsonResponse({ ...entry, id: 'u2', port: 11211, label: 'Memcached' });
+      if (path === '/v1/udp-source-port-blocks/u1' && init?.method === 'PATCH') return jsonResponse({ ...entry, label: 'NTP reflection' });
+      if (path === '/v1/udp-source-port-blocks/u1' && init?.method === 'DELETE') return jsonResponse({ ...entry, enabled: false });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'udpPorts');
+    expect(await screen.findByText('NTP')).toBeInTheDocument();
+
+    clickButtonByText(/add port/i);
+    await fillField(/^port/i, '11211');
+    await fillField(/^label/i, 'Memcached');
+    await fillField(/^owner/i, 'soc');
+    await fillField(/^reason/i, 'block memcached reflection');
+    clickButtonByText(/save port/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/udp-source-port-blocks' && call.method === 'POST')).toBe(true));
+
+    clickButtonByText(/^edit$/i);
+    await fillField(/^label/i, 'NTP reflection');
+    await fillField(/^reason/i, 'rename ntp reflection');
+    clickButtonByText(/save port/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/udp-source-port-blocks/u1' && call.method === 'PATCH')).toBe(true));
+
+    clickButtonByText(/^disable$/i);
+    await fillField(/^reason/i, 'attack stopped');
+    clickButtonByText(/disable port/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/udp-source-port-blocks/u1' && call.method === 'DELETE')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/udp-source-port-blocks' && call.method === 'POST')?.body).toMatchObject({
+      reason: 'block memcached reflection',
+      port: 11211,
+      label: 'Memcached',
+      owner: 'soc',
+      enabled: true
+    });
+    expect(calls.find((call) => call.path === '/v1/udp-source-port-blocks/u1' && call.method === 'PATCH')?.body).toMatchObject({
+      reason: 'rename ntp reflection',
+      port: 123,
+      label: 'NTP reflection',
+      owner: 'soc',
+      enabled: true
+    });
+    expect(calls.find((call) => call.path === '/v1/udp-source-port-blocks/u1' && call.method === 'DELETE')?.reason).toBe('attack stopped');
+  });
+
+  it('filters UDP source ports and keeps viewers read-only', async () => {
+    const entry = udpPortFixture();
+    const disabledEntry = { ...entry, id: 'u2', port: 1900, label: 'SSDP', enabled: false };
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push(path);
+      if (init?.method) throw new Error(`unexpected mutation ${path}`);
+      if (path.startsWith('/v1/udp-source-port-blocks') && path.includes('state=disabled')) return jsonResponse([disabledEntry]);
+      if (path.startsWith('/v1/udp-source-port-blocks') && path.includes('q=ssdp')) return jsonResponse([disabledEntry]);
+      if (path.startsWith('/v1/udp-source-port-blocks')) return jsonResponse([entry, disabledEntry]);
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(viewerUser, 'udpPorts');
+    expect(await screen.findByText('NTP')).toBeInTheDocument();
+    expect(screen.queryByText(/add port/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText('read only').length).toBeGreaterThan(0);
+
+    await fillField(/^search/i, 'ssdp');
+    await waitFor(() => expect(calls).toContain('/v1/udp-source-port-blocks?q=ssdp'));
+    await waitFor(() => expect(screen.getByText('SSDP')).toBeInTheDocument());
+
+    await fillField(/^state/i, 'disabled');
+    await waitFor(() => expect(calls).toContain('/v1/udp-source-port-blocks?q=ssdp&state=disabled'));
+  });
+
   it('runs feed create, edit, sync and soft-disable workflows with admin credentials', async () => {
     const onRefresh = vi.fn(async () => undefined);
     const rawKey = 'raw-abuseipdb-key';
@@ -1115,6 +1199,20 @@ function blacklistPage(items: ReturnType<typeof blacklistFixture>[]) {
   };
 }
 
+function udpPortFixture() {
+  return {
+    id: 'u1',
+    ebpf_id: 51,
+    port: 123,
+    label: 'NTP',
+    reason: 'block reflection traffic',
+    owner: 'soc',
+    enabled: true,
+    created_at: '2026-05-28T11:00:00Z',
+    updated_at: '2026-05-28T11:00:00Z'
+  };
+}
+
 function snapshotFixtures() {
   return [
     {
@@ -1152,6 +1250,7 @@ function snapshotDiffFixture() {
     },
     whitelist_v4: emptyCollection,
     blacklist_v4: emptyCollection,
+    udp_source_port_blocks: emptyCollection,
     rules: emptyCollection
   };
 }

@@ -1,8 +1,8 @@
 # Project State
 
-Last updated: 2026-06-01
+Last updated: 2026-06-03
 
-Current work: Manual Blacklist CRUD completed as an Admin Dashboard/Control API enhancement after Phase 08; Phase 09 - Telegram ISP Runbook remains next.
+Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboard/Control API/eBPF enhancement after Phase 08; Phase 09 - Telegram ISP Runbook remains next.
 
 ## Decisions
 
@@ -37,6 +37,9 @@ Current work: Manual Blacklist CRUD completed as an Admin Dashboard/Control API 
 - Phase 08 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and dashboard unit/build gates only.
 - Manual Blacklist CRUD reuses `manual_blacklist_entries` and `PolicySnapshot.BlacklistV4`; no database migration, eBPF ABI change, or XDP C change is required.
 - Effective blacklist snapshot de-duplicates exact CIDR keys. Enabled manual blacklist entries take precedence over feed reputation for the same exact CIDR; same-source ties use score then `ebpf_id`.
+- UDP Reflection Source-Port Blocking uses global `udp_source_port_blocks`, seeds common reflection/amplification source ports disabled by default, allows Operator/Admin mutation, keeps Viewer read-only, and only includes enabled/non-expired entries in snapshots.
+- UDP source-port blocking adds eBPF ABI reason `REASON_UDP_AMP_SOURCE_PORT = 11` and A/B maps `udp_src_port_blocks_a/b`. XDP applies it after protected service match, whitelist precedence and blacklist precedence; whitelisted sources bypass it.
+- Snapshot feature flag `udp_src_port_block` is emitted only when active UDP source-port blocks exist. Rollout guard: deploy the new BPF/Agent first, then enable entries deliberately; no real NIC attach during verification.
 
 ## Phase Progress
 
@@ -52,6 +55,7 @@ Current work: Manual Blacklist CRUD completed as an Admin Dashboard/Control API 
 | 07 - Rate Limit Baseline Auto-Enforce | Done | `make phase7-verify` PASS on 2026-05-28; report `reports/phase-07-rate-limit-baseline-auto-enforce.md`; XDP token buckets, rule selection, SYN CPS counters, baseline/anomaly APIs, conservative auto-enforce, TTL expiry, rollback, VETH lab and dashboard visibility were verified. |
 | 08 - Threat Feed Sync | Done | `make phase8-verify` PASS on 2026-05-28; report `reports/phase-08-threat-feed-sync.md`; feed source schema/API, parser pipeline, scheduler, safe aggregation, whitelist conflict suppression, snapshot inclusion, last-valid retention, metrics and dashboard visibility were verified. |
 | Manual Blacklist CRUD | Done | `GET/POST/PATCH/DELETE /v1/blacklist`, dashboard Blacklist tab, exact-CIDR snapshot de-dupe and docs/spec were added on 2026-06-01. |
+| UDP Reflection Source-Port Blocking | Done | `GET/POST/PATCH/DELETE /v1/udp-source-port-blocks`, disabled seed ports, dashboard UDP Ports tab, snapshot diff, BPF maps/reason and XDP fixture were added on 2026-06-03. |
 
 ## Current Host Facts
 
@@ -77,6 +81,7 @@ Current work: Manual Blacklist CRUD completed as an Admin Dashboard/Control API 
 ## Next Actions
 
 - Start Phase 09 Telegram ISP Runbook using Phase 08 feed failure status as one alert producer input.
+- Deploy the new BPF object and Agent build before enabling any UDP source-port block entries beyond the disabled seeds.
 - Network/SRE confirms production protected backend service inventory and final WAN/LAN/output interface roles before real service policy rollout.
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
 - Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.

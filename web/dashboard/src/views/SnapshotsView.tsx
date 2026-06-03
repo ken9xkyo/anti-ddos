@@ -136,6 +136,7 @@ function SnapshotDiffSummary({ diff }: { diff: SnapshotDiff }) {
         <DiffCard title="Services" diff={diff.services} />
         <DiffCard title="Whitelist" diff={diff.whitelist_v4} />
         <DiffCard title="Blacklist" diff={diff.blacklist_v4} />
+        <DiffCard title="UDP Ports" diff={diff.udp_source_port_blocks ?? emptyDiff()} />
         <DiffCard title="Rules" diff={diff.rules} />
       </div>
       {diff.runtime ? (
@@ -161,6 +162,10 @@ function DiffCard({ title, diff }: { title: string; diff: SnapshotCollectionDiff
       {diff.changed[0] ? <JsonBlock value={jsonPreview(diff.changed[0])} /> : null}
     </section>
   );
+}
+
+function emptyDiff(): SnapshotCollectionDiff {
+  return { added: [], removed: [], changed: [], unchanged: 0 };
 }
 
 function shortHash(value: string): string {

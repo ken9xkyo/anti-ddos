@@ -8,6 +8,7 @@
 #define ANTI_DDOS_MAX_WHITELIST_V4 65536
 #define ANTI_DDOS_MAX_BLACKLIST_V4 1000000
 #define ANTI_DDOS_MAX_SERVICE_ALLOWLIST 16384
+#define ANTI_DDOS_MAX_UDP_SRC_PORT_BLOCKS 4096
 #define ANTI_DDOS_MAX_TX_DEVMAP 128
 #define ANTI_DDOS_MAX_RATE_STATE 2000000
 #define ANTI_DDOS_MAX_DROP_COUNTERS 262144
@@ -43,6 +44,7 @@ enum anti_ddos_drop_reason {
 	REASON_REDIRECT_ERROR = 8,
 	REASON_NEIGHBOR_UNRESOLVED = 9,
 	REASON_FRAGMENT = 10,
+	REASON_UDP_AMP_SOURCE_PORT = 11,
 };
 
 enum anti_ddos_policy_scope {
@@ -100,6 +102,12 @@ struct cidr_policy_value {
 	__u32 service_id;
 	__u32 score;
 	__u32 rule_id;
+	__u64 expires_at_unix_ns;
+};
+
+struct udp_src_port_block_value {
+	__u32 entry_id;
+	__u32 port;
 	__u64 expires_at_unix_ns;
 };
 

@@ -262,6 +262,34 @@ export interface BlacklistEntriesPage {
   page_size: number;
 }
 
+export interface UDPSourcePortBlockInput {
+  reason: string;
+  port: number;
+  label?: string;
+  owner: string;
+  expires_at?: string;
+  enabled?: boolean;
+}
+
+export interface UDPSourcePortBlock {
+  id: string;
+  ebpf_id: number;
+  port: number;
+  label?: string;
+  reason: string;
+  owner: string;
+  expires_at?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UDPSourcePortBlockFilters {
+  q?: string;
+  state?: 'all' | 'enabled' | 'disabled';
+  expiry?: 'all' | 'valid' | 'expired' | 'none';
+}
+
 export interface BaselineProfile {
   id: string;
   service_id: string;
@@ -488,6 +516,7 @@ export interface SnapshotDiff {
   services: SnapshotCollectionDiff;
   whitelist_v4: SnapshotCollectionDiff;
   blacklist_v4: SnapshotCollectionDiff;
+  udp_source_port_blocks?: SnapshotCollectionDiff;
   rules: SnapshotCollectionDiff;
 }
 

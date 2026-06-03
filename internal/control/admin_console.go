@@ -466,6 +466,86 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 	return entry, tx.Commit(ctx)
 }
 
+func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id string, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
+	if err := requireOperator(actor); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if err := validateUDPSourcePortBlockInput(input); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	reason = mutationReason(reason, input.Reason)
+	if reason == "" {
+		return UDPSourcePortBlock{}, errors.New("reason is required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	defer tx.Rollback(ctx)
+	before, err := getUDPSourcePortBlock(ctx, tx, id)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	var expires any
+	if !input.ExpiresAt.IsZero() {
+		expires = input.ExpiresAt
+	}
+	var entry UDPSourcePortBlock
+	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET
+    port=$2, label=$3, reason=$4, owner=$5, expires_at=$6, enabled=$7, updated_at=now()
+WHERE id=$1
+RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
+		id,
+		input.Port,
+		strings.TrimSpace(input.Label),
+		reason,
+		strings.TrimSpace(input.Owner),
+		expires,
+		boolDefault(input.Enabled, before.Enabled),
+	), &entry)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if err := insertAudit(ctx, tx, actor, "update_udp_source_port_block", "udp_source_port_block", id, before, entry, reason, ""); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	return entry, tx.Commit(ctx)
+}
+
+func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id, reason string) (UDPSourcePortBlock, error) {
+	if err := requireOperator(actor); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return UDPSourcePortBlock{}, errors.New("reason is required")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	defer tx.Rollback(ctx)
+	before, err := getUDPSourcePortBlock(ctx, tx, id)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	var entry UDPSourcePortBlock
+	if err := scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET enabled=false, reason=$2, updated_at=now()
+WHERE id=$1
+RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if err := insertAudit(ctx, tx, actor, "disable_udp_source_port_block", "udp_source_port_block", id, before, entry, strings.TrimSpace(reason), ""); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	return entry, tx.Commit(ctx)
+}
+
 func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason string) (FeedSource, error) {
 	if err := requireOperator(actor); err != nil {
 		return FeedSource{}, err
@@ -547,6 +627,13 @@ func getBlacklistEntry(ctx context.Context, q dbQuerier, id string) (BlacklistEn
 	var entry BlacklistEntry
 	err := scanBlacklistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at
 FROM manual_blacklist_entries WHERE id=$1`, id), &entry)
+	return entry, err
+}
+
+func getUDPSourcePortBlock(ctx context.Context, q dbQuerier, id string) (UDPSourcePortBlock, error) {
+	var entry UDPSourcePortBlock
+	err := scanUDPSourcePortBlock(q.QueryRow(ctx, `SELECT id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at
+FROM udp_source_port_blocks WHERE id=$1`, id), &entry)
 	return entry, err
 }
 

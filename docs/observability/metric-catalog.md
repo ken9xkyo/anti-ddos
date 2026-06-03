@@ -32,6 +32,16 @@ Phase 06 standardizes `anti_ddos_*` metrics for Prometheus scrape targets.
 | `anti_ddos_agent_control_events_dropped_total` | counter | `reason` | Best-effort sampled event drops. |
 | `anti_ddos_agent_control_event_forward_errors_total` | counter | none | Control event forwarding POST errors. |
 
+Reason values on `anti_ddos_xdp_packets_total` and `anti_ddos_xdp_bytes_total` follow the BPF contract. Current high-signal drop reasons include:
+
+| Reason | Meaning |
+|---:|---|
+| `4` | Packet matched no protected service allowlist entry. |
+| `9` | Protected service matched, but forwarding neighbor metadata is unresolved. |
+| `11` | Non-whitelisted UDP packet matched an enabled UDP reflection/amplification source-port block. |
+
+Per-source and per-port investigation should use PostgreSQL `security_events`; raw IPs and free-form source ports are intentionally not Prometheus labels.
+
 ## Control API Metrics
 
 | Metric | Type | Labels | Purpose |

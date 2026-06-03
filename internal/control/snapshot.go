@@ -294,10 +294,18 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 	if err != nil {
 		return agent.PolicySnapshot{}, err
 	}
+	udpSourcePortBlocks, err := snapshotUDPSourcePortBlocks(ctx, q)
+	if err != nil {
+		return agent.PolicySnapshot{}, err
+	}
 	snapshot.Services = services
 	snapshot.WhitelistV4 = whitelist
 	snapshot.BlacklistV4 = blacklist
+	snapshot.UDPSourcePortBlocks = udpSourcePortBlocks
 	snapshot.Rules = rules
+	if len(udpSourcePortBlocks) > 0 {
+		snapshot.FeatureFlags = append(snapshot.FeatureFlags, "udp_src_port_block")
+	}
 	return snapshot, nil
 }
 
@@ -557,6 +565,32 @@ func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool 
 		return next.entry.Score > current.entry.Score
 	}
 	return next.entry.EntryID < current.entry.EntryID
+}
+
+func snapshotUDPSourcePortBlocks(ctx context.Context, q dbQuerier) ([]agent.PolicyUDPSourcePortBlock, error) {
+	rows, err := q.Query(ctx, `SELECT ebpf_id, port, expires_at
+FROM udp_source_port_blocks
+WHERE enabled AND (expires_at IS NULL OR expires_at > now())
+ORDER BY port, ebpf_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]agent.PolicyUDPSourcePortBlock, 0)
+	for rows.Next() {
+		var entry agent.PolicyUDPSourcePortBlock
+		var port int32
+		var expires *time.Time
+		if err := rows.Scan(&entry.EntryID, &port, &expires); err != nil {
+			return nil, err
+		}
+		entry.Port = uint16(port)
+		if expires != nil {
+			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
 }
 
 func snapshotRules(ctx context.Context, q dbQuerier) ([]agent.PolicyRule, error) {

@@ -50,7 +50,10 @@ func (s *Store) DiffSnapshots(ctx context.Context, fromVersion, toVersion uint32
 		Services:    collectionDiff(from.Services, to.Services, func(item agent.PolicyService) string { return strconv.FormatUint(uint64(item.ServiceID), 10) }),
 		WhitelistV4: collectionDiff(from.WhitelistV4, to.WhitelistV4, cidrEntryKey),
 		BlacklistV4: collectionDiff(from.BlacklistV4, to.BlacklistV4, cidrEntryKey),
-		Rules:       collectionDiff(from.Rules, to.Rules, func(item agent.PolicyRule) string { return strconv.FormatUint(uint64(item.RuleID), 10) }),
+		UDPSourcePortBlocks: collectionDiff(from.UDPSourcePortBlocks, to.UDPSourcePortBlocks, func(item agent.PolicyUDPSourcePortBlock) string {
+			return strconv.FormatUint(uint64(item.Port), 10)
+		}),
+		Rules: collectionDiff(from.Rules, to.Rules, func(item agent.PolicyRule) string { return strconv.FormatUint(uint64(item.RuleID), 10) }),
 	}
 	if !jsonEqual(from.Runtime, to.Runtime) {
 		diff.Runtime = &SnapshotDiffChange{

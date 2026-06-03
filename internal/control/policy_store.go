@@ -1026,6 +1026,145 @@ func scanBlacklistEntryRow(row rowScanner, entry *BlacklistEntryRow) error {
 	return nil
 }
 
+func (s *Store) CreateUDPSourcePortBlock(ctx context.Context, actor *Actor, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
+	if err := requireOperator(actor); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if err := validateUDPSourcePortBlockInput(input); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	reason = mutationReason(reason, input.Reason)
+	if reason == "" {
+		return UDPSourcePortBlock{}, errors.New("reason is required")
+	}
+	id, err := newUUID()
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	enabled := boolDefault(input.Enabled, true)
+	var expires any
+	if !input.ExpiresAt.IsZero() {
+		expires = input.ExpiresAt
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	defer tx.Rollback(ctx)
+	var entry UDPSourcePortBlock
+	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `INSERT INTO udp_source_port_blocks(id, port, label, reason, owner, expires_at, enabled)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
+		id,
+		input.Port,
+		strings.TrimSpace(input.Label),
+		reason,
+		strings.TrimSpace(input.Owner),
+		expires,
+		enabled,
+	), &entry)
+	if err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if err := insertAudit(ctx, tx, actor, "create_udp_source_port_block", "udp_source_port_block", entry.ID, nil, entry, reason, ""); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		return UDPSourcePortBlock{}, err
+	}
+	return entry, tx.Commit(ctx)
+}
+
+func (s *Store) ListUDPSourcePortBlocks(ctx context.Context, query UDPSourcePortBlockQuery) ([]UDPSourcePortBlock, error) {
+	where, args := udpSourcePortBlockWhere(query)
+	rows, err := s.pool.Query(ctx, `SELECT id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at
+FROM udp_source_port_blocks
+`+where+` ORDER BY port ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]UDPSourcePortBlock, 0)
+	for rows.Next() {
+		var entry UDPSourcePortBlock
+		if err := scanUDPSourcePortBlock(rows, &entry); err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func parseUDPSourcePortBlockQuery(values map[string][]string) (UDPSourcePortBlockQuery, error) {
+	query := UDPSourcePortBlockQuery{
+		Search: first(values, "q"),
+		State:  blacklistQueryValue(first(values, "state"), "all"),
+		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.State {
+	case "all", "enabled", "disabled":
+	default:
+		return query, fmt.Errorf("state must be all, enabled, or disabled")
+	}
+	switch query.Expiry {
+	case "all", "valid", "expired", "none":
+	default:
+		return query, fmt.Errorf("expiry must be all, valid, expired, or none")
+	}
+	return query, nil
+}
+
+func udpSourcePortBlockWhere(query UDPSourcePortBlockQuery) (string, []any) {
+	clauses := make([]string, 0)
+	args := make([]any, 0)
+
+	if search := strings.TrimSpace(query.Search); search != "" {
+		args = append(args, "%"+search+"%")
+		idx := len(args)
+		clauses = append(clauses, fmt.Sprintf(`(port::text ILIKE $%d OR label ILIKE $%d OR reason ILIKE $%d OR owner ILIKE $%d)`, idx, idx, idx, idx))
+	}
+	switch blacklistQueryValue(query.State, "all") {
+	case "enabled":
+		clauses = append(clauses, "enabled")
+	case "disabled":
+		clauses = append(clauses, "NOT enabled")
+	}
+	switch blacklistQueryValue(query.Expiry, "all") {
+	case "valid":
+		clauses = append(clauses, "(expires_at IS NULL OR expires_at > now())")
+	case "expired":
+		clauses = append(clauses, "expires_at IS NOT NULL AND expires_at <= now()")
+	case "none":
+		clauses = append(clauses, "expires_at IS NULL")
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func scanUDPSourcePortBlock(row rowScanner, entry *UDPSourcePortBlock) error {
+	var expires *time.Time
+	var port int32
+	if err := row.Scan(
+		&entry.ID,
+		&entry.EBPFID,
+		&port,
+		&entry.Label,
+		&entry.Reason,
+		&entry.Owner,
+		&expires,
+		&entry.Enabled,
+		&entry.CreatedAt,
+		&entry.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	entry.Port = uint16(port)
+	entry.ExpiresAt = expires
+	return nil
+}
+
 func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSourceInput, reason string) (FeedSource, error) {
 	if err := requireOperator(actor); err != nil {
 		return FeedSource{}, err
@@ -1423,6 +1562,14 @@ func validateBlacklistInput(input BlacklistInput) error {
 	}
 	if strings.TrimSpace(input.Source) == "" {
 		errs = append(errs, errors.New("source is required"))
+	}
+	return errors.Join(errs...)
+}
+
+func validateUDPSourcePortBlockInput(input UDPSourcePortBlockInput) error {
+	var errs []error
+	if strings.TrimSpace(input.Owner) == "" {
+		errs = append(errs, errors.New("owner is required"))
 	}
 	return errors.Join(errs...)
 }

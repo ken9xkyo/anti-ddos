@@ -1,6 +1,6 @@
 # Admin Dashboard v2 / Admin Console vNext
 
-Trang thai: da cap nhat theo implementation Admin Console vNext trong working tree ngay 2026-05-29.
+Trang thai: da cap nhat theo implementation Admin Console vNext va UDP source-port block workflow trong working tree ngay 2026-06-03.
 
 Tai lieu nay mo ta dashboard/admin console sau khi Dashboard v2 duoc mo rong thanh console van hanh day du cho Anti-DDoS Scrubbing Gateway. Day la spec san pham + contract trien khai, khong phai landing-page brief.
 
@@ -16,13 +16,13 @@ Muc tieu chinh:
 - Dung MUI Community, MUI X Data Grid va MUI X Charts; khong dung Pro/Premium/commercial features.
 - Tat ca mutation quan trong phai co reason va audit.
 - Delete rule/whitelist/feed la soft-disable de giu audit/history va giam rui ro rollback/FK.
-- Khong them eBPF ABI, data-plane contract hoac packet-path semantics moi.
+- Moi thay doi eBPF ABI/data-plane trong cac increment sau phai di kem BPF/Agent contract, snapshot, docs va test gate. UDP source-port blocking la mot increment nhu vay.
 
 Ngoai pham vi increment nay:
 
 - SSO/MFA/OIDC va tenant/group model.
 - Physical delete policy object.
-- Rule engine moi hoac thay doi XDP/eBPF data path.
+- Rule engine moi hoac thay doi XDP/eBPF data path ngoai UDP source-port blocking.
 - Grafana replacement.
 - Raw snapshot browser day du va audit timeline day du.
 
@@ -40,6 +40,7 @@ Ngoai pham vi increment nay:
 | AD2-REQ-008 | Snapshot semantic diff va rollback confirm | Done | Snapshots tab + Go endpoints |
 | AD2-REQ-009 | Next-hop MAC khong nhap tay tren dashboard; Agent tu resolve/cau hinh | Done | Services form/test + doc policy |
 | AD2-REQ-010 | Audit khong luu raw password/credential value | Done | Go integration coverage |
+| AD2-REQ-011 | UDP source-port blocklist global, seed disabled, Viewer read-only, Operator/Admin mutation | Done | UDP Ports tab + Go endpoints + XDP fixture |
 
 ## 3. Personas va RBAC
 
@@ -69,6 +70,7 @@ Nguyen tac:
 | Rules | Configuration | Rule CRUD | Lazy-load `/v1/rules` khi vao tab |
 | Whitelist | Configuration | Allow-list CRUD | Lazy-load `/v1/whitelist` khi vao tab |
 | Blacklist | Configuration | Manual/feed block-list visibility and manual CRUD | Lazy-load `/v1/blacklist/entries` khi vao tab |
+| UDP Ports | Configuration | Global UDP reflection/amplification source-port blocklist | Lazy-load `/v1/udp-source-port-blocks` khi vao tab |
 | Reputation | Threat Intelligence | Feed CRUD/sync + run/conflict visibility | Polling feed summary + lazy/action refresh |
 | Snapshots | Setting | Snapshot list, semantic diff, rollback | Lazy-load `/v1/snapshots?include_snapshot=false` |
 | Accounts | Setting | Local user management | Lazy-load `/v1/users` khi vao tab |
@@ -194,7 +196,23 @@ Actions:
 - Action luon la `drop`; non-drop action bi backend reject.
 - Disabled/expired manual blacklist khong vao active snapshot tiep theo nhung van giu history.
 
-### 6.7 Detections
+### 6.7 UDP Ports
+
+Hien thi:
+
+- MUI X Data Grid cho port, label, owner, expiry, enabled state va reason.
+- Search/filter API-backed theo port/label/owner/reason, enabled state va expiry state.
+- Seed ports reflection/amplification duoc hien thi disabled mac dinh.
+
+Actions:
+
+- Operator/Admin create UDP source-port block.
+- Operator/Admin edit UDP source-port block.
+- Operator/Admin soft-disable bang `DELETE /v1/udp-source-port-blocks/{id}`.
+- Viewer chi doc, khong thay create/edit/disable controls.
+- Active snapshot chi co enabled/non-expired entries; khi co active entries, snapshot feature flag `udp_src_port_block` duoc bat.
+
+### 6.8 Detections
 
 Muc tieu: observe posture, khong pha tron voi CRUD workflow.
 
@@ -204,7 +222,7 @@ Hien thi:
 - Baselines: service, interface, protocol/port, window, expected pps/bps/cps, confidence, approval.
 - Active rules: read-only posture. CRUD nam o tab Rules; manual blacklist CRUD nam o tab Blacklist.
 
-### 6.8 Reputation
+### 6.9 Reputation
 
 Hien thi:
 
@@ -219,13 +237,13 @@ Actions:
 - Soft-disable bang `DELETE /v1/feed-sources/{id}`.
 - Sync bang `POST /v1/feed-sources/{id}/sync`.
 
-### 6.9 Snapshots
+### 6.10 Snapshots
 
 Hien thi:
 
 - Snapshot list tu `/v1/snapshots?include_snapshot=false`.
 - Columns: version, checksum, object_checksum, rollback_from, created_by, created_at.
-- Semantic diff grouped by services, whitelist_v4, blacklist_v4, rules, runtime/object checksum.
+- Semantic diff grouped by services, whitelist_v4, blacklist_v4, udp_source_port_blocks, rules, runtime/object checksum.
 
 Actions:
 
@@ -233,7 +251,7 @@ Actions:
 - Rollback goi `/v1/snapshots/rollback` va tao snapshot moi tu selected version.
 - Raw snapshot khong bi keo vao polling overview mac dinh.
 
-### 6.10 Accounts
+### 6.11 Accounts
 
 Hien thi:
 
@@ -248,7 +266,7 @@ Actions:
 - Admin revoke sessions bang `/v1/users/{id}/sessions/revoke`.
 - Backend co `/v1/me/password` de user doi password va clear `force_password_change`; dedicated self-service UI la backlog nho neu can expose trong topbar/profile.
 
-### 6.11 Nodes
+### 6.12 Nodes
 
 Hien thi:
 
@@ -257,7 +275,7 @@ Hien thi:
 - Interfaces: name, role, ifindex, MAC, link speed.
 - Map utilization neu agent report.
 
-### 6.12 Events
+### 6.13 Events
 
 Hien thi:
 
@@ -267,7 +285,7 @@ Hien thi:
 
 ## 7. Backend API contracts
 
-Khong can migration moi neu dung cac cot hien co: `enabled`, `status`, `force_password_change`, `password_hash`, `user_sessions.revoked_at`.
+Admin Console vNext reuses existing auth/session columns and adds feature-specific migrations where needed, including `udp_source_port_blocks` for UDP source-port blocking.
 
 | Domain | Method/path | Role | Semantics |
 |---|---|---|---|
@@ -288,6 +306,10 @@ Khong can migration moi neu dung cac cot hien co: `enabled`, `status`, `force_pa
 | Whitelist | `POST /v1/whitelist` | Operator/Admin | Create entry, rebuild snapshot |
 | Whitelist | `PATCH /v1/whitelist/{id}` | Operator/Admin | Update entry, rebuild snapshot |
 | Whitelist | `DELETE /v1/whitelist/{id}` | Operator/Admin | Soft-disable entry, rebuild snapshot |
+| UDP Ports | `GET /v1/udp-source-port-blocks?q=&state=&expiry=` | Authenticated | List global UDP source-port blocks |
+| UDP Ports | `POST /v1/udp-source-port-blocks` | Operator/Admin | Create entry, rebuild snapshot |
+| UDP Ports | `PATCH /v1/udp-source-port-blocks/{id}` | Operator/Admin | Update entry, rebuild snapshot |
+| UDP Ports | `DELETE /v1/udp-source-port-blocks/{id}` | Operator/Admin | Soft-disable entry, rebuild snapshot |
 | Feeds | `GET /v1/feed-sources` | Authenticated | List feed sources |
 | Feeds | `POST /v1/feed-sources` | Operator/Admin | Create feed; `credential_ref` Admin-only |
 | Feeds | `PATCH /v1/feed-sources/{id}` | Operator/Admin | Update feed; `credential_ref` Admin-only |
@@ -304,6 +326,7 @@ TypeScript models:
 - `User`, `UserUpdateInput`, `PasswordResetInput`, `OwnPasswordInput`.
 - `Rule`, `RuleInput`.
 - `WhitelistEntry`, `WhitelistInput`.
+- `UDPSourcePortBlock`, `UDPSourcePortBlockInput`.
 - `FeedSource`, `FeedSourceInput`.
 - `SnapshotMetadata`, `SnapshotDiff`, `SnapshotCollectionDiff`, `AuditEvent`.
 
@@ -313,7 +336,7 @@ Bat buoc:
 
 - Reason required cho create/update/delete/rollback/reset/revoke.
 - Audit before/after cho policy va access mutations.
-- Audit entity type phai ro: `user`, `rule`, `whitelist`, `manual_blacklist_entry`, `feed_source`, `snapshot`.
+- Audit entity type phai ro: `user`, `rule`, `whitelist`, `manual_blacklist_entry`, `udp_source_port_block`, `feed_source`, `snapshot`.
 - Raw password, temporary password, bot token, credential value khong vao audit.
 - Feed `credential_ref` la write-only credential field: co the nhan raw key hoac `env://`/`secret://anti-ddos/` reference, nhung response/audit phai mask thanh `***`.
 
@@ -322,6 +345,7 @@ Snapshot rebuild:
 - Rule create/update/disable rebuild snapshot.
 - Whitelist create/update/disable rebuild snapshot.
 - Blacklist create/update/disable rebuild snapshot.
+- UDP source-port block create/update/disable rebuild snapshot.
 - Feed enabled/disabled state change rebuild snapshot khi anh huong active blacklist.
 - Service create/update/disable rebuild snapshot theo existing flow.
 
@@ -357,6 +381,7 @@ Coverage can giu:
 - Rule CRUD va soft-disable.
 - Whitelist CRUD va soft-disable.
 - Blacklist CRUD va soft-disable.
+- UDP Ports CRUD, seed disabled entries, viewer read-only behavior and snapshot diff.
 - Feed CRUD/sync/soft-disable, Admin-only credential_ref.
 - User create/update/password reset/session revoke.
 - Snapshot diff va rollback confirmation.
@@ -371,7 +396,7 @@ Frontend:
 - Shell/theme: `web/dashboard/src/App.tsx`, `web/dashboard/src/DashboardShell.tsx`, `web/dashboard/src/muiTheme.ts`, `web/dashboard/src/styles.css`.
 - Shared admin UI: `web/dashboard/src/adminUi.tsx`.
 - Client/types/navigation: `web/dashboard/src/api.ts`, `web/dashboard/src/types.ts`, `web/dashboard/src/navigation.ts`.
-- Views: `AccessView`, `RulesAdminView`, `WhitelistAdminView`, `BlacklistAdminView`, `ReputationView`, `SnapshotsView`, `OverviewView`.
+- Views: `AccessView`, `RulesAdminView`, `WhitelistAdminView`, `BlacklistAdminView`, `UDPPortsAdminView`, `ReputationView`, `SnapshotsView`, `OverviewView`.
 - Tests: `web/dashboard/src/App.test.tsx`, `web/dashboard/src/api.test.ts`.
 
 Backend:

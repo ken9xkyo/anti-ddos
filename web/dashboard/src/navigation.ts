@@ -28,7 +28,8 @@ export const navGroups = [
       { id: 'services', label: 'Services', icon: Router },
       { id: 'rules', label: 'Rules', icon: ListChecks },
       { id: 'whitelist', label: 'Whitelist', icon: ShieldCheck },
-      { id: 'blacklist', label: 'Blacklist', icon: Ban }
+      { id: 'blacklist', label: 'Blacklist', icon: Ban },
+      { id: 'udpPorts', label: 'UDP Ports', icon: Ban }
     ]
   },
   {

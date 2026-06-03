@@ -102,6 +102,7 @@ enum drop_reason {
     REASON_REDIRECT_ERROR = 8,
     REASON_NEIGHBOR_UNRESOLVED = 9,
     REASON_FRAGMENT = 10,
+    REASON_UDP_AMP_SOURCE_PORT = 11,
 };
 
 struct packet_meta {
@@ -138,6 +139,7 @@ Notes:
 | `whitelist_lpm` | `whitelist_v4_a`, `whitelist_v4_b`; future v6 pair | `BPF_MAP_TYPE_LPM_TRIE` | Yes | Agent | XDP |
 | `blacklist_lpm` | `blacklist_v4_a`, `blacklist_v4_b`; future v6 pair | `BPF_MAP_TYPE_LPM_TRIE` | Yes | Agent | XDP |
 | `service_allowlist` | `service_allowlist_a`, `service_allowlist_b` | `BPF_MAP_TYPE_HASH` | Yes | Agent | XDP |
+| `udp_src_port_blocks` | `udp_src_port_blocks_a`, `udp_src_port_blocks_b` | `BPF_MAP_TYPE_HASH` | Yes | Agent | XDP |
 | `tx_devmap` | Shared pinned map | `BPF_MAP_TYPE_DEVMAP` | Yes | Agent | XDP |
 | `rate_state` | Shared map | `BPF_MAP_TYPE_LRU_HASH` | Yes | XDP | XDP, Agent |
 | `rule_config` | `rule_config_a`, `rule_config_b` plus active slot config | `BPF_MAP_TYPE_ARRAY` | Yes | Agent | XDP |
@@ -223,6 +225,12 @@ struct rule_value {
     __u64 expires_at_unix_ns;
 };
 
+struct udp_src_port_block_value {
+    __u32 entry_id;
+    __u32 port;
+    __u64 expires_at_unix_ns;
+};
+
 struct rate_key {
     __u32 src_v4;
     __u32 service_id;
@@ -285,6 +293,7 @@ Implementation notes:
 | `whitelist_lpm` | 65,536 | Manual whitelist plus emergency allow entries |
 | `blacklist_lpm` | 1,000,000 | Manual blacklist plus effective feed entries; reject snapshot above capacity |
 | `service_allowlist` | 16,384 | Protected IP/protocol/port tuples |
+| `udp_src_port_blocks` | 4,096 | Global UDP reflection/amplification source-port block entries |
 | `tx_devmap` | 128 | Output interfaces used by service policies |
 | `rate_state` | 2,000,000 | LRU eviction prevents unbounded attack state |
 | `rule_config` | 4,096 | Active rules per snapshot |
@@ -352,6 +361,14 @@ function xdp_entry(ctx):
         maybe_sample(meta, cfg)
         return XDP_DROP
 
+    udp_src_port_block = lookup_active_udp_src_port_block(cfg.active_slot, meta.src_port)
+    if not whitelist_applies and meta.proto == L4_UDP and udp_src_port_block exists:
+        meta.reason = REASON_UDP_AMP_SOURCE_PORT
+        meta.action = ACTION_DROP
+        count(meta.reason, meta.action)
+        maybe_sample(meta, cfg)
+        return XDP_DROP
+
     if service.neighbor_status != NEIGHBOR_RESOLVED:
         meta.reason = REASON_NEIGHBOR_UNRESOLVED
         meta.action = ACTION_DROP
@@ -388,6 +405,7 @@ Parser requirements:
 - Unknown protocols pass or drop only by explicit rule.
 - A global whitelist bypasses blacklist and rate-limit for all services but still requires a service allowlist match.
 - A service-scoped whitelist applies only after the packet resolves to that service.
+- UDP source-port blocks apply only after service allowlist, whitelist precedence and blacklist precedence. Whitelisted sources bypass the check; service misses keep `REASON_NOT_ALLOWED_SERVICE`.
 - `bpf_redirect_map(..., XDP_DROP)` makes missing DEVMAP entries fail closed.
 
 ---
@@ -468,6 +486,7 @@ function apply_snapshot(snapshot):
 
     populate whitelist_lpm[inactive_slot]
     populate blacklist_lpm[inactive_slot]
+    populate udp_src_port_blocks[inactive_slot]
     populate service_allowlist[inactive_slot]
     populate tx_devmap with required output ifindexes
     populate rule_config[inactive_slot]
@@ -621,6 +640,7 @@ erDiagram
 | `policy_apply_status` | Agent apply result | `agent_id`, `policy_version`, `status`, `error`, `map_stats` | unique `agent_id,policy_version` |
 | `whitelist_entries` | Manual allow CIDRs | `ip_or_cidr`, `scope`, `service_id`, `label`, `reason`, `owner`, `priority`, `expires_at`, `enabled` | GiST `ip_or_cidr`, `scope`, `service_id`, `expires_at` |
 | `manual_blacklist_entries` | Manual block CIDRs | `ip_or_cidr`, `score`, `action`, `source`, `rule_id`, `reason`, `expires_at`, `enabled` | GiST `ip_or_cidr` |
+| `udp_source_port_blocks` | Global UDP source-port block entries | `id`, `ebpf_id`, `port`, `label`, `reason`, `owner`, `enabled`, `expires_at` | unique `port`, unique `ebpf_id`, `enabled`, `expires_at` |
 | `feed_sources` | Feed configuration | `name`, `type`, `url`, `enabled`, `required_for_production`, `interval_seconds`, `license_note`, `quota_metadata`, `secret_ref` | unique `name`, `enabled` |
 | `feed_runs` | Feed execution log | `source_id`, `started_at`, `finished_at`, `status`, `items_fetched`, `error` | `source_id,started_at` |
 | `reputation_entries` | Effective blacklist/reputation | `ip_or_cidr`, `source`, `score`, `status`, `first_seen_at`, `last_seen_at`, `expires_at` | GiST `ip_or_cidr`, `source`, `status` |

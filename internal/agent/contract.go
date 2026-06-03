@@ -15,6 +15,7 @@ const (
 	reasonMapError           = 7
 	reasonRedirectError      = 8
 	reasonNeighborUnresolved = 9
+	reasonUDPAmpSourcePort   = 11
 
 	l4ICMP = 1
 	l4TCP  = 6
@@ -56,6 +57,12 @@ type CIDRPolicyValue struct {
 	ServiceID       uint32
 	Score           uint32
 	RuleID          uint32
+	ExpiresAtUnixNS uint64
+}
+
+type UDPSourcePortBlockValue struct {
+	EntryID         uint32
+	Port            uint32
 	ExpiresAtUnixNS uint64
 }
 

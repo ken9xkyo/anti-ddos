@@ -69,6 +69,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/blacklist", s.handleBlacklist)
 	s.mux.HandleFunc("/v1/blacklist/entries", s.handleBlacklistEntries)
 	s.mux.HandleFunc("/v1/blacklist/", s.handleBlacklistByID)
+	s.mux.HandleFunc("/v1/udp-source-port-blocks", s.handleUDPSourcePortBlocks)
+	s.mux.HandleFunc("/v1/udp-source-port-blocks/", s.handleUDPSourcePortBlockByID)
 	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
 	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
 	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
@@ -507,6 +509,58 @@ func (s *Server) handleBlacklistByID(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, entry, err)
 	case http.MethodDelete:
 		entry, err := s.store.DisableBlacklistEntry(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleUDPSourcePortBlocks(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		query, err := parseUDPSourcePortBlockQuery(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		entries, err := s.store.ListUDPSourcePortBlocks(r.Context(), query)
+		writeResult(w, entries, err)
+	case http.MethodPost:
+		var req UDPSourcePortBlockInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		entry, err := s.store.CreateUDPSourcePortBlock(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleUDPSourcePortBlockByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/udp-source-port-blocks/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, errors.New("udp source port block not found"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req UDPSourcePortBlockInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		entry, err := s.store.UpdateUDPSourcePortBlock(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, entry, err)
+	case http.MethodDelete:
+		entry, err := s.store.DisableUDPSourcePortBlock(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
 		writeResult(w, entry, err)
 	default:
 		methodNotAllowed(w)
@@ -957,6 +1011,10 @@ func routeName(r *http.Request) string {
 		return "/v1/blacklist/entries"
 	case strings.HasPrefix(path, "/v1/blacklist/"):
 		return "/v1/blacklist/{id}"
+	case path == "/v1/udp-source-port-blocks":
+		return "/v1/udp-source-port-blocks"
+	case strings.HasPrefix(path, "/v1/udp-source-port-blocks/"):
+		return "/v1/udp-source-port-blocks/{id}"
 	case path == "/v1/feed-sources":
 		return "/v1/feed-sources"
 	case strings.HasPrefix(path, "/v1/feed-sources/"):

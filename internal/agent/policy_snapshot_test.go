@@ -89,6 +89,29 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 			want: "expired",
 		},
 		{
+			name: "duplicate udp source port block",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{
+					{EntryID: 4, Port: 123},
+					{EntryID: 5, Port: 123},
+				}
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "duplicate udp_source_port_blocks port",
+		},
+		{
+			name: "expired udp source port block",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{
+					{EntryID: 4, Port: 123, ExpiresAtUnixNS: uint64(time.Now().Add(-time.Second).UnixNano())},
+				}
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "udp_source_port_blocks entry 4 is expired",
+		},
+		{
 			name: "ipv6 rejected",
 			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
 				snapshot.BlacklistV4[0].CIDR = "2001:db8::/32"
@@ -168,6 +191,8 @@ func TestVerifyPolicySnapshotAllowsUnresolvedServicesOnlyWhenConfigured(t *testi
 
 func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 	valid := signedTestPolicySnapshot(t, 2)
+	valid.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{{EntryID: 4, Port: 123}}
+	valid = resignTestPolicySnapshot(t, valid)
 
 	tests := []struct {
 		name      string
@@ -175,6 +200,7 @@ func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 		want      string
 	}{
 		{name: "blacklist", overrides: map[string]uint32{"blacklist_v4": 0}, want: "blacklist_v4"},
+		{name: "udp source port blocks", overrides: map[string]uint32{"udp_source_port_blocks": 0}, want: "udp_source_port_blocks"},
 		{name: "service", overrides: map[string]uint32{"service_allowlist": 0}, want: "service_allowlist"},
 		{name: "rule", overrides: map[string]uint32{"rule_config": 1}, want: "rule_config"},
 		{name: "devmap", overrides: map[string]uint32{"tx_devmap": 1}, want: "devmap_key"},
@@ -292,6 +318,8 @@ func TestApplyPolicySnapshotFlipsRuntimeAndPersistsLastValid(t *testing.T) {
 	runtime := newPolicyApplyTestRuntime(t, false)
 	path := filepath.Join(t.TempDir(), "last-valid.json")
 	snapshot := signedTestPolicySnapshot(t, 2)
+	snapshot.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{{EntryID: 4, Port: 123}}
+	snapshot = resignTestPolicySnapshot(t, snapshot)
 
 	result, err := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
 		SnapshotPath:   path,
@@ -323,6 +351,15 @@ func TestApplyPolicySnapshotFlipsRuntimeAndPersistsLastValid(t *testing.T) {
 	}
 	if value.RuleID != 77 {
 		t.Fatalf("unexpected blacklist value: %#v", value)
+	}
+
+	udpKey := uint32(123)
+	var udpValue UDPSourcePortBlockValue
+	if err := runtime.Collection.Maps["udp_src_port_blocks_b"].Lookup(&udpKey, &udpValue); err != nil {
+		t.Fatalf("udp_src_port_blocks_b missing entry: %v", err)
+	}
+	if udpValue.EntryID != 4 || udpValue.Port != udpKey {
+		t.Fatalf("unexpected udp source port block value: %#v", udpValue)
 	}
 
 	loaded, err := LoadLastValidSnapshot(path)
@@ -520,14 +557,16 @@ func newPolicyApplyTestRuntime(t *testing.T, brokenBlacklist bool) *Runtime {
 			ValueSize:  uint32(unsafe.Sizeof(RuntimeConfigValue{})),
 			MaxEntries: 1,
 		}),
-		"whitelist_v4_a":      newCIDRTestMap(t, "whitelist_v4_a", false),
-		"whitelist_v4_b":      newCIDRTestMap(t, "whitelist_v4_b", false),
-		"blacklist_v4_a":      newCIDRTestMap(t, "blacklist_v4_a", false),
-		"blacklist_v4_b":      newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
-		"service_allowlist_a": newServiceTestMap(t, "service_allowlist_a"),
-		"service_allowlist_b": newServiceTestMap(t, "service_allowlist_b"),
-		"rule_config_a":       newRuleTestMap(t, "rule_config_a"),
-		"rule_config_b":       newRuleTestMap(t, "rule_config_b"),
+		"whitelist_v4_a":        newCIDRTestMap(t, "whitelist_v4_a", false),
+		"whitelist_v4_b":        newCIDRTestMap(t, "whitelist_v4_b", false),
+		"blacklist_v4_a":        newCIDRTestMap(t, "blacklist_v4_a", false),
+		"blacklist_v4_b":        newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
+		"udp_src_port_blocks_a": newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_a"),
+		"udp_src_port_blocks_b": newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_b"),
+		"service_allowlist_a":   newServiceTestMap(t, "service_allowlist_a"),
+		"service_allowlist_b":   newServiceTestMap(t, "service_allowlist_b"),
+		"rule_config_a":         newRuleTestMap(t, "rule_config_a"),
+		"rule_config_b":         newRuleTestMap(t, "rule_config_b"),
 		"tx_devmap": newTestMap(t, &ebpf.MapSpec{
 			Name:       "tx_devmap_test",
 			Type:       ebpf.Hash,
@@ -583,6 +622,17 @@ func newServiceTestMap(t *testing.T, name string) *ebpf.Map {
 		Type:       ebpf.Hash,
 		KeySize:    uint32(unsafe.Sizeof(ServiceKey{})),
 		ValueSize:  uint32(unsafe.Sizeof(ServiceValue{})),
+		MaxEntries: 16,
+	})
+}
+
+func newUDPSourcePortBlockTestMap(t *testing.T, name string) *ebpf.Map {
+	t.Helper()
+	return newTestMap(t, &ebpf.MapSpec{
+		Name:       name,
+		Type:       ebpf.Hash,
+		KeySize:    uint32(unsafe.Sizeof(uint32(0))),
+		ValueSize:  uint32(unsafe.Sizeof(UDPSourcePortBlockValue{})),
 		MaxEntries: 16,
 	})
 }

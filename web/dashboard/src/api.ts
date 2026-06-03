@@ -27,6 +27,9 @@ import type {
   SnapshotMetadata,
   TelegramConfig,
   TelegramConfigInput,
+  UDPSourcePortBlock,
+  UDPSourcePortBlockFilters,
+  UDPSourcePortBlockInput,
   User,
   UserUpdateInput,
   WhitelistEntry,
@@ -234,6 +237,31 @@ export class ApiClient {
     });
   }
 
+  async udpSourcePortBlocks(filters: UDPSourcePortBlockFilters = {}): Promise<UDPSourcePortBlock[]> {
+    return asArray(await this.request<UDPSourcePortBlock[] | null>(`/v1/udp-source-port-blocks${udpSourcePortBlockQuery(filters)}`));
+  }
+
+  async createUDPSourcePortBlock(input: UDPSourcePortBlockInput): Promise<UDPSourcePortBlock> {
+    return this.request<UDPSourcePortBlock>('/v1/udp-source-port-blocks', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateUDPSourcePortBlock(id: string, input: UDPSourcePortBlockInput): Promise<UDPSourcePortBlock> {
+    return this.request<UDPSourcePortBlock>(`/v1/udp-source-port-blocks/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async disableUDPSourcePortBlock(id: string, reason: string): Promise<UDPSourcePortBlock> {
+    return this.request<UDPSourcePortBlock>(`/v1/udp-source-port-blocks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
+    });
+  }
+
   async feedSources(): Promise<FeedSource[]> {
     return asArray(await this.request<FeedSource[] | null>('/v1/feed-sources'));
   }
@@ -367,6 +395,16 @@ function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   params.set('page', String(page));
   params.set('page_size', String(pageSize));
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : '';
+}
+
+function udpSourcePortBlockQuery(filters: UDPSourcePortBlockFilters): string {
+  const params = new URLSearchParams();
+  const q = filters.q?.trim();
+  if (q) params.set('q', q);
+  if (filters.state && filters.state !== 'all') params.set('state', filters.state);
+  if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();
   return encoded ? `?${encoded}` : '';
 }
