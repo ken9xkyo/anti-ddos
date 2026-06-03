@@ -1,0 +1,27 @@
+C4Context
+    title System Context - Anti-DDoS Scrubbing Gateway
+
+    Person(viewer, "Viewer", "Reads health, policies, events, alerts and snapshots")
+    Person(operator, "Operator", "Runs operational policy changes and incident workflows")
+    Person(admin, "Admin", "Manages users, secrets and privileged configuration")
+
+    System(gateway, "Anti-DDoS Scrubbing Gateway", "L3/L4 scrubbing gateway using XDP/eBPF, Control API and Admin Dashboard")
+    System_Ext(protected, "Protected Backend Services", "IPv4 services reached after L2 rewrite and XDP redirect")
+    System_Ext(threatIntel, "Threat Intelligence Feeds", "CIDR reputation sources imported by scheduled feed sync")
+    System_Ext(opsTools, "Ops Integrations", "Prometheus, Grafana and Telegram alert delivery")
+
+    Rel(viewer, gateway, "Observes system state", "HTTPS")
+    Rel(operator, gateway, "Changes service, rule and policy objects", "HTTPS")
+    Rel(admin, gateway, "Administers access and secrets", "HTTPS")
+    Rel(gateway, protected, "Forwards allowed traffic", "XDP_REDIRECT / DEVMAP")
+    Rel(gateway, threatIntel, "Syncs reputation entries", "HTTP(S)")
+    Rel(gateway, opsTools, "Exposes metrics and sends alerts", "Prometheus / HTTP")
+
+    UpdateRelStyle(viewer, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
+    UpdateRelStyle(operator, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
+    UpdateRelStyle(admin, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
+    UpdateRelStyle(gateway, protected, $textColor="#065f46", $lineColor="#10b981")
+    UpdateRelStyle(gateway, threatIntel, $textColor="#92400e", $lineColor="#f59e0b")
+    UpdateRelStyle(gateway, opsTools, $textColor="#475569", $lineColor="#94a3b8")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

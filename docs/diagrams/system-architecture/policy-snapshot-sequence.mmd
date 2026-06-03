@@ -1,0 +1,32 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+sequenceDiagram
+    autonumber
+    actor Operator
+    participant Dashboard as Admin Dashboard
+    participant API as Control API
+    participant DB as PostgreSQL
+    participant Agent as Node Agent
+    participant XDP as eBPF maps
+
+    Operator->>Dashboard: Submit policy mutation with reason
+    Dashboard->>API: POST/PATCH/DELETE /v1 policy object
+    API->>DB: Validate RBAC, write object and audit
+    API->>API: Build effective snapshot
+    API->>API: Sign checksum and verify schema/object checksum
+    alt Snapshot content changed
+        API->>DB: Insert policy_snapshots(version, snapshot)
+    else No content change
+        API-->>Dashboard: Return object without new snapshot
+    end
+    loop Every 5 seconds
+        Agent->>API: POST /v1/agents/{id}/heartbeat
+        API-->>Agent: desired_policy_version
+    end
+    Agent->>API: GET /v1/agents/{id}/snapshot?active_version=N
+    API->>DB: Fetch latest snapshot when version is newer
+    API-->>Agent: Signed PolicySnapshot or 204
+    Agent->>Agent: Verify, resolve forwarding metadata, re-sign
+    Agent->>XDP: Populate inactive A/B policy maps and tx_devmap
+    Agent->>XDP: Flip runtime_config.active_slot
+    Agent->>API: POST /v1/agents/{id}/apply
+    API->>DB: Upsert policy_apply_status and create alert on failure

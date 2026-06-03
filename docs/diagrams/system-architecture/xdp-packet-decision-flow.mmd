@@ -1,0 +1,34 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+flowchart TD
+    packet([WAN packet enters xdp_entry])
+    runtime{runtime_config valid?}
+    parse{IPv4 packet parses?}
+    nonIpv4[Pass non-IPv4]
+    malformed[Drop malformed or fragmented IPv4]
+    service{Service allowlist hit?}
+    serviceMiss[Drop not allowed service]
+    whitelist{Source whitelisted?}
+    threat{Blacklist or UDP source-port block?}
+    threatDrop[Drop threat match]
+    neighbor{Neighbor metadata resolved?}
+    neighborDrop[Drop unresolved neighbor]
+    rule{Default rule drops?}
+    ruleDrop[Drop rule or rate-limit]
+    redirect[Rewrite MAC and XDP_REDIRECT via tx_devmap]
+
+    packet --> runtime
+    runtime -- No --> serviceMiss
+    runtime -- Yes --> parse
+    parse -- Non-IPv4 --> nonIpv4
+    parse -- Malformed or fragment --> malformed
+    parse -- Valid IPv4 --> service
+    service -- No --> serviceMiss
+    service -- Yes --> whitelist
+    whitelist -- Yes --> neighbor
+    whitelist -- No --> threat
+    threat -- Yes --> threatDrop
+    threat -- No --> neighbor
+    neighbor -- No --> neighborDrop
+    neighbor -- Yes --> rule
+    rule -- Yes --> ruleDrop
+    rule -- No --> redirect

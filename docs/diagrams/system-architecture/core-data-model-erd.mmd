@@ -1,0 +1,120 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+erDiagram
+    APP_USERS ||--|| POLICY_SNAPSHOTS : creates
+    APP_USERS ||--|| AUDIT_EVENTS : performs
+    APP_USERS ||--|| ALERTS : creates
+    AGENTS ||--|| AGENT_INTERFACES : reports
+    AGENTS ||--|| POLICY_APPLY_STATUS : reports
+    AGENTS ||--|| SECURITY_EVENTS : forwards
+    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : has
+    BACKEND_SERVICES ||--|| RULES : scopes
+    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : scopes
+    BACKEND_SERVICES ||--|| ALERTS : affects
+    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : explains
+    FEED_SOURCES ||--|| REPUTATION_ENTRIES : imports
+
+    APP_USERS {
+        uuid id PK
+        text username UK
+        text role
+        text status
+        timestamptz created_at
+    }
+    AGENTS {
+        uuid id PK
+        text hostname UK
+        text status
+        bigint active_policy_version
+        timestamptz last_seen_at
+    }
+    AGENT_INTERFACES {
+        uuid id PK
+        uuid agent_id FK
+        text name
+        integer ifindex
+        text mac
+    }
+    BACKEND_SERVICES {
+        uuid id PK
+        bigint ebpf_id UK
+        inet backend_cidr
+        text protocol
+        boolean enabled
+    }
+    FORWARDING_POLICIES {
+        uuid id PK
+        uuid service_id FK
+        inet backend_target
+        text output_interface
+        integer devmap_key
+    }
+    RULES {
+        uuid id PK
+        uuid service_id FK
+        bigint ebpf_id UK
+        text action
+        text mode
+    }
+    WHITELIST_ENTRIES {
+        uuid id PK
+        uuid service_id FK
+        inet ip_or_cidr
+        text scope
+        boolean enabled
+    }
+    MANUAL_BLACKLIST_ENTRIES {
+        uuid id PK
+        uuid rule_id FK
+        inet ip_or_cidr
+        integer score
+        boolean enabled
+    }
+    FEED_SOURCES {
+        uuid id PK
+        text name UK
+        text status
+        boolean enabled
+        integer interval_seconds
+    }
+    REPUTATION_ENTRIES {
+        uuid id PK
+        uuid source_id FK
+        inet ip_or_cidr
+        integer score
+        text status
+    }
+    POLICY_SNAPSHOTS {
+        bigint version PK
+        text checksum
+        text object_checksum
+        bigint rollback_from FK
+        uuid created_by FK
+    }
+    POLICY_APPLY_STATUS {
+        uuid id PK
+        uuid agent_id FK
+        bigint policy_version
+        text status
+        text error_stage
+    }
+    SECURITY_EVENTS {
+        uuid id PK
+        uuid agent_id FK
+        bigint policy_version
+        inet src_ip
+        integer action
+    }
+    ALERTS {
+        uuid id PK
+        uuid service_id FK
+        uuid created_by FK
+        text severity
+        text status
+    }
+    AUDIT_EVENTS {
+        uuid id PK
+        uuid actor_id FK
+        text action
+        text entity_type
+        timestamptz created_at
+    }

@@ -1,0 +1,29 @@
+C4Container
+    title Runtime Containers - Anti-DDoS Scrubbing Gateway
+
+    System_Boundary(system, "Anti-DDoS Scrubbing Gateway") {
+        Container(dashboard, "Admin Dashboard", "React / Vite / Nginx", "Dense operations console for Viewer, Operator and Admin")
+        Container(api, "Control API", "Go HTTP JSON API", "RBAC, policy CRUD, snapshots, agents, events, alerts and metrics")
+        ContainerDb(db, "PostgreSQL", "PostgreSQL", "Users, policies, snapshots, events, alerts, audit and agent state")
+        Container(agent, "Node Agent", "Go host process", "Loads XDP, syncs snapshots, exposes metrics and forwards sampled events")
+        Container(xdp, "XDP/eBPF Data Plane", "eBPF maps and xdp_entry", "Parses packets, enforces policy and redirects clean traffic")
+        Container(monitoring, "Prometheus / Grafana", "Compose services", "Scrapes metrics and renders operations dashboards")
+    }
+
+    System_Ext(protected, "Protected Backend Services", "Backend services behind the scrubbing gateway")
+
+    Rel(dashboard, api, "Calls Control API", "JSON/HTTPS")
+    Rel(api, db, "Reads and writes state", "SQL")
+    Rel(agent, api, "Registers, heartbeats, fetches snapshots, posts events", "JSON/HTTP")
+    Rel(agent, xdp, "Loads program and updates pinned maps", "cilium/ebpf")
+    Rel(xdp, protected, "Redirects allowed packets", "DEVMAP")
+    Rel(monitoring, api, "Scrapes and queries metrics", "Prometheus HTTP")
+
+    UpdateRelStyle(dashboard, api, $textColor="#1e40af", $lineColor="#3b82f6")
+    UpdateRelStyle(api, db, $textColor="#475569", $lineColor="#94a3b8")
+    UpdateRelStyle(agent, api, $textColor="#475569", $lineColor="#94a3b8")
+    UpdateRelStyle(agent, xdp, $textColor="#065f46", $lineColor="#10b981")
+    UpdateRelStyle(xdp, protected, $textColor="#065f46", $lineColor="#10b981")
+    UpdateRelStyle(monitoring, api, $textColor="#475569", $lineColor="#94a3b8")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

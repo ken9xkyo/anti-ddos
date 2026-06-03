@@ -1,0 +1,26 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+sequenceDiagram
+    autonumber
+    participant XDP as XDP/eBPF
+    participant Agent as Node Agent
+    participant API as Control API
+    participant DB as PostgreSQL
+    participant UI as Admin Dashboard
+    participant Metrics as Prometheus / Grafana
+
+    XDP->>XDP: Count decision in drop_counters
+    opt Sampling enabled
+        XDP->>Agent: Write event_record to ringbuf events
+        Agent->>Agent: Normalize source, service, rule and sample rate
+        Agent->>API: POST /v1/agents/{id}/events batch
+        API->>DB: Insert security_events
+    end
+    loop Every second
+        Agent->>XDP: Read drop_counters and map utilization
+        Agent->>Agent: Update Prometheus gauges/counters
+    end
+    Metrics->>Agent: Scrape /metrics on host
+    Metrics->>API: Scrape /metrics in compose
+    UI->>API: GET dashboard, events, alerts and anomaly endpoints
+    API->>DB: Query events, agents, policy and alert state
+    UI-->>Metrics: Operators inspect Grafana dashboards
