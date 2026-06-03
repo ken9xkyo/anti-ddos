@@ -1,4 +1,4 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
 sequenceDiagram
     autonumber
     participant XDP as XDP/eBPF
@@ -8,19 +8,19 @@ sequenceDiagram
     participant UI as Admin Dashboard
     participant Metrics as Prometheus / Grafana
 
-    XDP->>XDP: Count decision in drop_counters
-    opt Sampling enabled
-        XDP->>Agent: Write event_record to ringbuf events
-        Agent->>Agent: Normalize source, service, rule and sample rate
+    XDP->>XDP: Đếm decision trong drop_counters
+    opt Sampling được bật
+        XDP->>Agent: Ghi event_record vào ringbuf events
+        Agent->>Agent: Normalize source, service, rule và sample rate
         Agent->>API: POST /v1/agents/{id}/events batch
         API->>DB: Insert security_events
     end
-    loop Every second
-        Agent->>XDP: Read drop_counters and map utilization
-        Agent->>Agent: Update Prometheus gauges/counters
+    loop Mỗi giây
+        Agent->>XDP: Đọc drop_counters và map utilization
+        Agent->>Agent: Cập nhật Prometheus gauges/counters
     end
-    Metrics->>Agent: Scrape /metrics on host
-    Metrics->>API: Scrape /metrics in compose
-    UI->>API: GET dashboard, events, alerts and anomaly endpoints
-    API->>DB: Query events, agents, policy and alert state
-    UI-->>Metrics: Operators inspect Grafana dashboards
+    Metrics->>Agent: Scrape /metrics trên host
+    Metrics->>API: Scrape /metrics trong compose
+    UI->>API: GET dashboard, events, alerts và anomaly endpoints
+    API->>DB: Query events, agents, policy và alert state
+    UI-->>Metrics: Operator xem Grafana dashboards

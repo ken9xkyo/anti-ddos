@@ -1,6 +1,6 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart LR
-    browser[Operator browser]
+    browser[Trình duyệt Operator]
 
     subgraph compose["Docker Compose lab stack"]
         direction LR
@@ -11,7 +11,7 @@ flowchart LR
         grafana[Grafana :3000]
     end
 
-    subgraph host["Host data plane"]
+    subgraph host["Data plane trên host"]
         direction LR
         agent[Node Agent<br/>host process :9091]
         xdp[XDP program<br/>pinned maps]
@@ -19,7 +19,7 @@ flowchart LR
         output[Backend output NIC]
     end
 
-    service[Protected service]
+    service[Dịch vụ được bảo vệ]
 
     browser --> dashboard
     dashboard --> api

@@ -1,17 +1,17 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','entityTextColor':'#000000','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#000000','relationshipLabelColor':'#000000'}}}%%
 erDiagram
-    APP_USERS ||--|| POLICY_SNAPSHOTS : creates
-    APP_USERS ||--|| AUDIT_EVENTS : performs
-    APP_USERS ||--|| ALERTS : creates
-    AGENTS ||--|| AGENT_INTERFACES : reports
-    AGENTS ||--|| POLICY_APPLY_STATUS : reports
-    AGENTS ||--|| SECURITY_EVENTS : forwards
-    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : has
-    BACKEND_SERVICES ||--|| RULES : scopes
-    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : scopes
-    BACKEND_SERVICES ||--|| ALERTS : affects
-    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : explains
-    FEED_SOURCES ||--|| REPUTATION_ENTRIES : imports
+    APP_USERS ||--|| POLICY_SNAPSHOTS : "tạo"
+    APP_USERS ||--|| AUDIT_EVENTS : "thực hiện"
+    APP_USERS ||--|| ALERTS : "tạo"
+    AGENTS ||--|| AGENT_INTERFACES : "báo cáo"
+    AGENTS ||--|| POLICY_APPLY_STATUS : "báo cáo"
+    AGENTS ||--|| SECURITY_EVENTS : "gửi"
+    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : "có"
+    BACKEND_SERVICES ||--|| RULES : "scope"
+    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : "scope"
+    BACKEND_SERVICES ||--|| ALERTS : "ảnh hưởng"
+    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : "giải thích"
+    FEED_SOURCES ||--|| REPUTATION_ENTRIES : "import"
 
     APP_USERS {
         uuid id PK

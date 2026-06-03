@@ -1,186 +1,204 @@
-# System Architecture Design - Anti-DDoS Scrubbing Gateway
+# Thiết Kế Kiến Trúc Hệ Thống - Anti-DDoS Scrubbing Gateway
 
-Trang thai: tai lieu kien truc he thong duoc lap tu source, README va docs hien co trong working tree ngay 2026-06-03.
+Trạng thái: tài liệu kiến trúc hệ thống được lập từ source, README và các tài liệu hiện có trong working tree ngày 2026-06-03.
 
-Tai lieu nay mo ta Anti-DDoS Scrubbing Gateway hien huu: mot scrubbing gateway L3/L4 dung XDP/eBPF de xu ly packet som tren WAN NIC, Control API/PostgreSQL de quan ly policy snapshot, Node Agent tren host de load/apply XDP, va Admin Dashboard/Prometheus/Grafana cho van hanh. He thong khong ket thuc TLS, khong proxy HTTP, khong xu ly L7/DPI va khong thay the WAF.
+Tài liệu này mô tả Anti-DDoS Scrubbing Gateway hiện hữu: một scrubbing gateway L3/L4 dùng XDP/eBPF để xử lý packet sớm trên WAN NIC, Control API/PostgreSQL để quản lý policy snapshot, Node Agent trên host để load/apply XDP, và Admin Dashboard/Prometheus/Grafana cho vận hành. Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
 
-## 1. Muc Tieu Va Pham Vi
+## 1. Mục Tiêu Và Phạm Vi
 
-Muc tieu chinh:
+Mục tiêu chính:
 
-- Loc va chuyen tiep luu luong L3/L4 toi cac protected backend service da khai bao.
-- Drop/rate-limit/observe/sample theo whitelist, blacklist, UDP source-port block, service allowlist va rule runtime.
-- Dam bao policy runtime duoc dong bo bang signed snapshot co checksum va version.
-- Cho phep Viewer, Operator va Admin quan sat, dieu tra, thay doi policy, rollback snapshot va audit hanh dong.
-- Expose metrics/events cho dashboard, Prometheus va Grafana.
+- Lọc và chuyển tiếp lưu lượng L3/L4 tới các protected backend service đã khai báo.
+- Drop, rate-limit, observe hoặc sample theo whitelist, blacklist, UDP source-port block, service allowlist và rule runtime.
+- Đồng bộ policy runtime bằng signed snapshot có checksum và version.
+- Cho phép Viewer, Operator và Admin quan sát, điều tra, thay đổi policy, rollback snapshot và audit hành động.
+- Xuất metrics/events cho Dashboard, Prometheus và Grafana.
 
-Pham vi hien tai:
+Phạm vi hiện tại:
 
-- Mot node Ubuntu 24.04, IPv4, native XDP la duong chay chinh.
-- Docker Compose khoi dong management/control lab stack: PostgreSQL, Control API, Prometheus, Grafana, Admin Dashboard.
-- Node Agent chay tren host vi can quyen eBPF/XDP va interface that/lab.
+- Một node Ubuntu 24.04, IPv4, native XDP là đường chạy chính.
+- Docker Compose khởi động management/control lab stack: PostgreSQL, Control API, Prometheus, Grafana và Admin Dashboard.
+- Node Agent chạy trên host vì cần quyền eBPF/XDP và host interfaces.
 
-Ngoai pham vi:
+Ngoài phạm vi:
 
 - L7 inspection, HTTP reverse proxy, TLS termination, WAF, BGP/RTBH/FlowSpec automation.
-- Multi-node HA production deployment va tenant/group model.
-- Attach XDP tren NIC production neu chua co phe duyet interface role va rollback plan.
+- Multi-node HA production deployment và tenant/group model.
+- Attach XDP trên NIC production nếu chưa có phê duyệt interface role và rollback plan.
 
 Success criteria:
 
-- Packet khong thuoc service allowlist bi fail-closed.
-- Policy snapshot moi chi duoc apply khi schema, checksum, object checksum, capacity va forwarding metadata hop le.
-- Moi mutation quan trong co reason va audit trail.
-- Agent apply failure duoc ghi vao `policy_apply_status` va co the tao alert.
-- Dashboard/Grafana phan anh duoc health, traffic decision, events, alerts, snapshot va agent state.
+- Packet không thuộc service allowlist bị fail-closed.
+- Policy snapshot mới chỉ được apply khi schema, checksum, object checksum, capacity và forwarding metadata hợp lệ.
+- Mọi mutation quan trọng có reason và audit trail.
+- Agent apply failure được ghi vào `policy_apply_status` và có thể tạo alert.
+- Dashboard/Grafana phản ánh được health, traffic decision, events, alerts, snapshot và agent state.
 
 ## 2. System Context
 
-System boundary gom Control API, PostgreSQL, Admin Dashboard, Node Agent va eBPF/XDP data plane. Ben ngoai la nguoi van hanh, protected services, threat intelligence feeds va ops integrations.
+System boundary gồm Control API, PostgreSQL, Admin Dashboard, Node Agent và eBPF/XDP data plane. Bên ngoài là người vận hành, protected services, threat intelligence feeds và ops integrations.
 
 SVG rendered: [system-context-c4.svg](diagrams/system-architecture/system-context-c4.svg)  
 Mermaid source: [system-context-c4.mmd](diagrams/system-architecture/system-context-c4.mmd)
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables': {'textColor':'#000000','titleColor':'#000000'}}}%%
 C4Context
-    title System Context - Anti-DDoS Scrubbing Gateway
+    title Ngữ cảnh hệ thống - Anti-DDoS Scrubbing Gateway
 
-    Person(viewer, "Viewer", "Reads health, policies, events, alerts and snapshots")
-    Person(operator, "Operator", "Runs operational policy changes and incident workflows")
-    Person(admin, "Admin", "Manages users, secrets and privileged configuration")
+    Person(viewer, "Viewer", "Theo dõi sức khỏe, chính sách, sự kiện, cảnh báo và snapshot")
+    Person(operator, "Operator", "Thực hiện thay đổi vận hành và xử lý sự cố")
+    Person(admin, "Admin", "Quản trị người dùng, secret và cấu hình đặc quyền")
 
-    System(gateway, "Anti-DDoS Scrubbing Gateway", "L3/L4 scrubbing gateway using XDP/eBPF, Control API and Admin Dashboard")
-    System_Ext(protected, "Protected Backend Services", "IPv4 services reached after L2 rewrite and XDP redirect")
-    System_Ext(threatIntel, "Threat Intelligence Feeds", "CIDR reputation sources imported by scheduled feed sync")
-    System_Ext(opsTools, "Ops Integrations", "Prometheus, Grafana and Telegram alert delivery")
+    System(gateway, "Anti-DDoS Scrubbing Gateway", "Gateway chống DDoS L3/L4 dùng XDP/eBPF, Control API và Admin Dashboard")
+    System_Ext(protected, "Dịch vụ backend được bảo vệ", "Dịch vụ IPv4 nhận lưu lượng sạch sau L2 rewrite và XDP redirect")
+    System_Ext(threatIntel, "Nguồn threat intelligence", "Nguồn reputation CIDR được đồng bộ định kỳ")
+    System_Ext(opsTools, "Tích hợp vận hành", "Prometheus, Grafana và Telegram alert delivery")
 
-    Rel(viewer, gateway, "Observes system state", "HTTPS")
-    Rel(operator, gateway, "Changes service, rule and policy objects", "HTTPS")
-    Rel(admin, gateway, "Administers access and secrets", "HTTPS")
-    Rel(gateway, protected, "Forwards allowed traffic", "XDP_REDIRECT / DEVMAP")
-    Rel(gateway, threatIntel, "Syncs reputation entries", "HTTP(S)")
-    Rel(gateway, opsTools, "Exposes metrics and sends alerts", "Prometheus / HTTP")
+    Rel(viewer, gateway, "Quan sát trạng thái hệ thống", "HTTPS")
+    Rel(operator, gateway, "Thay đổi service, rule và policy object", "HTTPS")
+    Rel(admin, gateway, "Quản trị access và secret", "HTTPS")
+    Rel(gateway, protected, "Chuyển tiếp lưu lượng hợp lệ", "XDP_REDIRECT / DEVMAP")
+    Rel(gateway, threatIntel, "Đồng bộ reputation entries", "HTTP(S)")
+    Rel(gateway, opsTools, "Xuất metrics và gửi cảnh báo", "Prometheus / HTTP")
 
-    UpdateRelStyle(viewer, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
-    UpdateRelStyle(operator, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
-    UpdateRelStyle(admin, gateway, $textColor="#1e40af", $lineColor="#3b82f6")
-    UpdateRelStyle(gateway, protected, $textColor="#065f46", $lineColor="#10b981")
-    UpdateRelStyle(gateway, threatIntel, $textColor="#92400e", $lineColor="#f59e0b")
-    UpdateRelStyle(gateway, opsTools, $textColor="#475569", $lineColor="#94a3b8")
+    UpdateElementStyle(viewer, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(operator, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(admin, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(gateway, $fontColor="#000000", $bgColor="#e0f2fe", $borderColor="#0284c7")
+    UpdateElementStyle(protected, $fontColor="#000000", $bgColor="#dcfce7", $borderColor="#16a34a")
+    UpdateElementStyle(threatIntel, $fontColor="#000000", $bgColor="#fef3c7", $borderColor="#d97706")
+    UpdateElementStyle(opsTools, $fontColor="#000000", $bgColor="#f1f5f9", $borderColor="#64748b")
+
+    UpdateRelStyle(viewer, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(operator, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(admin, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(gateway, protected, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(gateway, threatIntel, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(gateway, opsTools, $textColor="#000000", $lineColor="#64748b")
 
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
 Personas:
 
-- Viewer: doc dashboard, services, policy, events, alerts, feeds va snapshots; khong mutation.
-- Operator: thay doi service/rule/whitelist/blacklist/feed operational state, rollback snapshot, test alert.
-- Admin: bao gom Operator; them user management, password reset, session revoke va secret/credential config.
+- Viewer: đọc dashboard, services, policy, events, alerts, feeds và snapshots; không thực hiện mutation.
+- Operator: thay đổi operational state của service, rule, whitelist, blacklist, feed; rollback snapshot và test alert.
+- Admin: bao gồm quyền Operator; thêm user management, password reset, session revoke và secret/credential config.
 
 ## 3. Runtime Containers
 
-Runtime tach thanh management/control plane trong Docker Compose va data plane tren host. Control API la JSON API chinh cho dashboard va agent. PostgreSQL la source of truth cho users, sessions, policy objects, snapshots, events, alerts va audit. Agent load BPF object, attach `xdp_entry`, sync snapshot va expose metrics tren host.
+Runtime tách thành management/control plane trong Docker Compose và data plane trên host. Control API là JSON API chính cho dashboard và agent. PostgreSQL là source of truth cho users, sessions, policy objects, snapshots, events, alerts và audit. Agent load BPF object, attach `xdp_entry`, sync snapshot và expose metrics trên host.
 
 SVG rendered: [runtime-containers-c4.svg](diagrams/system-architecture/runtime-containers-c4.svg)  
 Mermaid source: [runtime-containers-c4.mmd](diagrams/system-architecture/runtime-containers-c4.mmd)
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables': {'textColor':'#000000','titleColor':'#000000'}}}%%
 C4Container
-    title Runtime Containers - Anti-DDoS Scrubbing Gateway
+    title Runtime containers - Anti-DDoS Scrubbing Gateway
 
     System_Boundary(system, "Anti-DDoS Scrubbing Gateway") {
-        Container(dashboard, "Admin Dashboard", "React / Vite / Nginx", "Dense operations console for Viewer, Operator and Admin")
-        Container(api, "Control API", "Go HTTP JSON API", "RBAC, policy CRUD, snapshots, agents, events, alerts and metrics")
-        ContainerDb(db, "PostgreSQL", "PostgreSQL", "Users, policies, snapshots, events, alerts, audit and agent state")
-        Container(agent, "Node Agent", "Go host process", "Loads XDP, syncs snapshots, exposes metrics and forwards sampled events")
-        Container(xdp, "XDP/eBPF Data Plane", "eBPF maps and xdp_entry", "Parses packets, enforces policy and redirects clean traffic")
-        Container(monitoring, "Prometheus / Grafana", "Compose services", "Scrapes metrics and renders operations dashboards")
+        Container(dashboard, "Admin Dashboard", "React / Vite / Nginx", "Console vận hành dày đặc cho Viewer, Operator và Admin")
+        Container(api, "Control API", "Go HTTP JSON API", "RBAC, policy CRUD, snapshot, agent, event, alert và metrics")
+        ContainerDb(db, "PostgreSQL", "PostgreSQL", "Users, policy, snapshot, event, alert, audit và agent state")
+        Container(agent, "Node Agent", "Go host process", "Load XDP, đồng bộ snapshot, xuất metrics và gửi sampled events")
+        Container(xdp, "XDP/eBPF Data Plane", "eBPF maps và xdp_entry", "Parse packet, enforce policy và redirect lưu lượng sạch")
+        Container(monitoring, "Prometheus / Grafana", "Compose services", "Scrape metrics và hiển thị dashboard vận hành")
     }
 
-    System_Ext(protected, "Protected Backend Services", "Backend services behind the scrubbing gateway")
+    System_Ext(protected, "Dịch vụ backend được bảo vệ", "Backend service phía sau scrubbing gateway")
 
-    Rel(dashboard, api, "Calls Control API", "JSON/HTTPS")
-    Rel(api, db, "Reads and writes state", "SQL")
-    Rel(agent, api, "Registers, heartbeats, fetches snapshots, posts events", "JSON/HTTP")
-    Rel(agent, xdp, "Loads program and updates pinned maps", "cilium/ebpf")
-    Rel(xdp, protected, "Redirects allowed packets", "DEVMAP")
-    Rel(monitoring, api, "Scrapes and queries metrics", "Prometheus HTTP")
+    Rel(dashboard, api, "Gọi Control API", "JSON/HTTPS")
+    Rel(api, db, "Đọc và ghi state", "SQL")
+    Rel(agent, api, "Register, heartbeat, fetch snapshot, post event", "JSON/HTTP")
+    Rel(agent, xdp, "Load program và cập nhật pinned maps", "cilium/ebpf")
+    Rel(xdp, protected, "Redirect packet hợp lệ", "DEVMAP")
+    Rel(monitoring, api, "Scrape và query metrics", "Prometheus HTTP")
 
-    UpdateRelStyle(dashboard, api, $textColor="#1e40af", $lineColor="#3b82f6")
-    UpdateRelStyle(api, db, $textColor="#475569", $lineColor="#94a3b8")
-    UpdateRelStyle(agent, api, $textColor="#475569", $lineColor="#94a3b8")
-    UpdateRelStyle(agent, xdp, $textColor="#065f46", $lineColor="#10b981")
-    UpdateRelStyle(xdp, protected, $textColor="#065f46", $lineColor="#10b981")
-    UpdateRelStyle(monitoring, api, $textColor="#475569", $lineColor="#94a3b8")
+    UpdateElementStyle(dashboard, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(api, $fontColor="#000000", $bgColor="#e0f2fe", $borderColor="#0284c7")
+    UpdateElementStyle(db, $fontColor="#000000", $bgColor="#dcfce7", $borderColor="#16a34a")
+    UpdateElementStyle(agent, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(xdp, $fontColor="#000000", $bgColor="#dcfce7", $borderColor="#16a34a")
+    UpdateElementStyle(monitoring, $fontColor="#000000", $bgColor="#f1f5f9", $borderColor="#64748b")
+    UpdateElementStyle(protected, $fontColor="#000000", $bgColor="#dcfce7", $borderColor="#16a34a")
+
+    UpdateRelStyle(dashboard, api, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(api, db, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(agent, api, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(agent, xdp, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(xdp, protected, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(monitoring, api, $textColor="#000000", $lineColor="#64748b")
 
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
-Thanh phan runtime:
+Thành phần runtime:
 
-| Thanh phan | Source chinh | Trach nhiem |
+| Thành phần | Source chính | Trách nhiệm |
 |---|---|---|
 | Control API | `cmd/control-api/main.go`, `internal/control` | Migrations, HTTP API, RBAC, policy CRUD, snapshot, agent control, observability, alerts |
-| Control Admin CLI | `cmd/control-admin/main.go` | Bootstrap admin dau tien qua PostgreSQL |
+| Control Admin CLI | `cmd/control-admin/main.go` | Bootstrap admin đầu tiên qua PostgreSQL |
 | Node Agent | `cmd/agent/main.go`, `internal/agent` | Load/attach XDP, expose metrics, sync snapshot, consume ringbuf, forward events |
 | XDP/eBPF | `bpf/xdp_data_plane.bpf.c`, `include/anti_ddos/bpf_contract.h` | Packet decision path, counters, ringbuf, DEVMAP redirect |
 | Admin Dashboard | `web/dashboard/src` | Ops console cho API surface |
-| PostgreSQL | `internal/control/migrations.go` | Persistent state va audit |
+| PostgreSQL | `internal/control/migrations.go` | Persistent state và audit |
 | Prometheus/Grafana | `deploy/prometheus`, `deploy/grafana` | Metrics scrape, recording rules, dashboard |
 
 ## 4. Data Plane Design
 
-Data plane nam trong `xdp_entry`. Packet IPv4 hop le duoc map vao service allowlist bang destination IP, destination port va protocol. Neu service khong ton tai, packet bi drop voi reason `REASON_NOT_ALLOWED_SERVICE`. Whitelist co the override blacklist va UDP source-port block. Khi can forward, XDP rewrite Ethernet destination/source MAC va redirect qua `tx_devmap`.
+Data plane nằm trong `xdp_entry`. Packet IPv4 hợp lệ được map vào service allowlist bằng destination IP, destination port và protocol. Nếu service không tồn tại, packet bị drop với reason `REASON_NOT_ALLOWED_SERVICE`. Whitelist có thể override blacklist và UDP source-port block. Khi cần forward, XDP rewrite Ethernet destination/source MAC và redirect qua `tx_devmap`.
 
 SVG rendered: [xdp-packet-decision-flow.svg](diagrams/system-architecture/xdp-packet-decision-flow.svg)  
 Mermaid source: [xdp-packet-decision-flow.mmd](diagrams/system-architecture/xdp-packet-decision-flow.mmd)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart TD
-    packet([WAN packet enters xdp_entry])
-    runtime{runtime_config valid?}
-    parse{IPv4 packet parses?}
+    packet([Packet WAN vào xdp_entry])
+    runtime{runtime_config hợp lệ?}
+    parse{Parse IPv4 thành công?}
     nonIpv4[Pass non-IPv4]
-    malformed[Drop malformed or fragmented IPv4]
-    service{Service allowlist hit?}
-    serviceMiss[Drop not allowed service]
-    whitelist{Source whitelisted?}
-    threat{Blacklist or UDP source-port block?}
+    malformed[Drop IPv4 malformed hoặc fragment]
+    service{Khớp service allowlist?}
+    serviceMiss[Drop service không được khai báo]
+    whitelist{Source nằm trong whitelist?}
+    threat{Khớp blacklist hoặc UDP source-port block?}
     threatDrop[Drop threat match]
-    neighbor{Neighbor metadata resolved?}
-    neighborDrop[Drop unresolved neighbor]
-    rule{Default rule drops?}
-    ruleDrop[Drop rule or rate-limit]
-    redirect[Rewrite MAC and XDP_REDIRECT via tx_devmap]
+    neighbor{Forwarding metadata đã resolve?}
+    neighborDrop[Drop neighbor chưa resolve]
+    rule{Default rule yêu cầu drop?}
+    ruleDrop[Drop theo rule hoặc rate-limit]
+    redirect[Rewrite MAC và XDP_REDIRECT qua tx_devmap]
 
     packet --> runtime
-    runtime -- No --> serviceMiss
-    runtime -- Yes --> parse
+    runtime -- Không --> serviceMiss
+    runtime -- Có --> parse
     parse -- Non-IPv4 --> nonIpv4
-    parse -- Malformed or fragment --> malformed
-    parse -- Valid IPv4 --> service
-    service -- No --> serviceMiss
-    service -- Yes --> whitelist
-    whitelist -- Yes --> neighbor
-    whitelist -- No --> threat
-    threat -- Yes --> threatDrop
-    threat -- No --> neighbor
-    neighbor -- No --> neighborDrop
-    neighbor -- Yes --> rule
-    rule -- Yes --> ruleDrop
-    rule -- No --> redirect
+    parse -- Malformed hoặc fragment --> malformed
+    parse -- IPv4 hợp lệ --> service
+    service -- Không --> serviceMiss
+    service -- Có --> whitelist
+    whitelist -- Có --> neighbor
+    whitelist -- Không --> threat
+    threat -- Có --> threatDrop
+    threat -- Không --> neighbor
+    neighbor -- Không --> neighborDrop
+    neighbor -- Có --> rule
+    rule -- Có --> ruleDrop
+    rule -- Không --> redirect
 ```
 
-eBPF maps quan trong:
+eBPF maps quan trọng:
 
-| Map | Kieu | Vai tro |
+| Map | Kiểu | Vai trò |
 |---|---|---|
 | `runtime_config` | ARRAY | Active A/B slot, policy version, malformed action, sample denominator |
 | `whitelist_v4_a/b` | LPM_TRIE | Global/service-scoped source allowlist |
-| `blacklist_v4_a/b` | LPM_TRIE | Manual va reputation source blacklist |
+| `blacklist_v4_a/b` | LPM_TRIE | Manual và reputation source blacklist |
 | `udp_src_port_blocks_a/b` | HASH | UDP reflection/amplification source-port blocklist |
-| `service_allowlist_a/b` | HASH | Destination service match va forwarding metadata |
+| `service_allowlist_a/b` | HASH | Destination service match và forwarding metadata |
 | `rule_config_a/b` | ARRAY | Rule action/mode/threshold config |
 | `rate_state` | LRU_HASH | Token bucket state theo source/service/rule dimension |
 | `drop_counters` | PERCPU_HASH | Aggregated packet/byte counters theo reason/action/service/rule/proto |
@@ -189,13 +207,13 @@ eBPF maps quan trong:
 
 ## 5. Policy Snapshot Lifecycle
 
-Control Plane khong ghi truc tiep vao eBPF maps. Moi mutation policy co reason se cap nhat PostgreSQL, rebuild effective snapshot, ky checksum canonical va luu version moi neu noi dung thay doi. Agent lay desired version qua heartbeat, fetch snapshot moi, verify lai, resolve forwarding metadata neu Control Plane de unresolved, populate inactive slot, update `tx_devmap`, roi flip `runtime_config.active_slot`.
+Control Plane không ghi trực tiếp vào eBPF maps. Mỗi mutation policy có reason sẽ cập nhật PostgreSQL, rebuild effective snapshot, ký checksum canonical và lưu version mới nếu nội dung thay đổi. Agent lấy desired version qua heartbeat, fetch snapshot mới, verify lại, resolve forwarding metadata nếu Control Plane để unresolved, populate inactive slot, update `tx_devmap`, rồi flip `runtime_config.active_slot`.
 
 SVG rendered: [policy-snapshot-sequence.svg](diagrams/system-architecture/policy-snapshot-sequence.svg)  
 Mermaid source: [policy-snapshot-sequence.mmd](diagrams/system-architecture/policy-snapshot-sequence.mmd)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
 sequenceDiagram
     autonumber
     actor Operator
@@ -205,54 +223,54 @@ sequenceDiagram
     participant Agent as Node Agent
     participant XDP as eBPF maps
 
-    Operator->>Dashboard: Submit policy mutation with reason
+    Operator->>Dashboard: Gửi thay đổi policy kèm reason
     Dashboard->>API: POST/PATCH/DELETE /v1 policy object
-    API->>DB: Validate RBAC, write object and audit
+    API->>DB: Kiểm tra RBAC, ghi object và audit
     API->>API: Build effective snapshot
-    API->>API: Sign checksum and verify schema/object checksum
-    alt Snapshot content changed
+    API->>API: Ký checksum và verify schema/object checksum
+    alt Nội dung snapshot thay đổi
         API->>DB: Insert policy_snapshots(version, snapshot)
-    else No content change
-        API-->>Dashboard: Return object without new snapshot
+    else Nội dung không đổi
+        API-->>Dashboard: Trả object, không tạo snapshot mới
     end
-    loop Every 5 seconds
+    loop Mỗi 5 giây
         Agent->>API: POST /v1/agents/{id}/heartbeat
         API-->>Agent: desired_policy_version
     end
     Agent->>API: GET /v1/agents/{id}/snapshot?active_version=N
-    API->>DB: Fetch latest snapshot when version is newer
-    API-->>Agent: Signed PolicySnapshot or 204
-    Agent->>Agent: Verify, resolve forwarding metadata, re-sign
-    Agent->>XDP: Populate inactive A/B policy maps and tx_devmap
+    API->>DB: Fetch latest snapshot nếu version mới hơn
+    API-->>Agent: Signed PolicySnapshot hoặc 204
+    Agent->>Agent: Verify, resolve forwarding metadata, ký lại
+    Agent->>XDP: Populate inactive A/B policy maps và tx_devmap
     Agent->>XDP: Flip runtime_config.active_slot
     Agent->>API: POST /v1/agents/{id}/apply
-    API->>DB: Upsert policy_apply_status and create alert on failure
+    API->>DB: Upsert policy_apply_status và tạo alert khi fail
 ```
 
-Snapshot content gom:
+Snapshot content gồm:
 
 - `schema_version`, `version`, `checksum`, `object_checksum`, `feature_flags`.
-- `runtime`: malformed policy action va event sample denominator.
+- `runtime`: malformed policy action và event sample denominator.
 - `whitelist_v4`, `blacklist_v4`, `udp_source_port_blocks`.
 - `services`: service target, protocol, port, action redirect, output interface/ifindex, devmap key, MAC metadata, neighbor status.
-- `rules`: action, mode, thresholds, dimension, burst, sample denominator va expiry.
+- `rules`: action, mode, thresholds, dimension, burst, sample denominator và expiry.
 
-Quan trong:
+Quan trọng:
 
-- Control Plane cho phep unresolved service snapshot de dashboard khong can nhap next-hop MAC thu cong.
-- Agent resolve output ifindex/source MAC/next-hop MAC bang host networking truoc khi apply.
-- Neu resolve/apply fail, Agent khong flip runtime slot va Control API ghi failure stage nhu `resolve_forwarding`, `populate_tx_devmap` hoac `runtime_flip`.
-- `object_checksum` rang buoc snapshot voi BPF object hien tai de tranh apply sai ABI/map contract.
+- Control Plane cho phép unresolved service snapshot để dashboard không cần nhập next-hop MAC thủ công.
+- Agent resolve output ifindex/source MAC/next-hop MAC bằng host networking trước khi apply.
+- Nếu resolve/apply fail, Agent không flip runtime slot và Control API ghi failure stage như `resolve_forwarding`, `populate_tx_devmap` hoặc `runtime_flip`.
+- `object_checksum` ràng buộc snapshot với BPF object hiện tại để tránh apply sai ABI/map contract.
 
-## 6. Observability Va Event Flow
+## 6. Observability Và Event Flow
 
-XDP cap nhat `drop_counters` cho moi decision va chi ghi `events` ringbuf khi sampling duoc bat. Agent doc counters moi giay, expose `/metrics`, consume ringbuf va forward event batch ve Control API. Control API normalize IPv4/source /24 va luu `security_events` vao PostgreSQL. Dashboard doc events/summary/investigation; Prometheus scrape Control API va Agent metrics.
+XDP cập nhật `drop_counters` cho mỗi decision và chỉ ghi `events` ringbuf khi sampling được bật. Agent đọc counters mỗi giây, expose `/metrics`, consume ringbuf và forward event batch về Control API. Control API normalize IPv4/source /24 và lưu `security_events` vào PostgreSQL. Dashboard đọc events/summary/investigation; Prometheus scrape Control API và Agent metrics.
 
 SVG rendered: [observability-events-sequence.svg](diagrams/system-architecture/observability-events-sequence.svg)  
 Mermaid source: [observability-events-sequence.mmd](diagrams/system-architecture/observability-events-sequence.mmd)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
 sequenceDiagram
     autonumber
     participant XDP as XDP/eBPF
@@ -262,53 +280,53 @@ sequenceDiagram
     participant UI as Admin Dashboard
     participant Metrics as Prometheus / Grafana
 
-    XDP->>XDP: Count decision in drop_counters
-    opt Sampling enabled
-        XDP->>Agent: Write event_record to ringbuf events
-        Agent->>Agent: Normalize source, service, rule and sample rate
+    XDP->>XDP: Đếm decision trong drop_counters
+    opt Sampling được bật
+        XDP->>Agent: Ghi event_record vào ringbuf events
+        Agent->>Agent: Normalize source, service, rule và sample rate
         Agent->>API: POST /v1/agents/{id}/events batch
         API->>DB: Insert security_events
     end
-    loop Every second
-        Agent->>XDP: Read drop_counters and map utilization
-        Agent->>Agent: Update Prometheus gauges/counters
+    loop Mỗi giây
+        Agent->>XDP: Đọc drop_counters và map utilization
+        Agent->>Agent: Cập nhật Prometheus gauges/counters
     end
-    Metrics->>Agent: Scrape /metrics on host
-    Metrics->>API: Scrape /metrics in compose
-    UI->>API: GET dashboard, events, alerts and anomaly endpoints
-    API->>DB: Query events, agents, policy and alert state
-    UI-->>Metrics: Operators inspect Grafana dashboards
+    Metrics->>Agent: Scrape /metrics trên host
+    Metrics->>API: Scrape /metrics trong compose
+    UI->>API: GET dashboard, events, alerts và anomaly endpoints
+    API->>DB: Query events, agents, policy và alert state
+    UI-->>Metrics: Operator xem Grafana dashboards
 ```
 
 Observability surfaces:
 
 - Control API `/metrics`: HTTP metrics, control metrics, refreshed DB-backed gauges.
-- Agent `/metrics`: XDP attach mode, loaded object checksum, snapshot version, counters, forwarding counters, map stats, event forwarding metrics.
-- Dashboard endpoints: overview, agents, services, rules, recent events, baselines, anomalies, feeds, alerts, snapshots.
+- Agent `/metrics`: XDP attach mode, loaded object checksum, snapshot version, counters, forwarding counters, map stats và event forwarding metrics.
+- Dashboard endpoints: overview, agents, services, rules, recent events, baselines, anomalies, feeds, alerts và snapshots.
 - Grafana: provisioned dashboard backed by Prometheus datasource.
 
 ## 7. Core Data Model
 
-PostgreSQL schema duoc khai bao trong Go migrations. Day la overview cac bang loi co anh huong den kien truc runtime, khong phai day du tat ca column.
+PostgreSQL schema được khai báo trong Go migrations. Đây là overview các bảng lõi có ảnh hưởng đến kiến trúc runtime, không phải danh sách đầy đủ mọi column.
 
 SVG rendered: [core-data-model-erd.svg](diagrams/system-architecture/core-data-model-erd.svg)  
 Mermaid source: [core-data-model-erd.mmd](diagrams/system-architecture/core-data-model-erd.mmd)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','entityTextColor':'#000000','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#000000','relationshipLabelColor':'#000000'}}}%%
 erDiagram
-    APP_USERS ||--|| POLICY_SNAPSHOTS : creates
-    APP_USERS ||--|| AUDIT_EVENTS : performs
-    APP_USERS ||--|| ALERTS : creates
-    AGENTS ||--|| AGENT_INTERFACES : reports
-    AGENTS ||--|| POLICY_APPLY_STATUS : reports
-    AGENTS ||--|| SECURITY_EVENTS : forwards
-    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : has
-    BACKEND_SERVICES ||--|| RULES : scopes
-    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : scopes
-    BACKEND_SERVICES ||--|| ALERTS : affects
-    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : explains
-    FEED_SOURCES ||--|| REPUTATION_ENTRIES : imports
+    APP_USERS ||--|| POLICY_SNAPSHOTS : "tạo"
+    APP_USERS ||--|| AUDIT_EVENTS : "thực hiện"
+    APP_USERS ||--|| ALERTS : "tạo"
+    AGENTS ||--|| AGENT_INTERFACES : "báo cáo"
+    AGENTS ||--|| POLICY_APPLY_STATUS : "báo cáo"
+    AGENTS ||--|| SECURITY_EVENTS : "gửi"
+    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : "có"
+    BACKEND_SERVICES ||--|| RULES : "scope"
+    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : "scope"
+    BACKEND_SERVICES ||--|| ALERTS : "ảnh hưởng"
+    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : "giải thích"
+    FEED_SOURCES ||--|| REPUTATION_ENTRIES : "import"
 
     APP_USERS {
         uuid id PK
@@ -419,23 +437,23 @@ erDiagram
 
 Design notes:
 
-- `policy_snapshots` la immutable version history; rollback tao snapshot version moi voi `rollback_from`.
-- `policy_apply_status` ghi ket qua apply theo agent va version, bao gom map/devmap stats.
-- Soft-disable duoc dung cho rules, whitelist, blacklist, feeds va UDP source-port blocks de giu history/audit.
-- Reputation entries tu feeds duoc merge vao blacklist snapshot; manual blacklist uu tien khi cung CIDR.
-- `audit_events` partition by time va luu actor/action/entity/before/after/reason.
+- `policy_snapshots` là immutable version history; rollback tạo snapshot version mới với `rollback_from`.
+- `policy_apply_status` ghi kết quả apply theo agent và version, bao gồm map/devmap stats.
+- Soft-disable được dùng cho rules, whitelist, blacklist, feeds và UDP source-port blocks để giữ history/audit.
+- Reputation entries từ feeds được merge vào blacklist snapshot; manual blacklist ưu tiên khi cùng CIDR.
+- `audit_events` partition theo thời gian và lưu actor/action/entity/before/after/reason.
 
 ## 8. Deployment Topology
 
-Compose chi khoi dong management/control lab stack. No khong attach XDP va khong tac dong truc tiep toi production traffic. Node Agent chay tren host de truy cap BPF filesystem, host NIC, netlink neighbor/route va metrics bind `:9091`.
+Compose chỉ khởi động management/control lab stack. Nó không attach XDP và không tác động trực tiếp tới production traffic. Node Agent chạy trên host để truy cập BPF filesystem, host NIC, netlink neighbor/route và metrics bind `:9091`.
 
 SVG rendered: [lab-deployment-flow.svg](diagrams/system-architecture/lab-deployment-flow.svg)  
 Mermaid source: [lab-deployment-flow.mmd](diagrams/system-architecture/lab-deployment-flow.mmd)
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart LR
-    browser[Operator browser]
+    browser[Trình duyệt Operator]
 
     subgraph compose["Docker Compose lab stack"]
         direction LR
@@ -446,7 +464,7 @@ flowchart LR
         grafana[Grafana :3000]
     end
 
-    subgraph host["Host data plane"]
+    subgraph host["Data plane trên host"]
         direction LR
         agent[Node Agent<br/>host process :9091]
         xdp[XDP program<br/>pinned maps]
@@ -454,7 +472,7 @@ flowchart LR
         output[Backend output NIC]
     end
 
-    service[Protected service]
+    service[Dịch vụ được bảo vệ]
 
     browser --> dashboard
     dashboard --> api
@@ -482,36 +500,36 @@ Default lab ports:
 
 Operational safety:
 
-- Dung `make env-init`, `make compose-config`, `make deploy`, `make dev-health` cho lab stack.
-- Chi chay `make agent-start` khi `AGENT_WAN_IFACE` va output interfaces da duoc phe duyet.
-- Tren mot so driver native XDP nhu `ixgbe`, output NIC can pass-through XDP program `xdp_pass` de co XDP TX queues cho DEVMAP redirect.
-- Khong replace XDP program san co tren output NIC neu chua co phe duyet van hanh.
+- Dùng `make env-init`, `make compose-config`, `make deploy`, `make dev-health` cho lab stack.
+- Chỉ chạy `make agent-start` khi `AGENT_WAN_IFACE` và output interfaces đã được phê duyệt.
+- Trên một số driver native XDP như `ixgbe`, output NIC cần pass-through XDP program `xdp_pass` để có XDP TX queues cho DEVMAP redirect.
+- Không replace XDP program sẵn có trên output NIC nếu chưa có phê duyệt vận hành.
 
-## 9. Security, RBAC Va Audit
+## 9. Security, RBAC Và Audit
 
 Auth:
 
-- User auth dung bearer session token hoac cookie `anti_ddos_session`.
-- Agent auth dung bearer shared token khi `AgentSharedToken` duoc cau hinh.
-- Password raw, credential raw va token khong duoc tra ve trong response/audit.
+- User auth dùng bearer session token hoặc cookie `anti_ddos_session`.
+- Agent auth dùng bearer shared token khi `AgentSharedToken` được cấu hình.
+- Raw password, raw credential và token không được trả về trong response/audit.
 
 RBAC:
 
 - Viewer: authenticated read.
 - Operator: operational mutations cho services, policies, whitelist, rules, blacklist, UDP source-port blocks, feeds, snapshots, anomaly/alert actions.
-- Admin: user management, password reset, session revoke va write-only secret/credential operations.
+- Admin: user management, password reset, session revoke và write-only secret/credential operations.
 
-Audit va safety:
+Audit và safety:
 
-- Mutation reason lay tu body `reason` hoac header `X-Audit-Reason`.
-- Backend la enforcement chinh cho RBAC; UI chi an mutation controls theo role.
-- Last active admin duoc bao ve khoi revoke/downgrade vo tinh.
-- Delete policy object trong UI/API la soft-disable o nhieu domain de giu rollback/history.
-- Forwarding metadata fail-close: neu neighbor/output metadata khong resolve duoc, packet khong duoc redirect.
+- Mutation reason lấy từ body `reason` hoặc header `X-Audit-Reason`.
+- Backend là enforcement chính cho RBAC; UI chỉ ẩn mutation controls theo role.
+- Last active admin được bảo vệ khỏi revoke/downgrade vô tình.
+- Delete policy object trong UI/API là soft-disable ở nhiều domain để giữ rollback/history.
+- Forwarding metadata fail-closed: nếu neighbor/output metadata không resolve được, packet không được redirect.
 
 ## 10. Source References
 
-Nguon chinh da doi chieu khi lap tai lieu:
+Nguồn chính đã đối chiếu khi lập tài liệu:
 
 - `README.md`
 - `docs/Control-Api.md`

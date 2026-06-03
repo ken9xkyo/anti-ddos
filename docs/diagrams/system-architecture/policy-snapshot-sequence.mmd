@@ -1,4 +1,4 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4f46e5','primaryTextColor':'#ffffff','primaryBorderColor':'#3730a3','lineColor':'#94a3b8','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'#ffffff','mainBkg':'#f8fafc','nodeBorder':'#cbd5e1','clusterBkg':'#f1f5f9','clusterBorder':'#e2e8f0','titleColor':'#1e293b','edgeLabelBackground':'#ffffff','textColor':'#334155'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
 sequenceDiagram
     autonumber
     actor Operator
@@ -8,25 +8,25 @@ sequenceDiagram
     participant Agent as Node Agent
     participant XDP as eBPF maps
 
-    Operator->>Dashboard: Submit policy mutation with reason
+    Operator->>Dashboard: Gửi thay đổi policy kèm reason
     Dashboard->>API: POST/PATCH/DELETE /v1 policy object
-    API->>DB: Validate RBAC, write object and audit
+    API->>DB: Kiểm tra RBAC, ghi object và audit
     API->>API: Build effective snapshot
-    API->>API: Sign checksum and verify schema/object checksum
-    alt Snapshot content changed
+    API->>API: Ký checksum và verify schema/object checksum
+    alt Nội dung snapshot thay đổi
         API->>DB: Insert policy_snapshots(version, snapshot)
-    else No content change
-        API-->>Dashboard: Return object without new snapshot
+    else Nội dung không đổi
+        API-->>Dashboard: Trả object, không tạo snapshot mới
     end
-    loop Every 5 seconds
+    loop Mỗi 5 giây
         Agent->>API: POST /v1/agents/{id}/heartbeat
         API-->>Agent: desired_policy_version
     end
     Agent->>API: GET /v1/agents/{id}/snapshot?active_version=N
-    API->>DB: Fetch latest snapshot when version is newer
-    API-->>Agent: Signed PolicySnapshot or 204
-    Agent->>Agent: Verify, resolve forwarding metadata, re-sign
-    Agent->>XDP: Populate inactive A/B policy maps and tx_devmap
+    API->>DB: Fetch latest snapshot nếu version mới hơn
+    API-->>Agent: Signed PolicySnapshot hoặc 204
+    Agent->>Agent: Verify, resolve forwarding metadata, ký lại
+    Agent->>XDP: Populate inactive A/B policy maps và tx_devmap
     Agent->>XDP: Flip runtime_config.active_slot
     Agent->>API: POST /v1/agents/{id}/apply
-    API->>DB: Upsert policy_apply_status and create alert on failure
+    API->>DB: Upsert policy_apply_status và tạo alert khi fail
