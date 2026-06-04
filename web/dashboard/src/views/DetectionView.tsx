@@ -6,10 +6,10 @@ import type { AnomalyEvaluation, BaselineProfile, Rule } from '../types';
 export function DetectionView({ anomalies, baselines, rules }: { anomalies: AnomalyEvaluation[]; baselines: BaselineProfile[]; rules: Rule[] }) {
   return (
     <section className="content-stack">
-      <TablePanel icon={<TrendingUp size={18} />} title="Anomalies / Auto-Enforce" eyebrow={`${anomalies.length} evaluations`}>
-        <thead><tr><th>Service</th><th>Score</th><th>Confidence</th><th>Signals</th><th>Action</th><th>TTL</th><th>Source</th><th>Status</th><th>Evaluated</th></tr></thead>
+      <TablePanel icon={<TrendingUp size={18} />} title="Anomalies / Alerts" eyebrow={`${anomalies.length} evaluations`}>
+        <thead><tr><th>Service</th><th>Score</th><th>Confidence</th><th>Signals</th><th>Guidance</th><th>Source</th><th>Status</th><th>Evaluated</th></tr></thead>
         <tbody>{anomalies.length === 0 ? (
-          <EmptyTableRow colSpan={9} text="No anomaly evaluations available" />
+          <EmptyTableRow colSpan={8} text="No anomaly evaluations available" />
         ) : anomalies.map((item) => (
           <tr key={item.id}>
             <td>{item.service_name || item.service_ebpf_id || 'service'}</td>
@@ -17,9 +17,8 @@ export function DetectionView({ anomalies, baselines, rules }: { anomalies: Anom
             <td>{percentValue(item.confidence)}</td>
             <td><SignalList signals={item.signals ?? []} /></td>
             <td>{item.recommended_action}</td>
-            <td>{durationValue(item.proposed_ttl_seconds)}</td>
             <td>{item.source || 'n/a'}</td>
-            <td><StatusPill state={item.auto_enforced || item.status === 'blocked_whitelist' ? 'warn' : item.status === 'observe_only' ? 'off' : 'ok'} text={item.status} /></td>
+            <td><StatusPill state={item.status === 'alert_only' ? 'warn' : item.status === 'observe_only' ? 'off' : 'info'} text={item.status} /></td>
             <td>{formatDateTime(item.evaluated_at)}</td>
           </tr>
         ))}</tbody>

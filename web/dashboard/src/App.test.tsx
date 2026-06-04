@@ -149,7 +149,7 @@ describe('DashboardShell', () => {
 
   it('renders anomaly and baseline visibility', () => {
     renderShell(viewerUser, 'detection');
-    expect(screen.getByText('auto_enforced')).toBeInTheDocument();
+    expect(screen.getByText('alert_only')).toBeInTheDocument();
     expect(screen.getByText('pps_spike')).toBeInTheDocument();
     expect(screen.getByText('approved')).toBeInTheDocument();
   });

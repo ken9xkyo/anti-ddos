@@ -552,7 +552,9 @@ Authenticated read. Baseline mutation and anomaly evaluate require Operator/Admi
 | POST | `/v1/baselines/{id}/approve` | `{reason}` | `BaselineProfile` | Approve baseline |
 | POST | `/v1/baselines/{id}/recalibrate` | `BaselineProfileInput` | `BaselineProfile` | Recalibrate baseline |
 | GET | `/v1/anomalies?limit=N` | query | `AnomalyEvaluation[]` | List anomalies |
-| POST | `/v1/anomalies/evaluate` | `{reason}` | `AnomalyEvaluation[]` | Evaluate anomalies; reason is required when auto-enforcement creates a rule |
+| POST | `/v1/anomalies/evaluate` | `{reason}` | `AnomalyEvaluation[]` | Evaluate anomalies and create alert-only operational signals; it does not create mitigation rules |
+
+`AnomalyEvaluation` keeps legacy compatibility fields such as `auto_enforced`, `proposed_rule_id` and `proposed_ttl_seconds`. New evaluations set `auto_enforced=false` and leave proposed rule fields empty; operators create any `rate_limit` rule manually through `Rules`.
 
 `BaselineProfileInput` key fields:
 

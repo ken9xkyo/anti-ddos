@@ -14,13 +14,11 @@ import (
 )
 
 const (
-	autoMinConfidence = 0.90
-	autoMinScore      = 85.0
-	autoMinSignals    = 2
-	autoTTLSeconds    = 15 * 60
-	autoMinTTLSeconds = 5 * 60
-	autoMaxTTLSeconds = 60 * 60
-	autoLockNamespace = 7007
+	alertMinConfidence = 0.90
+	alertMinScore      = 85.0
+	alertMinSignals    = 2
+
+	legacyAutoEnforceOwner = "system:auto-enforce"
 
 	defaultBaselinePPS   = 100000.0
 	defaultBaselineBPS   = 1000000000.0
@@ -350,7 +348,7 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		expectedBPS = nonzeroFloat(baseline.ExpectedBPS, defaultBaselineBPS)
 		expectedCPS = nonzeroFloat(baseline.ExpectedCPS, defaultBaselineCPS)
 		confidence = baseline.Confidence
-		lowConfidence = !baseline.Approved || baseline.HistoryHours < 24 || baseline.Confidence < autoMinConfidence
+		lowConfidence = !baseline.Approved || baseline.HistoryHours < 24 || baseline.Confidence < alertMinConfidence
 	}
 
 	var signals []string
@@ -379,105 +377,61 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 	}
 
 	source, _ := s.topEventSourceForService(ctx, service.EBPFID)
-	status := "candidate"
-	recommendation := "auto_enforce"
-	recommendedAction := "rate_limit"
-	autoEnforced := false
-	var proposedRuleID string
-	evalReason := strings.TrimSpace(reason)
-	if evalReason == "" {
-		evalReason = "phase07 anomaly evaluation"
-	}
-	if lowConfidence {
-		status = "observe_only"
-		recommendation = "observe"
-		evalReason = "baseline confidence below auto-enforce threshold"
-	} else if score < autoMinScore || len(signals) < autoMinSignals {
-		status = "alert_only"
-		recommendation = "observe"
-		evalReason = "score or evidence below auto-enforce threshold"
-	} else if source == "" {
-		status = "alert_only"
-		recommendation = "observe"
-		evalReason = "missing source evidence"
-	} else if conflict, err := s.sourceWhitelistConflict(ctx, source, service.ID); err != nil {
-		return AnomalyEvaluation{}, err
-	} else if conflict {
-		status = "blocked_whitelist"
-		recommendation = "observe"
-		evalReason = "source conflicts with active whitelist"
-	} else {
-		rule, created, err := s.ensureAutoEnforceRule(ctx, service.ID, RuleInput{
-			ServiceID:    service.ID,
-			Name:         "auto-rate-limit-" + service.Name,
-			Action:       "rate_limit",
-			Mode:         "enforce",
-			Dimension:    "source_service",
-			ThresholdPPS: clampUint32(expectedPPS * 125 / 100),
-			ThresholdBPS: clampUint32(expectedBPS * 125 / 100),
-			ThresholdCPS: clampUint32(expectedCPS * 125 / 100),
-			BurstPackets: clampUint32(expectedPPS * 125 / 100),
-			BurstBytes:   clampUint32(expectedBPS / 8),
-			TTLSeconds:   autoTTLSeconds,
-			ExpiresAt:    time.Now().UTC().Add(autoTTLSeconds * time.Second),
-			Evidence:     mustJSON(map[string]any{"auto_enforce": true, "signals": signals, "source": source, "pps": pps, "bps": bps, "cps": cps, "service_id": service.ID, "service_ebpf_id": service.EBPFID}),
-			Confidence:   confidence,
-			Owner:        "system:auto-enforce",
-		}, "auto-enforce anomaly mitigation")
+	whitelistConflict := false
+	if source != "" {
+		whitelistConflict, err = s.sourceWhitelistConflict(ctx, source, service.ID)
 		if err != nil {
 			return AnomalyEvaluation{}, err
 		}
-		autoEnforced = true
-		proposedRuleID = rule.ID
-		if created {
-			status = "auto_enforced"
-		} else {
-			status = "already_enforced"
-		}
+	}
+	status := "observe_only"
+	recommendation := "observe"
+	recommendedAction := "investigate"
+	evalReason := strings.TrimSpace(reason)
+	if evalReason == "" {
+		evalReason = "alert-only anomaly evaluation"
+	}
+	if score >= alertMinScore && len(signals) >= alertMinSignals {
+		status = "alert_only"
+		recommendation = "manual_mitigation"
+		recommendedAction = "rate_limit"
+	} else if evalReason == "alert-only anomaly evaluation" {
+		evalReason = "score or evidence below alert threshold"
 	}
 
 	evidence := mustJSON(map[string]any{
-		"signals":  signals,
-		"source":   source,
-		"metrics":  map[string]float64{"pps": pps, "bps": bps, "cps": cps, "drop_ratio": dropRatio},
-		"baseline": map[string]any{"id": baselineID, "expected_pps": expectedPPS, "expected_bps": expectedBPS, "expected_cps": expectedCPS, "low_confidence": lowConfidence},
+		"signals":            signals,
+		"source":             source,
+		"whitelist_conflict": whitelistConflict,
+		"metrics":            map[string]float64{"pps": pps, "bps": bps, "cps": cps, "drop_ratio": dropRatio},
+		"baseline":           map[string]any{"id": baselineID, "expected_pps": expectedPPS, "expected_bps": expectedBPS, "expected_cps": expectedCPS, "low_confidence": lowConfidence},
 	})
 	eval, err := s.insertAnomalyEvaluation(ctx, AnomalyEvaluation{
-		ServiceID:          service.ID,
-		ServiceEBPFID:      service.EBPFID,
-		ServiceName:        service.Name,
-		BaselineID:         baselineID,
-		Window:             timeWindow,
-		PPS:                pps,
-		BPS:                bps,
-		CPS:                cps,
-		DropRatio:          dropRatio,
-		Score:              score,
-		Confidence:         confidence,
-		Signals:            signals,
-		Recommendation:     recommendation,
-		RecommendedAction:  recommendedAction,
-		ProposedTTLSeconds: autoTTLSeconds,
-		ProposedRuleID:     proposedRuleID,
-		AutoEnforced:       autoEnforced,
-		Status:             status,
-		Reason:             evalReason,
-		Source:             source,
-		Evidence:           evidence,
+		ServiceID:         service.ID,
+		ServiceEBPFID:     service.EBPFID,
+		ServiceName:       service.Name,
+		BaselineID:        baselineID,
+		Window:            timeWindow,
+		PPS:               pps,
+		BPS:               bps,
+		CPS:               cps,
+		DropRatio:         dropRatio,
+		Score:             score,
+		Confidence:        confidence,
+		Signals:           signals,
+		Recommendation:    recommendation,
+		RecommendedAction: recommendedAction,
+		AutoEnforced:      false,
+		Status:            status,
+		Reason:            evalReason,
+		Source:            source,
+		Evidence:          evidence,
 	})
-	if err == nil {
-		alertType := "anomaly"
-		if eval.AutoEnforced {
-			alertType = "auto_enforce"
-		}
-		severity := "warning"
-		if eval.AutoEnforced || eval.Score >= autoMinScore {
-			severity = "critical"
-		}
+	if err == nil && eval.Status == "alert_only" {
 		_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
-			Severity:          severity,
-			Type:              alertType,
-			DedupeKey:         fmt.Sprintf("%s:%s:%s", alertType, service.ID, strings.Join(signals, ",")),
+			Severity:          "critical",
+			Type:              "anomaly",
+			DedupeKey:         fmt.Sprintf("anomaly:%s:%s", service.ID, strings.Join(signals, ",")),
 			ServiceID:         service.ID,
 			AffectedService:   service.Name,
 			Vector:            strings.Join(signals, ","),
@@ -489,79 +443,6 @@ func (s *Store) evaluateServiceAnomaly(ctx context.Context, prom *PrometheusClie
 		}
 	}
 	return eval, err
-}
-
-func (s *Store) ensureAutoEnforceRule(ctx context.Context, serviceID string, input RuleInput, reason string) (Rule, bool, error) {
-	if err := validateRuleInput(input); err != nil {
-		return Rule{}, false, err
-	}
-	if strings.TrimSpace(reason) == "" {
-		return Rule{}, false, errors.New("reason is required")
-	}
-	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
-		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Rule{}, false, err
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, autoLockNamespace, serviceID); err != nil {
-		return Rule{}, false, err
-	}
-	active, err := activeAutoRuleForServiceQuery(ctx, tx, serviceID)
-	if err != nil {
-		return Rule{}, false, err
-	}
-	if active.ID != "" {
-		if err := tx.Commit(ctx); err != nil {
-			return Rule{}, false, err
-		}
-		return active, false, nil
-	}
-
-	id, err := newUUID()
-	if err != nil {
-		return Rule{}, false, err
-	}
-	enabled := boolDefault(input.Enabled, true)
-	var expires any
-	if !input.ExpiresAt.IsZero() {
-		expires = input.ExpiresAt
-	}
-	var serviceValue any
-	if strings.TrimSpace(input.ServiceID) != "" {
-		serviceValue = strings.TrimSpace(input.ServiceID)
-	}
-
-	var rule Rule
-	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
-    id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
-    dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
-          threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at`,
-		id, serviceValue, input.Name, defaultPriority(input.Priority), defaultJSON(input.MatchExpr),
-		normalizeRuleAction(input.Action), normalizeMode(input.Mode), input.ThresholdPPS, input.ThresholdBPS,
-		input.ThresholdCPS, normalizeRuleDimension(input.Dimension), input.BurstPackets, input.BurstBytes,
-		input.SampleDenom, input.TTLSeconds, expires, defaultJSON(input.Evidence), input.Confidence, enabled, input.Owner,
-	), &rule)
-	if err != nil {
-		return Rule{}, false, err
-	}
-	if err := insertAudit(ctx, tx, nil, "create_rule", "rule", rule.ID, nil, rule, reason, ""); err != nil {
-		return Rule{}, false, err
-	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, nil, nil, reason); err != nil {
-		return Rule{}, false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Rule{}, false, err
-	}
-	return rule, true, nil
 }
 
 func (s *Store) CreateSystemRule(ctx context.Context, input RuleInput, reason string) (Rule, error) {
@@ -788,34 +669,6 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())
 	return false, rows.Err()
 }
 
-func (s *Store) activeAutoRuleForService(ctx context.Context, serviceID string) (string, error) {
-	rule, err := activeAutoRuleForServiceQuery(ctx, s.pool, serviceID)
-	if err != nil {
-		return "", err
-	}
-	return rule.ID, nil
-}
-
-func activeAutoRuleForServiceQuery(ctx context.Context, q dbQuerier, serviceID string) (Rule, error) {
-	row := q.QueryRow(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
-       threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
-       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
-FROM rules
-WHERE service_id=$1 AND enabled AND (expires_at IS NULL OR expires_at > now())
-  AND evidence->>'auto_enforce' = 'true'
-ORDER BY created_at DESC
-LIMIT 1`, serviceID)
-	var rule Rule
-	err := scanRule(row, &rule)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Rule{}, nil
-	}
-	if err != nil {
-		return Rule{}, err
-	}
-	return rule, nil
-}
-
 func validateBaselineProfileInput(input BaselineProfileInput) error {
 	var errs []error
 	if strings.TrimSpace(input.ServiceID) == "" {
@@ -858,16 +711,6 @@ func nonzeroFloat(value, fallback float64) float64 {
 		return value
 	}
 	return fallback
-}
-
-func clampUint32(value float64) uint32 {
-	if value <= 0 {
-		return 0
-	}
-	if value > math.MaxUint32 {
-		return math.MaxUint32
-	}
-	return uint32(value)
 }
 
 func mustJSON(value any) json.RawMessage {

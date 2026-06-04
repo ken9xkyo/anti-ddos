@@ -218,9 +218,9 @@ Muc tieu: observe posture, khong pha tron voi CRUD workflow.
 
 Hien thi:
 
-- Anomalies: service, score, confidence, signals, recommendation, proposed TTL, source, status.
+- Anomalies: service, score, confidence, signals, recommendation, source, status.
 - Baselines: service, interface, protocol/port, window, expected pps/bps/cps, confidence, approval.
-- Active rules: read-only posture. CRUD nam o tab Rules; manual blacklist CRUD nam o tab Blacklist.
+- Active rules: read-only posture. CRUD nam o tab Rules; manual blacklist CRUD nam o tab Blacklist. Baseline/anomaly views do not auto-create mitigation rules.
 
 ### 6.9 Reputation
 

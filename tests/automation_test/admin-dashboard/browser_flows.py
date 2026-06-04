@@ -262,7 +262,7 @@ def assert_detection(page: Page, seed: SeedData) -> None:
     goto_tab(page, "Detections")
     expect_visible_text(page, seed.service["name"], timeout=20000)
     expect_visible_text(page, "approved")
-    expect_visible_text(page, re.compile(r"pps_spike|auto_enforced", re.I))
+    expect_visible_text(page, re.compile(r"pps_spike|alert_only", re.I))
     expect_visible_text(page, "Active Rules")
 
 

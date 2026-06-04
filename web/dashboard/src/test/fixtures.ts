@@ -112,12 +112,10 @@ export function dashboardFixture(): DashboardData {
       score: 95,
       confidence: 0.95,
       signals: ['pps_spike', 'bps_spike', 'syn_spike'],
-      recommendation: 'auto_enforce',
+      recommendation: 'manual_mitigation',
       recommended_action: 'rate_limit',
-      proposed_ttl_seconds: 900,
-      proposed_rule_id: 'r1',
-      auto_enforced: true,
-      status: 'auto_enforced',
+      auto_enforced: false,
+      status: 'alert_only',
       source: '198.51.100.10'
     }],
     feedSources: [{

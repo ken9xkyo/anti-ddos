@@ -31,7 +31,7 @@ export function OverviewView({ data }: { data: DashboardData }) {
         <MetricPanel icon={<ShieldAlert size={18} />} label="Drop rate" value={compactValue(data.overview.decision_rates.drop)} detail="packets/s" tone={(data.overview.decision_rates.drop || 0) > 0 ? 'warn' : undefined} />
         <MetricPanel icon={<CheckCircle2 size={18} />} label="Redirect rate" value={compactValue(data.overview.decision_rates.redirect)} detail="packets/s" tone="ok" />
         <MetricPanel icon={<AlertTriangle size={18} />} label="Not allowed" value={compactValue(data.overview.decision_rates.not_allowed_service)} detail="service misses/s" tone={(data.overview.decision_rates.not_allowed_service || 0) > 0 ? 'warn' : undefined} />
-        <MetricPanel icon={<TrendingUp size={18} />} label="Anomaly score" value={numberValue(latestAnomaly?.score)} detail={latestAnomaly?.status ?? 'no active signal'} tone={latestAnomaly?.auto_enforced ? 'warn' : undefined} />
+        <MetricPanel icon={<TrendingUp size={18} />} label="Anomaly score" value={numberValue(latestAnomaly?.score)} detail={latestAnomaly?.status ?? 'no active signal'} tone={latestAnomaly?.status === 'alert_only' ? 'warn' : undefined} />
       </div>
 
       <div className="overview-grid">
@@ -83,7 +83,7 @@ export function OverviewView({ data }: { data: DashboardData }) {
           )}
           {latestAnomaly ? (
             <div className="incident-summary">
-              <StatusPill state={latestAnomaly.auto_enforced ? 'warn' : 'info'} text={latestAnomaly.status} />
+              <StatusPill state={latestAnomaly.status === 'alert_only' ? 'warn' : 'info'} text={latestAnomaly.status} />
               <div>
                 <strong>{latestAnomaly.service_name || latestAnomaly.service_ebpf_id || 'service'}</strong>
                 <span>{numberValue(latestAnomaly.score)} score · {percentValue(latestAnomaly.confidence)} confidence · {latestAnomaly.recommended_action}</span>

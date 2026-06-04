@@ -55,7 +55,12 @@ func runMigrate(ctx context.Context, cfg control.Config) error {
 		return err
 	}
 	defer pool.Close()
-	return control.RunMigrations(ctx, pool)
+	if err := control.RunMigrations(ctx, pool); err != nil {
+		return err
+	}
+	store := control.NewStore(pool, cfg, nil)
+	_, err = store.DisableLegacyAutoEnforceRules(ctx)
+	return err
 }
 
 func runServe(cfg control.Config, logger *slog.Logger) error {
@@ -71,6 +76,11 @@ func runServe(cfg control.Config, logger *slog.Logger) error {
 		return err
 	}
 	store := control.NewStore(pool, cfg, logger)
+	if disabled, err := store.DisableLegacyAutoEnforceRules(ctx); err != nil {
+		return err
+	} else if disabled > 0 {
+		logger.Info("disabled legacy anomaly auto-enforce rules", "count", disabled)
+	}
 	handler := control.NewServer(store, cfg, logger)
 	handler.StartBackgroundSchedulers(ctx)
 	server := &http.Server{

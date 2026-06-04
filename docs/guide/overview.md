@@ -46,5 +46,5 @@ Trang lấy dữ liệu từ luồng dashboard polling, chủ yếu từ overvie
 ## Lưu ý vận hành
 
 - `Agents healthy` giảm hoặc `Latest Apply Status` có `failed` là tín hiệu cần đối chiếu thêm ở `Fleet` và `Services`.
-- `Anomaly score` cao không tự động có nghĩa dashboard đã enforce. Cần kiểm tra `Detection` để xem status, source, confidence và recommended action.
+- `Anomaly score` cao là tín hiệu alert-only. Cần kiểm tra `Detection` để xem status, source, confidence và recommended action; nếu cần enforce thì tạo rule thủ công ở `Rules`.
 - `Overview` không thay thế biểu đồ chi tiết dài hạn trong Grafana; trang này tối ưu cho quyết định nhanh trong dashboard.

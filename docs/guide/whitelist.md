@@ -48,6 +48,6 @@
 
 ## Lưu ý vận hành
 
-- Whitelist có thể làm anomaly bị chặn bởi allow-list. Khi thấy trạng thái như `blocked_whitelist` ở `Detection`, cần đối chiếu lại entry tại trang này.
+- Whitelist conflict có thể xuất hiện trong anomaly evidence để triage nguồn trusted. Detection không còn dùng whitelist để chặn hoặc kích hoạt auto-enforcement.
 - Service filter dùng effective service filter. Global entry vẫn có thể xuất hiện tùy filter vì entry global có hiệu lực rộng hơn service cụ thể.
 - Disable là soft-disable: entry vẫn còn để audit nhưng không đi vào snapshot active tiếp theo.

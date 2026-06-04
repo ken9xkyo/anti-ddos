@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestAnomalyAutoEnforceIntegration(t *testing.T) {
+func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	ctx, pool, dsn := resetControlTestDB(t)
 	var queryMu sync.Mutex
 	var queries []string
@@ -156,8 +156,15 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("low confidence evaluate status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	if strings.Contains(resp.Body.String(), `"auto_enforced":true`) {
-		t.Fatalf("low-confidence baseline should not auto-enforce: %s", resp.Body.String())
+	lowConfidenceEvals := decodeAnomalyResponse(t, resp)
+	if len(lowConfidenceEvals) != 1 {
+		t.Fatalf("expected one low confidence anomaly evaluation: %#v", lowConfidenceEvals)
+	}
+	if lowConfidenceEvals[0].AutoEnforced || lowConfidenceEvals[0].ProposedRuleID != "" || lowConfidenceEvals[0].ProposedTTLSeconds != 0 {
+		t.Fatalf("baseline anomaly should not auto-enforce: %#v", lowConfidenceEvals[0])
+	}
+	if lowConfidenceEvals[0].Status != "alert_only" || lowConfidenceEvals[0].Recommendation != "manual_mitigation" || lowConfidenceEvals[0].RecommendedAction != "rate_limit" {
+		t.Fatalf("high score anomaly should be alert-only with manual mitigation guidance: %#v", lowConfidenceEvals[0])
 	}
 
 	baselineReq.HistoryHours = 24
@@ -173,7 +180,7 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 	}
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
-		Reason:    "expired trusted source should not block auto enforce",
+		Reason:    "expired trusted source should not suppress alert",
 		CIDR:      "198.51.100.10/32",
 		Scope:     "global",
 		Owner:     "sre",
@@ -191,7 +198,7 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			evals, err := store.EvaluateAnomalies(ctx, concurrentProm, "concurrent auto enforce evaluation")
+			evals, err := store.EvaluateAnomalies(ctx, concurrentProm, "concurrent alert-only evaluation")
 			if err != nil {
 				errs <- err
 				return
@@ -214,28 +221,53 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 	assertObservedQuery(t, &queryMu, &queries, `tcp_syn="1"`)
 	assertObservedQuery(t, &queryMu, &queries, `action=~"0|1|6"`)
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "auto enforce evaluation"})
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"auto_enforced":true`) {
-		t.Fatalf("auto enforce evaluate status=%d body=%s", resp.Code, resp.Body.String())
+	var snapshotBeforeEvaluate uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotBeforeEvaluate); err != nil {
+		t.Fatal(err)
+	}
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "alert-only evaluation"})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("alert-only evaluate status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	alertOnlyEvals := decodeAnomalyResponse(t, resp)
+	if len(alertOnlyEvals) != 1 {
+		t.Fatalf("expected one alert-only anomaly evaluation: %#v", alertOnlyEvals)
+	}
+	if alertOnlyEvals[0].AutoEnforced || alertOnlyEvals[0].ProposedRuleID != "" || alertOnlyEvals[0].ProposedTTLSeconds != 0 {
+		t.Fatalf("alert-only anomaly should not create proposed/enforced rule fields: %#v", alertOnlyEvals[0])
+	}
+	if alertOnlyEvals[0].Status != "alert_only" || alertOnlyEvals[0].Recommendation != "manual_mitigation" || alertOnlyEvals[0].RecommendedAction != "rate_limit" {
+		t.Fatalf("unexpected alert-only evaluation guidance: %#v", alertOnlyEvals[0])
+	}
+	var snapshotAfterEvaluate uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotAfterEvaluate); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotAfterEvaluate != snapshotBeforeEvaluate {
+		t.Fatalf("alert-only anomaly evaluation should not rebuild snapshots: before=%d after=%d", snapshotBeforeEvaluate, snapshotAfterEvaluate)
 	}
 	rules, err := store.ListRules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var autoRule Rule
 	for _, rule := range rules {
-		if rule.Owner == "system:auto-enforce" {
-			if autoRule.ID != "" && rule.Enabled {
-				t.Fatalf("concurrent auto-enforce created more than one active rule: %#v", rules)
-			}
-			autoRule = rule
+		if rule.Owner == legacyAutoEnforceOwner || string(rule.Evidence) == `{"auto_enforce":true}` {
+			t.Fatalf("anomaly evaluation created legacy auto-enforce rule: %#v", rules)
 		}
 	}
-	if autoRule.ID == "" || autoRule.Action != "rate_limit" || autoRule.Mode != "enforce" || autoRule.Dimension != "source_service" {
-		t.Fatalf("auto-enforce rule not created correctly: %#v", rules)
+	alerts, err := store.ListAlerts(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if autoRule.ExpiresAt == nil || autoRule.TTLSeconds != autoTTLSeconds {
-		t.Fatalf("auto-enforce TTL missing: %#v", autoRule)
+	foundAnomalyAlert := false
+	for _, alert := range alerts {
+		if alert.Type == "anomaly" && alert.Severity == "critical" && alert.RecommendedAction == "rate_limit" {
+			foundAnomalyAlert = true
+			break
+		}
+	}
+	if !foundAnomalyAlert {
+		t.Fatalf("alert-only anomaly did not create anomaly alert: %#v", alerts)
 	}
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
@@ -248,16 +280,73 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatalf("create whitelist status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "whitelist conflict evaluation"})
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"status":"blocked_whitelist"`) {
-		t.Fatalf("whitelist conflict did not block auto-enforce status=%d body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"status":"alert_only"`) || !strings.Contains(resp.Body.String(), `"whitelist_conflict":true`) {
+		t.Fatalf("whitelist conflict should be alert evidence only status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	rollback, err := store.RollbackSnapshot(ctx, adminActor, 1, "rollback auto-enforce snapshot")
+	legacyOwnerRule, err := store.CreateSystemRule(ctx, RuleInput{
+		ServiceID:    service.ID,
+		Name:         "legacy-owner-auto-rate-limit",
+		Action:       "rate_limit",
+		Mode:         "enforce",
+		Dimension:    "source_service",
+		ThresholdPPS: 1000,
+		TTLSeconds:   900,
+		Owner:        legacyAutoEnforceOwner,
+	}, "seed legacy owner auto-enforce rule")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rollback.RollbackFrom == nil {
-		t.Fatalf("rollback_from missing: %#v", rollback)
+	legacyEvidenceRule, err := store.CreateSystemRule(ctx, RuleInput{
+		ServiceID:    service.ID,
+		Name:         "legacy-evidence-auto-rate-limit",
+		Action:       "rate_limit",
+		Mode:         "enforce",
+		Dimension:    "source_service",
+		ThresholdPPS: 1000,
+		TTLSeconds:   900,
+		Evidence:     mustJSON(map[string]any{"auto_enforce": true}),
+		Owner:        "system",
+	}, "seed legacy evidence auto-enforce rule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshotBeforeCleanup uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotBeforeCleanup); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := store.DisableLegacyAutoEnforceRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled != 2 {
+		t.Fatalf("expected 2 legacy auto-enforce rules disabled, got %d", disabled)
+	}
+	var snapshotAfterCleanup uint32
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotAfterCleanup); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotAfterCleanup <= snapshotBeforeCleanup {
+		t.Fatalf("legacy auto-enforce cleanup did not rebuild snapshot: before=%d after=%d", snapshotBeforeCleanup, snapshotAfterCleanup)
+	}
+	var cleanupAudits int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='disable_legacy_auto_enforce_rule'`).Scan(&cleanupAudits); err != nil {
+		t.Fatal(err)
+	}
+	if cleanupAudits < 2 {
+		t.Fatalf("legacy cleanup audit missing: got %d", cleanupAudits)
+	}
+	rules, err = store.ListRules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range rules {
+		if (rule.ID == legacyOwnerRule.ID || rule.ID == legacyEvidenceRule.ID) && rule.Enabled {
+			t.Fatalf("legacy auto-enforce rule still enabled: %#v", rule)
+		}
+		if rule.ID == manualRule.ID && !rule.Enabled {
+			t.Fatalf("manual rule should not be disabled by legacy cleanup: %#v", rule)
+		}
 	}
 
 	var snapshotBeforeExpiry uint32
@@ -268,15 +357,15 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='expire_rule'`).Scan(&auditBeforeExpiry); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE rules SET expires_at=now() - interval '1 second' WHERE id::text = ANY($1)`, []string{autoRule.ID, manualRule.ID}); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE rules SET expires_at=now() - interval '1 second' WHERE id::text = $1`, manualRule.ID); err != nil {
 		t.Fatal(err)
 	}
 	expired, err := store.ExpireTTLRules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if expired < 2 {
-		t.Fatalf("expected expired auto and manual rules to be disabled, got %d", expired)
+	if expired != 1 {
+		t.Fatalf("expected expired manual rule to be disabled, got %d", expired)
 	}
 	var snapshotAfterExpiry uint32
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotAfterExpiry); err != nil {
@@ -289,7 +378,7 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='expire_rule'`).Scan(&auditAfterExpiry); err != nil {
 		t.Fatal(err)
 	}
-	if auditAfterExpiry < auditBeforeExpiry+2 {
+	if auditAfterExpiry < auditBeforeExpiry+1 {
 		t.Fatalf("ttl expiry audit missing: before=%d after=%d", auditBeforeExpiry, auditAfterExpiry)
 	}
 	rules, err = store.ListRules(ctx)
@@ -297,7 +386,7 @@ func TestAnomalyAutoEnforceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rule := range rules {
-		if (rule.ID == autoRule.ID || rule.ID == manualRule.ID) && rule.Enabled {
+		if rule.ID == manualRule.ID && rule.Enabled {
 			t.Fatalf("expired rule still enabled: %#v", rule)
 		}
 	}
@@ -335,6 +424,15 @@ func ingestSecurityEvent(t *testing.T, baseURL string, serviceID uint32, source 
 	if resp.Code != http.StatusOK {
 		t.Fatalf("event ingest status=%d body=%s", resp.Code, resp.Body.String())
 	}
+}
+
+func decodeAnomalyResponse(t *testing.T, resp *testHTTPResponse) []AnomalyEvaluation {
+	t.Helper()
+	var evals []AnomalyEvaluation
+	if err := json.Unmarshal(resp.Body.Bytes(), &evals); err != nil {
+		t.Fatal(err)
+	}
+	return evals
 }
 
 func assertObservedQuery(t *testing.T, mu *sync.Mutex, queries *[]string, want string) {

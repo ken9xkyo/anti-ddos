@@ -77,7 +77,7 @@ make test-all
 
 Một số kiểm thử tích hợp PostgreSQL sẽ tự dùng PostgreSQL container riêng khi không có `ANTI_DDOS_CONTROL_TEST_DSN`.
 Có thể chạy riêng theo nhóm bằng các target `control-core-postgres-test`, `observability-postgres-test`,
-`anomaly-auto-enforce-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` và
+`anomaly-alert-only-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` và
 `dashboard-postgres-test`.
 
 ## Chạy Node Agent trên host

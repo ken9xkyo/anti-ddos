@@ -27,7 +27,7 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 - Phase 06 verification keeps real NIC XDP attach disabled and uses PostgreSQL Docker container plus UI unit/build gates.
 - Phase 07 XDP applies at most one selected rule per service: highest-priority enabled, unexpired service-specific rule first, otherwise the highest-priority global rule.
 - Phase 07 rate limiting uses token buckets keyed by configured rule dimension (`source`, `service`, or `source_service`), defaults manual and auto rules to `source_service`, and counts CPS from TCP SYN packets without ACK only.
-- Phase 07 auto-enforce is conservative by default: minimum confidence `0.90`, minimum score `85`, at least two evidence signals, default action `rate_limit`, TTL `15m` clamped to `5m..60m`, and low-confidence baselines are observe-only.
+- Phase 07 anomaly evaluation is alert-only as of the Detections redesign: baselines monitor traffic and create anomaly alerts/manual `rate_limit` guidance, but they do not auto-create or auto-enforce mitigation rules.
 - Phase 07 scheduler runs in-process with `control-api serve`; anomaly evaluation ticks every `10s`, TTL expiry ticks every `30s`, and missing Prometheus configuration is reported/skipped cleanly.
 - Phase 07 verification keeps real NIC XDP attach disabled and uses packet fixtures, a temporary PostgreSQL database, and temporary VETH namespaces only.
 - Phase 08 Threat Feed Sync stays entirely in the Control Plane and reuses existing `PolicySnapshot.BlacklistV4`; no eBPF ABI or XDP C changes are required for feed enforcement.
