@@ -1,0 +1,23 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
+sequenceDiagram
+    autonumber
+    participant Agent
+    participant Snapshot as PolicySnapshot JSON
+    participant Resolver as Netlink Resolver
+    participant Maps as Inactive A/B Maps
+    participant Devmap as tx_devmap
+    participant Runtime as runtime_config
+    participant Control as Control API
+
+    Agent->>Runtime: Read active_slot + current version
+    Agent->>Snapshot: Verify schema/checksum/object/capacity
+    Agent->>Resolver: Resolve unresolved service forwarding metadata
+    Resolver-->>Agent: output_ifindex, source MAC, next-hop MAC
+    Agent->>Snapshot: Re-sign resolved snapshot
+    Agent->>Maps: Clear inactive slot
+    Agent->>Maps: Populate CIDR, UDP, service, rule maps
+    Agent->>Devmap: Upsert devmap_key -> ifindex
+    Agent->>Runtime: Flip active_slot and policy_version
+    Agent->>Agent: Persist last-valid snapshot
+    Agent->>Control: Ack apply status and stats
+    Note over Agent,Runtime: Any failure before flip keeps old active slot

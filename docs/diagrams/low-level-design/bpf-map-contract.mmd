@@ -1,0 +1,26 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
+flowchart LR
+    db[(PostgreSQL policy state)]
+    snapshot[Signed PolicySnapshot JSON]
+    structs[Go contract structs]
+    verify[VerifyPolicySnapshot]
+    abMaps[A/B policy maps]
+    devmap[tx_devmap]
+    runtime[runtime_config]
+    xdp[xdp_entry]
+    counters[drop_counters]
+    ringbuf[events ringbuf]
+    metrics[Agent metrics/events]
+
+    db --> snapshot
+    snapshot --> structs
+    structs --> verify
+    verify --> abMaps
+    verify --> devmap
+    abMaps --> runtime
+    devmap --> runtime
+    runtime --> xdp
+    xdp --> counters
+    xdp --> ringbuf
+    counters --> metrics
+    ringbuf --> metrics
