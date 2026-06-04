@@ -565,6 +565,41 @@ button:focus-visible {
   overflow-x: auto;
 }
 
+.table-panel .panel-header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.table-search-action {
+  width: min(320px, 100%);
+  min-width: 240px;
+}
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f7;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pagination-actions span {
+  color: #475569;
+  white-space: nowrap;
+}
+
 table {
   width: 100%;
   min-width: 860px;

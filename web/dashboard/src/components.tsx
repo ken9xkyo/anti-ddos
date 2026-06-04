@@ -60,18 +60,21 @@ export function TablePanel({
   title,
   eyebrow,
   actions,
+  footer,
   children
 }: {
   icon: JSX.Element;
   title: string;
   eyebrow?: string;
   actions?: ReactNode;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="table-panel">
       <PanelHeader icon={icon} title={title} eyebrow={eyebrow} actions={actions} />
       <div className="table-scroll"><table>{children}</table></div>
+      {footer}
     </section>
   );
 }

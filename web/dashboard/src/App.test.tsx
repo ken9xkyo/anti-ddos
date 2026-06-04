@@ -154,6 +154,57 @@ describe('DashboardShell', () => {
     expect(screen.getByText('approved')).toBeInTheDocument();
   });
 
+  it('limits Detection tables to 10 rows and paginates independently', () => {
+    renderShellWithData(viewerUser, detectionPaginationFixture(), 'detection');
+    const [anomalyTable, baselineTable, ruleTable] = screen.getAllByRole('table');
+
+    expect(within(anomalyTable).getAllByRole('row')).toHaveLength(11);
+    expect(within(baselineTable).getAllByRole('row')).toHaveLength(11);
+    expect(within(ruleTable).getAllByRole('row')).toHaveLength(11);
+    expect(within(anomalyTable).getByText('anomaly-service-01')).toBeInTheDocument();
+    expect(within(anomalyTable).queryByText('anomaly-service-11')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /previous anomaly evaluations page/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /next anomaly evaluations page/i }));
+    expect(within(anomalyTable).getByText('anomaly-service-11')).toBeInTheDocument();
+    expect(within(anomalyTable).queryByText('anomaly-service-01')).not.toBeInTheDocument();
+    expect(within(baselineTable).getByText('baseline-service-01')).toBeInTheDocument();
+    expect(within(ruleTable).getByText('rule-01')).toBeInTheDocument();
+  });
+
+  it('filters Detection tables independently and shows filtered empty states', async () => {
+    renderShellWithData(viewerUser, detectionPaginationFixture(), 'detection');
+    const [anomalyTable, baselineTable, ruleTable] = screen.getAllByRole('table');
+
+    await fillField(/^search anomalies/i, 'source-12');
+    expect(within(anomalyTable).getByText('anomaly-service-12')).toBeInTheDocument();
+    expect(within(anomalyTable).queryByText('anomaly-service-01')).not.toBeInTheDocument();
+    expect(within(baselineTable).getByText('baseline-service-01')).toBeInTheDocument();
+    expect(within(ruleTable).getByText('rule-01')).toBeInTheDocument();
+
+    await fillField(/^search baselines/i, 'no baseline match');
+    expect(within(baselineTable).getByText('No baseline profiles match the current search')).toBeInTheDocument();
+    expect(within(ruleTable).getByText('rule-01')).toBeInTheDocument();
+
+    await fillField(/^search rules/i, 'no rule match');
+    expect(within(ruleTable).getByText('No active rules match the current search')).toBeInTheDocument();
+    expect(within(anomalyTable).getByText('anomaly-service-12')).toBeInTheDocument();
+  });
+
+  it('resets Detection pagination when the table search changes', async () => {
+    renderShellWithData(operatorUser, detectionPaginationFixture(), 'detection');
+    const [anomalyTable] = screen.getAllByRole('table');
+
+    fireEvent.click(screen.getByRole('button', { name: /next anomaly evaluations page/i }));
+    expect(within(anomalyTable).getByText('anomaly-service-11')).toBeInTheDocument();
+
+    await fillField(/^search anomalies/i, 'anomaly-service');
+    expect(within(anomalyTable).getByText('anomaly-service-01')).toBeInTheDocument();
+    expect(within(anomalyTable).queryByText('anomaly-service-11')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /previous anomaly evaluations page/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /add rule/i })).not.toBeInTheDocument();
+  });
+
   it('renders event investigation table', () => {
     renderShell(viewerUser, 'investigation');
     const table = screen.getByRole('table');
@@ -1134,6 +1185,66 @@ async function selectOption(label: string | RegExp, optionText: string) {
   if (!combo) throw new Error(`no select control found for ${String(label)}`);
   fireEvent.mouseDown(combo);
   fireEvent.click(await screen.findByText(new RegExp(`^${optionText}$`, 'i')));
+}
+
+function detectionPaginationFixture(): DashboardData {
+  const base = dashboardFixture();
+  return {
+    ...base,
+    anomalies: Array.from({ length: 12 }, (_, index) => {
+      const id = String(index + 1).padStart(2, '0');
+      return {
+        ...base.anomalies[0],
+        id: `an-${id}`,
+        service_id: `anomaly-service-id-${id}`,
+        service_ebpf_id: index + 1,
+        service_name: `anomaly-service-${id}`,
+        baseline_id: `baseline-${id}`,
+        evaluated_at: `2026-05-28T11:${id}:00Z`,
+        score: 80 + index,
+        confidence: 0.5 + index / 100,
+        signals: [`signal-${id}`, 'pps_spike'],
+        source: `source-${id}`,
+        status: index % 2 === 0 ? 'alert_only' : 'observe_only'
+      };
+    }),
+    baselines: Array.from({ length: 12 }, (_, index) => {
+      const id = String(index + 1).padStart(2, '0');
+      return {
+        ...base.baselines[0],
+        id: `baseline-${id}`,
+        service_id: `baseline-service-id-${id}`,
+        service_ebpf_id: index + 1,
+        service_name: `baseline-service-${id}`,
+        interface: `wan${index + 1}`,
+        port: 4000 + index,
+        expected_pps: 1000 + index,
+        expected_bps: 1000000 + index,
+        expected_cps: 100 + index,
+        history_hours: index % 2 === 0 ? 24 : 12,
+        confidence: 0.7 + index / 100,
+        approved: index % 2 === 0,
+        status: index % 2 === 0 ? 'approved' : 'learning'
+      };
+    }),
+    rules: Array.from({ length: 12 }, (_, index) => {
+      const id = String(index + 1).padStart(2, '0');
+      return {
+        ...base.rules[0],
+        id: `rule-${id}`,
+        ebpf_id: 100 + index,
+        name: `rule-${id}`,
+        action: index % 2 === 0 ? 'drop' : 'rate_limit',
+        mode: index % 2 === 0 ? 'enforce' : 'observe',
+        threshold_pps: 1000 + index,
+        threshold_bps: 1000000 + index,
+        threshold_cps: 100 + index,
+        owner: `owner-${id}`,
+        enabled: index % 2 === 0,
+        counters: { packets: index + 1 }
+      };
+    })
+  };
 }
 
 function whitelistFixture() {

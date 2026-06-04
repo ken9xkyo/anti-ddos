@@ -11,6 +11,7 @@ Key pointers:
 - `internal/control/anomaly_cleanup.go:DisableLegacyAutoEnforceRules()` disables enabled legacy rules with owner `system:auto-enforce` or evidence `auto_enforce=true`, audits each rule, and rebuilds the policy snapshot.
 - `cmd/control-api/main.go` runs legacy cleanup after migrations for both `migrate` and `serve`.
 - `web/dashboard/src/views/DetectionView.tsx` renders `Anomalies / Alerts`; mitigation CRUD remains in `Rules`.
+- `web/dashboard/src/views/DetectionView.tsx` uses client-side search and fixed 10-row pagination independently for Anomalies / Alerts, Baselines, and Active Rules.
 
 Compatibility:
 
