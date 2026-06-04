@@ -1,6 +1,6 @@
 # Thiết Kế Kiến Trúc Hệ Thống - Anti-DDoS Scrubbing Gateway
 
-Trạng thái: tài liệu kiến trúc hệ thống được lập từ source, README và các tài liệu hiện có trong working tree ngày 2026-06-03.
+Trạng thái: tài liệu kiến trúc hệ thống được lập từ source, README và các tài liệu hiện có trong working tree ngày 2026-06-04.
 
 Tài liệu này mô tả Anti-DDoS Scrubbing Gateway hiện hữu: một scrubbing gateway L3/L4 dùng XDP/eBPF để xử lý packet sớm trên WAN NIC, Control API/PostgreSQL để quản lý policy snapshot, Node Agent trên host để load/apply XDP, và Admin Dashboard/Prometheus/Grafana cho vận hành. Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
 
@@ -11,6 +11,7 @@ Mục tiêu chính:
 - Lọc và chuyển tiếp lưu lượng L3/L4 tới các protected backend service đã khai báo.
 - Drop, rate-limit, observe hoặc sample theo whitelist, blacklist, UDP source-port block, service allowlist và rule runtime.
 - Đồng bộ policy runtime bằng signed snapshot có checksum và version.
+- Ghi nhận anomaly theo baseline và phát alert-only operational signal; baseline không tự tạo hoặc auto-enforce rule.
 - Cho phép Viewer, Operator và Admin quan sát, điều tra, thay đổi policy, rollback snapshot và audit hành động.
 - Xuất metrics/events cho Dashboard, Prometheus và Grafana.
 
@@ -32,6 +33,7 @@ Success criteria:
 - Policy snapshot mới chỉ được apply khi schema, checksum, object checksum, capacity và forwarding metadata hợp lệ.
 - Mọi mutation quan trọng có reason và audit trail.
 - Agent apply failure được ghi vào `policy_apply_status` và có thể tạo alert.
+- Baseline/anomaly evaluation không tạo policy snapshot hoặc mitigation rule; mọi enforcement `rate_limit` phải đi qua rule workflow có audit.
 - Dashboard/Grafana phản ánh được health, traffic decision, events, alerts, snapshot và agent state.
 
 ## 2. System Context
@@ -138,7 +140,7 @@ Thành phần runtime:
 
 | Thành phần | Source chính | Trách nhiệm |
 |---|---|---|
-| Control API | `cmd/control-api/main.go`, `internal/control` | Migrations, HTTP API, RBAC, policy CRUD, snapshot, agent control, observability, alerts |
+| Control API | `cmd/control-api/main.go`, `internal/control` | Migrations, HTTP API, RBAC, policy CRUD, snapshot, agent control, observability, alert-only anomaly evaluation, alerts |
 | Control Admin CLI | `cmd/control-admin/main.go` | Bootstrap admin đầu tiên qua PostgreSQL |
 | Node Agent | `cmd/agent/main.go`, `internal/agent` | Load/attach XDP, expose metrics, sync snapshot, consume ringbuf, forward events |
 | XDP/eBPF | `bpf/xdp_data_plane.bpf.c`, `include/anti_ddos/bpf_contract.h` | Packet decision path, counters, ringbuf, DEVMAP redirect |
@@ -261,10 +263,11 @@ Quan trọng:
 - Agent resolve output ifindex/source MAC/next-hop MAC bằng host networking trước khi apply.
 - Nếu resolve/apply fail, Agent không flip runtime slot và Control API ghi failure stage như `resolve_forwarding`, `populate_tx_devmap` hoặc `runtime_flip`.
 - `object_checksum` ràng buộc snapshot với BPF object hiện tại để tránh apply sai ABI/map contract.
+- Baseline/anomaly evaluation không nằm trong lifecycle policy snapshot. Nó ghi detection state và alert, nhưng không insert `rules`, không rebuild snapshot và không đổi runtime eBPF maps.
 
 ## 6. Observability Và Event Flow
 
-XDP cập nhật `drop_counters` cho mỗi decision và chỉ ghi `events` ringbuf khi sampling được bật. Agent đọc counters mỗi giây, expose `/metrics`, consume ringbuf và forward event batch về Control API. Control API normalize IPv4/source /24 và lưu `security_events` vào PostgreSQL. Dashboard đọc events/summary/investigation; Prometheus scrape Control API và Agent metrics.
+XDP cập nhật `drop_counters` cho mỗi decision và chỉ ghi `events` ringbuf khi sampling được bật. Agent đọc counters mỗi giây, expose `/metrics`, consume ringbuf và forward event batch về Control API. Control API normalize IPv4/source /24 và lưu `security_events` vào PostgreSQL. Dashboard đọc events/summary/investigation; Prometheus scrape Control API và Agent metrics. Anomaly evaluator dùng Prometheus metrics cùng baseline profile để ghi `anomaly_evaluations` và tạo alert-only signal cho Operator.
 
 SVG rendered: [observability-events-sequence.svg](diagrams/system-architecture/observability-events-sequence.svg)  
 Mermaid source: [observability-events-sequence.mmd](diagrams/system-architecture/observability-events-sequence.mmd)
@@ -294,7 +297,8 @@ sequenceDiagram
     Metrics->>Agent: Scrape /metrics trên host
     Metrics->>API: Scrape /metrics trong compose
     UI->>API: GET dashboard, events, alerts và anomaly endpoints
-    API->>DB: Query events, agents, policy và alert state
+    API->>DB: Query events, agents, policy, baseline, anomaly và alert state
+    API->>DB: Insert anomaly_evaluations và anomaly alerts khi score đủ ngưỡng
     UI-->>Metrics: Operator xem Grafana dashboards
 ```
 
@@ -304,6 +308,7 @@ Observability surfaces:
 - Agent `/metrics`: XDP attach mode, loaded object checksum, snapshot version, counters, forwarding counters, map stats và event forwarding metrics.
 - Dashboard endpoints: overview, agents, services, rules, recent events, baselines, anomalies, feeds, alerts và snapshots.
 - Grafana: provisioned dashboard backed by Prometheus datasource.
+- Detection view hiển thị `alert_only`/`observe_only` state. Recommended action như `rate_limit` là guidance thủ công; mitigation CRUD vẫn ở Rules/Blacklist/UDP Ports.
 
 ## 7. Core Data Model
 
@@ -441,6 +446,8 @@ Design notes:
 - `policy_apply_status` ghi kết quả apply theo agent và version, bao gồm map/devmap stats.
 - Soft-disable được dùng cho rules, whitelist, blacklist, feeds và UDP source-port blocks để giữ history/audit.
 - Reputation entries từ feeds được merge vào blacklist snapshot; manual blacklist ưu tiên khi cùng CIDR.
+- `baseline_profiles` và `anomaly_evaluations` là detection state. Chúng không được projection vào eBPF snapshot; high-score evaluation tạo alert `anomaly` và giữ các legacy field như `auto_enforced=false` để tương thích API.
+- Control API disable legacy enabled auto-enforce rules sau migration/serve startup nếu rule có owner `system:auto-enforce` hoặc evidence `auto_enforce=true`, ghi audit và rebuild snapshot một lần khi có thay đổi.
 - `audit_events` partition theo thời gian và lưu actor/action/entity/before/after/reason.
 
 ## 8. Deployment Topology
@@ -516,7 +523,7 @@ Auth:
 RBAC:
 
 - Viewer: authenticated read.
-- Operator: operational mutations cho services, policies, whitelist, rules, blacklist, UDP source-port blocks, feeds, snapshots, anomaly/alert actions.
+- Operator: operational mutations cho services, policies, whitelist, rules, blacklist, UDP source-port blocks, feeds, snapshots và alert actions. Anomaly evaluation là alert-only và không tự mutate policy runtime.
 - Admin: user management, password reset, session revoke và write-only secret/credential operations.
 
 Audit và safety:
@@ -538,6 +545,8 @@ Nguồn chính đã đối chiếu khi lập tài liệu:
 - `cmd/control-api/main.go`
 - `cmd/control-admin/main.go`
 - `cmd/agent/main.go`
+- `internal/control/anomaly.go`
+- `internal/control/anomaly_cleanup.go`
 - `internal/control/server.go`
 - `internal/control/snapshot.go`
 - `internal/control/agent_store.go`

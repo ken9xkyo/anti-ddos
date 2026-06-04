@@ -19,6 +19,7 @@ Tài liệu này mô tả thiết kế mức thấp của Anti-DDoS Scrubbing Ga
 - Service allowlist, whitelist, blacklist, UDP source-port block, runtime rule, rate-limit, event sampling và DEVMAP redirect.
 - Node Agent load/attach XDP, verify BPF contract, sync policy snapshot, resolve forwarding metadata, apply A/B maps và expose metrics.
 - Control API/PostgreSQL làm source of truth cho policy, user, agent, snapshot, events, alerts và audit.
+- Baseline/anomaly detection state trong Control API: baseline profile, anomaly evaluation, alert-only signal và manual mitigation guidance.
 - Admin Dashboard/Prometheus/Grafana là surface vận hành trên các API và metrics hiện hữu.
 
 ### 1.3 Out of scope
@@ -44,6 +45,7 @@ Success criteria runtime:
 - Apply failure trước `runtime_config` flip không đổi active slot và không persist last-valid snapshot mới.
 - Agent báo cáo apply result về `policy_apply_status`, bao gồm stage lỗi, map stats và devmap stats.
 - XDP counters, sampled events, Agent metrics và Control metrics đủ để điều tra drop/redirect/failure.
+- Anomaly evaluation không insert rule, không rebuild snapshot và không đổi eBPF maps; alert-only result chỉ tạo `anomaly_evaluations` và `alerts`.
 
 ## 2. Runtime Boundaries
 
@@ -56,6 +58,8 @@ Success criteria runtime:
 | Management | `web/dashboard/src`, `deploy/prometheus`, `deploy/grafana` | Dashboard, Prometheus scrape config, Grafana dashboard và operator workflows |
 
 Control Plane không ghi trực tiếp vào eBPF maps. eBPF maps là projection local của snapshot đã được Agent verify/apply. PostgreSQL là source of truth.
+
+Baseline/anomaly logic thuộc Control Plane observability, không thuộc Data Plane hot path và không thuộc Agent apply transaction. Data Plane chỉ enforce rule đã nằm trong signed snapshot.
 
 ## 3. BPF ABI Và Map Contract
 
@@ -215,6 +219,7 @@ Control Plane cho phép unresolved service khi verify snapshot build (`AllowUnre
 - Assign default rules vào service dựa trên global/service rule selection hiện hữu.
 - `policyContentFingerprint` bỏ qua version/checksum để tránh tạo snapshot mới khi content không đổi.
 - Rollback tạo snapshot version mới từ target version cũ và set `rollback_from`.
+- Baseline/anomaly evaluation không tham gia snapshot builder; chỉ policy objects như services/rules/whitelist/blacklist/UDP source-port blocks/feed reputation mới ảnh hưởng snapshot content.
 
 ## 6. Agent Load, Attach Và Apply A/B Slot
 
@@ -310,15 +315,29 @@ Nhóm endpoint chính:
 
 JSON decoder reject unknown fields. Mutation reason lấy từ body `reason` trước, fallback header `X-Audit-Reason`.
 
-### 8.2 RBAC
+### 8.2 Baseline/anomaly alert-only semantics
+
+Detection endpoints nằm trong `internal/control/anomaly_handlers.go` và store logic nằm trong `internal/control/anomaly.go`.
+
+- `baseline_profiles` lưu expected PPS/BPS/CPS, window, history hours, confidence, approval state và evidence cho từng service.
+- `EvaluateAnomalies` query Prometheus metrics theo service, tính score từ PPS/BPS/CPS/drop-ratio signals, lấy top source từ `security_events` và ghi `anomaly_evaluations`.
+- Khi score đủ ngưỡng, evaluation có `status='alert_only'`, `recommendation='manual_mitigation'`, `recommended_action='rate_limit'` và tạo alert type `anomaly`.
+- Khi chưa đủ ngưỡng, evaluation có `status='observe_only'`, `recommendation='observe'` và `recommended_action='investigate'`.
+- API giữ các field legacy `auto_enforced`, `proposed_rule_id` và `proposed_ttl_seconds` để tương thích, nhưng evaluation mới set `auto_enforced=false` và để proposed rule fields rỗng/zero.
+- Whitelist conflict nếu có chỉ được ghi trong evidence để triage, không còn tạo trạng thái chặn auto-enforcement.
+- Evaluation không gọi rule CRUD, không tạo `system:auto-enforce`, không rebuild snapshot và không thay đổi Data Plane runtime.
+
+Legacy cleanup nằm trong `internal/control/anomaly_cleanup.go`. Sau `RunMigrations`, `control-api migrate` và `control-api serve` gọi `DisableLegacyAutoEnforceRules`: disable mọi rule enabled có owner `system:auto-enforce` hoặc evidence `auto_enforce=true`, ghi audit action `disable_legacy_auto_enforce_rule`, rồi rebuild snapshot nếu có rule bị disable.
+
+### 8.3 RBAC
 
 - Viewer: authenticated read.
-- Operator: mutation operational cho service/policy/feed/snapshot/anomaly/alert actions.
+- Operator: mutation operational cho service/policy/feed/snapshot/alert actions. Baseline mutation và manual anomaly evaluation cần Operator/Admin, nhưng anomaly evaluation là alert-only và không mutate policy runtime.
 - Admin: bao gồm Operator, thêm user management, password/session privileged operation và secret credential writes.
 
 Dashboard chỉ ẩn control theo role; backend là enforcement chính.
 
-### 8.3 PostgreSQL source of truth
+### 8.4 PostgreSQL source of truth
 
 Các bảng runtime-critical trong `internal/control/migrations.go`:
 
@@ -326,12 +345,13 @@ Các bảng runtime-critical trong `internal/control/migrations.go`:
 - `policy_snapshots` lưu immutable snapshot JSON, checksum, object checksum và rollback lineage.
 - `agents`, `agent_interfaces`, `policy_apply_status`.
 - `security_events` phục vụ điều tra và anomaly.
+- `baseline_profiles`, `anomaly_evaluations` phục vụ detection alert-only và không được projection vào eBPF maps.
 - `alerts`, `alert_deliveries`, Telegram config.
 - `audit_events` partition theo thời gian.
 
 Policy delete/disable trong nhiều domain là soft-disable để giữ audit/history và cho phép rebuild/rollback có ngữ cảnh.
 
-### 8.4 Agent apply acknowledgement
+### 8.5 Agent apply acknowledgement
 
 `RecordAgentApply` upsert `policy_apply_status` theo `(agent_id, policy_version)`. Khi status failed, Control Plane có thể tạo alert với evidence gồm agent id, policy version, error stage, error reason và devmap stats.
 
@@ -369,6 +389,8 @@ Agent forward sampled events qua `/v1/agents/{id}/events`. Control API normalize
 | UDP reflection source port | UDP port block map | Drop `REASON_UDP_AMP_SOURCE_PORT` nếu không whitelisted | Events, UDP blocks view |
 | Unresolved neighbor | service value guard or Agent resolver | XDP drop or apply fail | `policy_apply_status.error_stage=resolve_forwarding` hoặc counters |
 | Conflicting devmap target | Agent `updateDevmapTargets` | Apply fail before slot flip | `populate_tx_devmap`, alert |
+| High anomaly score | Control API anomaly evaluator | Records `alert_only`, creates `anomaly` alert, no rule/snapshot mutation | Detection/Incidents views, Telegram delivery if configured |
+| Legacy auto-enforce rule enabled | Control API startup cleanup | Disable legacy rule, audit, rebuild snapshot once | Audit action `disable_legacy_auto_enforce_rule`, new snapshot if content changed |
 | Runtime flip failure | `runtime_config.Update` | Rollback devmap/inactive slot, old slot remains | `runtime_flip`, apply status |
 | Last-valid persist failure | file write | Attempt restore old runtime config | `persist_last_valid`, apply status |
 | Output NIC lacks XDP TX queues | kernel/driver redirect error | Redirect can fail or traffic timeout | `xdp_redirect_err`, README ixgbe runbook |
@@ -393,6 +415,7 @@ Broader gates when environment supports them:
 ```bash
 make test
 make test-all
+make anomaly-alert-only-postgres-test
 make agent-lifecycle-veth-test
 make devmap-forwarding-veth-test
 ```
@@ -404,7 +427,7 @@ LLD-specific verification:
   - `docs/diagrams/low-level-design/xdp-hot-path.mmd`
   - `docs/diagrams/low-level-design/policy-apply-ab-slot.mmd`
   - `docs/diagrams/low-level-design/bpf-map-contract.mmd`
-- No code, API schema, migration, BPF contract, Make target or dependency file changes are required for this documentation update.
+- Detection documentation aligns with alert-only implementation: `auto_enforced=false` for new evaluations, no proposed rule fields, no automatic snapshot rebuild from anomaly evaluation.
 
 ## 12. Source References
 
@@ -427,6 +450,8 @@ Primary source files:
 - `internal/control/snapshot.go`
 - `internal/control/agent_store.go`
 - `internal/control/events.go`
+- `internal/control/anomaly.go`
+- `internal/control/anomaly_cleanup.go`
 - `internal/control/migrations.go`
 - `cmd/agent/main.go`
 - `cmd/control-api/main.go`

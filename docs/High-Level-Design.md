@@ -14,6 +14,7 @@ Hệ thống được thiết kế theo nguyên tắc:
 - Control Plane không ghi trực tiếp vào eBPF maps; mọi thay đổi policy đi qua PostgreSQL, snapshot versioned và Agent apply.
 - Data Plane tối giản và bounded: parse L3/L4, lookup eBPF maps, count decision, sample event và redirect/drop.
 - Operator có thể quan sát, thay đổi policy, rollback snapshot và điều tra sự kiện với audit trail.
+- Detection baselines chỉ dùng để giám sát/cảnh báo; anomaly evaluation không tự tạo hoặc auto-enforce `rate_limit` rule.
 - Lab-first: Docker Compose chỉ khởi động management/control stack; Node Agent trên host mới có quyền attach XDP và chỉ được chạy trên interface đã phê duyệt.
 
 Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
@@ -23,6 +24,8 @@ Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI v
 ### 2.1 Vấn đề cần giải quyết
 
 Khi protected service bị tấn công L3/L4, backend thường không nên là nơi đầu tiên xử lý lưu lượng bất thường. Cần một scrubbing gateway có thể loại bỏ traffic không thuộc service hợp lệ, chặn nguồn xấu, giới hạn tốc độ và chỉ forward traffic sạch tới backend. Đồng thời đội vận hành cần thay đổi policy nhanh, có rollback, có bằng chứng audit và có metrics để đánh giá tác động.
+
+Detection baseline giải quyết nhu cầu nhận biết traffic lệch khỏi baseline và phát cảnh báo sớm mà không làm thay đổi policy runtime ngoài ý muốn. Operator xem anomaly score, source evidence và recommended action, sau đó quyết định có tạo rule `rate_limit`, blacklist hoặc hành động runbook khác bằng workflow policy thủ công.
 
 ### 2.2 Personas
 
@@ -39,6 +42,7 @@ Khi protected service bị tấn công L3/L4, backend thường không nên là 
 - Apply snapshot thất bại không làm đổi active runtime slot và được báo cáo qua `policy_apply_status`.
 - Mọi mutation quan trọng có reason và audit event.
 - Metrics/events được hiển thị qua Dashboard, Prometheus và Grafana để hỗ trợ điều tra và vận hành.
+- Baseline/anomaly evaluation tạo visibility và alert-only signal; không có baseline nào tự enforce rate-limit trên Data Plane.
 
 ## 3. Scope And Non-Scope
 
@@ -49,6 +53,7 @@ Khi protected service bị tấn công L3/L4, backend thường không nên là 
 - Node Agent chạy trên host để load/attach XDP, đồng bộ snapshot, resolve forwarding metadata, cập nhật eBPF maps và expose metrics.
 - Control API Go và PostgreSQL làm source of truth cho users, sessions, policy objects, snapshots, events, alerts, audit và agent state.
 - Admin Dashboard React/Vite, Prometheus và Grafana cho vận hành.
+- Baselines/anomalies phục vụ detection posture: lưu baseline profile, ghi anomaly evaluation, tạo alert và guidance thủ công cho Operator.
 - Docker Compose cho management/control lab stack.
 
 ### 3.2 Out of scope hiện tại
@@ -131,6 +136,8 @@ Luồng mức cao:
 6. Dashboard đọc overview, events, baselines, anomalies, alerts, snapshots và fleet state qua Control API.
 7. Prometheus scrape Control API và Agent metrics; Grafana hiển thị dashboard từ datasource Prometheus.
 
+Anomaly evaluation dùng Prometheus metrics và baseline profile để ghi `anomaly_evaluations`. Khi score đủ ngưỡng, Control API tạo alert `anomaly` với `recommended_action` như `rate_limit`, nhưng không tạo rule, không rebuild snapshot và không làm thay đổi eBPF maps. Enforcement chỉ xảy ra khi Operator/Admin tạo hoặc sửa policy object như `rules`, blacklist hoặc UDP source-port block.
+
 Sơ đồ chi tiết: [observability-events-sequence.mmd](diagrams/system-architecture/observability-events-sequence.mmd), [observability-events-sequence.svg](diagrams/system-architecture/observability-events-sequence.svg).
 
 ## 6. Data And Control Boundaries
@@ -141,6 +148,7 @@ PostgreSQL là source of truth cho:
 
 - Users, sessions, RBAC state.
 - Backend services, forwarding policies, whitelist, blacklist, UDP source-port blocks, rules và feed/reputation state.
+- Baseline profiles và anomaly evaluations dùng cho detection/alert-only workflow.
 - Immutable policy snapshots và rollback history.
 - Agent registration, heartbeat, interfaces và policy apply status.
 - Security events, alerts và audit events.
@@ -212,6 +220,7 @@ Chi tiết deploy lab: [docs/deployment/docker-compose.md](deployment/docker-com
 | Observability | Counters/events/metrics phân tách giữa XDP, Agent, Control API, Dashboard và Prometheus/Grafana |
 | Capacity | Snapshot verify map capacity và estimated memory trước khi apply |
 | Auditability | Operator/Admin mutation có reason và audit event |
+| Detection safety | Baseline/anomaly workflow là alert-only; mitigation runtime phải đi qua policy mutation có audit |
 | Operability | Lab-first deploy, health/metrics endpoints, last-valid snapshot và apply status rõ ràng |
 | Security | RBAC backend, secret redaction, agent token support và không đưa raw secret vào docs/logs |
 
@@ -226,6 +235,7 @@ Chi tiết deploy lab: [docs/deployment/docker-compose.md](deployment/docker-com
 | IPv4-only MVP | IPv6 traffic không được bảo vệ theo policy hiện tại | Ghi rõ non-scope, lập design riêng cho IPv6 nếu cần |
 | Single-node MVP | Không có HA production trong thiết kế hiện tại | Định nghĩa HA/multi-node là future design, không ngầm hiểu sẵn sàng production HA |
 | Policy/operator error | Mutation sai có thể drop traffic hợp lệ | RBAC, reason, audit, diff snapshot, rollback và staged lab verification |
+| Auto-mitigation false positive | Nếu baseline tự enforce, spike hợp lệ có thể bị rate-limit ngoài ý muốn | Baseline/anomaly chỉ tạo alert và manual mitigation guidance; rule enforcement phải do Operator/Admin tạo có audit |
 
 ## 10. Acceptance Criteria
 
@@ -235,6 +245,7 @@ Tài liệu HLD được xem là đạt khi:
 - Giữ rõ ranh giới giữa Data Plane, Node Agent, Control API/PostgreSQL và Management Plane.
 - Ghi rõ unknown service traffic fail-closed với `REASON_NOT_ALLOWED_SERVICE`.
 - Ghi rõ snapshot apply failure không flip active runtime slot và được báo cáo qua apply status.
+- Ghi rõ baselines/anomalies không auto-enforce `rate_limit`; chúng chỉ tạo alert/guidance và giữ enforcement trong workflow policy thủ công.
 - Ghi rõ Compose không attach XDP; Node Agent trên host mới có khả năng attach XDP và cần interface đã phê duyệt.
 - Link sang tài liệu chi tiết thay vì lặp lại toàn bộ endpoint/schema/eBPF ABI.
 - Không đưa vào tài liệu bất kỳ secret, raw DSN, token hoặc credential plaintext.
