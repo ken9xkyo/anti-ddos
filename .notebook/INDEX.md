@@ -1,7 +1,7 @@
 # .notebook
 > Project intelligence - read before every mission
 
-Last updated: 2026-06-04
+Last updated: 2026-06-05
 
 - [multi-tenant-rbac](multi-tenant-rbac.md) - Tenant membership RBAC, RLS transaction helpers, and agent tenant binding | flow | auth, tenant, rls, agents, dashboard
 - [detections-alert-only](detections-alert-only.md) - Baselines/anomaly evaluations are alert-only and legacy auto rules are cleaned up | flow | detection, baseline, anomaly, rules

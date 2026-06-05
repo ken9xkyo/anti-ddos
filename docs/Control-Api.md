@@ -28,17 +28,17 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 | Role | Mo ta |
 |---|---|
 | `viewer` | Tenant-scoped read cho dashboard, policy, events, alerts, feeds, snapshots |
-| `operator` | Bao gom viewer; duoc thao tac operational mutations trong active tenant |
-| `admin` | Bao gom operator; duoc quan tri tenant members va feed/secret credentials trong active tenant |
+| `operator` | Bao gom viewer; duoc thao tac operational mutations, snapshot build/rollback, Telegram config va lifecycle cua viewer trong active tenant |
+| `admin` | Bao gom operator; duoc quan tri tat ca tenant members va feed/secret credentials trong active tenant |
 | `platform_admin` | Global platform role tren `app_users.platform_role`; duoc list/create/update tenants va switch vao tenant voi effective `admin` |
 
 Mutation policy:
 
-- User/member mutations: Tenant Admin only. `GET /v1/users` list memberships trong active tenant.
+- User/member mutations: Tenant Admin full; Operator chi duoc tao/reactivate/update/reset/revoke viewer trong active tenant. `GET /v1/users` list memberships trong active tenant.
 - Tenant create/update: Platform Admin only.
 - Service, forwarding policy, whitelist, rules, blacklist, UDP source-port block, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
-- Telegram config: Operator/Admin, nhung thay doi write-only `bot_token_ref` can Admin.
-- Feed `credential_ref`: Admin only khi create/update; raw values and secret refs are write-only and response is masked as `***`.
+- Telegram config: Operator/Admin, bao gom write-only `bot_token_ref`; response luon masked as `*****`.
+- Feed `credential_ref`: Admin only khi create/update; Admin response masked as `***`, non-admin response omit credential state.
 - Viewer khong nen thay mutation control tren UI, nhung backend van la enforcement chinh.
 
 ## 3. Common data enums
@@ -143,7 +143,7 @@ Authenticated. `GET /v1/tenants` returns tenants available to the actor. Mutatio
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/tenants` | none | `TenantAccess[]` | List available active tenants and effective roles |
+| GET | `/v1/tenants` | optional `include_revoked=true` for Platform Admin | `TenantAccess[]` | List available active tenants and effective roles; Platform Admin can request all statuses for management |
 | POST | `/v1/tenants` | `TenantInput` | `Tenant` | Create tenant |
 | PATCH | `/v1/tenants/{id}` | `TenantInput` | `Tenant` | Update tenant name/status |
 | POST | `/v1/tenants/switch` | `{tenant_id}` or `{tenant_slug}` | `Session` | Switch current session active tenant |
@@ -162,7 +162,7 @@ Switch tenant writes an audit event. Platform admin gets effective tenant `admin
 
 ## 7. Users
 
-Authenticated read, Admin mutation.
+Authenticated read. Admin co full mutation; Operator chi duoc quan ly viewer trong active tenant.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
@@ -188,6 +188,7 @@ Safety:
 
 - Backend prevents revoking/downgrading the last active admin.
 - Backend prevents revoking/downgrading the last active platform admin.
+- Operator requests that target or create non-viewer memberships return `403`.
 - Raw password is never included in returned user or audit before/after payload.
 
 ## 8. Services
@@ -460,7 +461,7 @@ Authenticated read, Operator/Admin mutation. `credential_ref` create/update requ
 - `quota_metadata`
 - `status`
 
-`credential_ref` accepts either a raw feed credential or an existing reference such as `env://KEY` or `secret://anti-ddos/name`. Non-empty values are returned as `***` in `FeedSource` responses and audit records. On PATCH, omitted `credential_ref` or `***` preserves the stored credential, an empty string clears it, and any other non-empty value replaces it.
+`credential_ref` accepts either a raw feed credential or an existing reference such as `env://KEY` or `secret://anti-ddos/name`. Only Admin can send or see credential state. Admin responses and audit records use `***`; Operator/Viewer responses omit `credential_ref`. On PATCH, omitted `credential_ref` or `***` preserves the stored credential, an empty string clears it, and any other non-empty value replaces it.
 
 Soft-disable can rebuild snapshot when active feed state changes.
 
@@ -490,7 +491,7 @@ Authenticated read. Operational alert actions require Operator/Admin through sto
 }
 ```
 
-`bot_token_ref` is a write-only Telegram bot token value. Responses return `bot_token_ref: "*****"` when a token is configured; sending `"*****"` or an empty value keeps the existing token.
+`bot_token_ref` is a write-only Telegram bot token value that Operator/Admin can set for the active tenant. Responses return `bot_token_ref: "*****"` when a token is configured; sending `"*****"` or an empty value keeps the existing token.
 
 `AlertInput` key fields:
 

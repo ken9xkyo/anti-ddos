@@ -47,9 +47,9 @@ Ngoai pham vi increment nay:
 | Persona | Muc tieu | Quyen UI/API |
 |---|---|---|
 | Viewer | Theo doi tinh trang trong active tenant | Chi doc; khong hien nut create/edit/disable/sync/test/rollback |
-| Operator | Truc van hanh va thay doi policy runtime trong active tenant | Service, rule, whitelist, feed operational actions, snapshot rollback, alert test/runbook; khong quan ly members, khong doi credentials |
-| Admin | Quan tri tenant access va secrets trong active tenant | Bao gom Operator; them member management, password reset, session revoke, Telegram config, feed `credential_ref` |
-| Platform Admin | Quan tri tenants | Thay duoc tenants, switch tenant, create/update tenants qua API; effective admin khi vao tenant |
+| Operator | Truc van hanh va thay doi policy runtime trong active tenant | Service, rule, whitelist, feed operational actions, snapshot rollback, Telegram config/test/runbook; tao/sua/reset/revoke viewer; khong quan ly operator/admin va khong doi feed credentials |
+| Admin | Quan tri tenant access va secrets trong active tenant | Bao gom Operator; them full member management, password reset, session revoke va feed `credential_ref` |
+| Platform Admin | Quan tri tenants | Thay duoc tenants, switch tenant, create/update tenants qua API/UI; effective admin khi vao tenant |
 
 Nguyen tac:
 
@@ -262,12 +262,23 @@ Hien thi:
 Actions:
 
 - Tenant Admin create global user identity neu can va grant membership vao active tenant voi role ban dau.
-- Tenant Admin PATCH membership role/status va user `force_password_change`.
-- Admin reset password bang `/v1/users/{id}/password-reset`.
-- Admin revoke active-tenant sessions bang `/v1/users/{id}/sessions/revoke`.
+- Operator create/reactivate viewer va PATCH viewer status/force_password_change trong active tenant; role field bi co dinh viewer.
+- Tenant Admin PATCH bat ky membership role/status va user `force_password_change`.
+- Operator/Admin reset password bang `/v1/users/{id}/password-reset`; Operator chi target viewer.
+- Operator/Admin revoke active-tenant sessions bang `/v1/users/{id}/sessions/revoke`; Operator chi target viewer.
 - Backend co `/v1/me/password` de user doi password va clear `force_password_change`; dedicated self-service UI la backlog nho neu can expose trong topbar/profile.
 
-### 6.12 Nodes
+### 6.12 Tenants
+
+Hien thi cho `platform_admin`:
+
+- Tenant list tu `/v1/tenants?include_revoked=true`.
+- Columns: slug, name, status, effective role, created_at, updated_at.
+- Create tenant voi slug/name/status.
+- Update tenant name/status.
+- Accounts action switch sang tenant active va mo tab Accounts de tao operator/viewer trong tenant do.
+
+### 6.13 Nodes
 
 Hien thi:
 
@@ -276,7 +287,7 @@ Hien thi:
 - Interfaces: name, role, ifindex, MAC, link speed.
 - Map utilization neu agent report.
 
-### 6.13 Events
+### 6.14 Events
 
 Hien thi:
 
@@ -291,18 +302,18 @@ Admin Console vNext uses tenant-scoped auth/session state and feature-specific m
 | Domain | Method/path | Role | Semantics |
 |---|---|---|---|
 | Auth | `POST /v1/auth/login` | Public | Dang nhap user, optional `tenant_slug` |
-| Tenants | `GET /v1/tenants` | Authenticated | List tenant access cua actor |
+| Tenants | `GET /v1/tenants` | Authenticated | List active tenant access; Platform Admin can include revoked for management |
 | Tenants | `POST /v1/tenants` | Platform Admin | Create tenant |
 | Tenants | `PATCH /v1/tenants/{id}` | Platform Admin | Update tenant name/status |
 | Tenants | `POST /v1/tenants/switch` | Authenticated | Switch active tenant trong session |
 | Me | `GET /v1/me` | Authenticated | Lay current user |
 | Me | `POST /v1/me/password` | Authenticated | Doi password, clear force change, revoke sessions khac |
 | Users | `GET /v1/users` | Authenticated | List active-tenant members |
-| Users | `POST /v1/users` | Tenant Admin | Create identity if needed and grant active-tenant membership |
-| Users | `PATCH /v1/users/{id}` | Tenant Admin | Update membership role/status and force_password_change |
-| Users | `DELETE /v1/users/{id}` | Tenant Admin | Revoke active-tenant membership |
-| Users | `POST /v1/users/{id}/password-reset` | Tenant Admin | Reset password, revoke active-tenant sessions |
-| Users | `POST /v1/users/{id}/sessions/revoke` | Tenant Admin | Revoke active-tenant sessions |
+| Users | `POST /v1/users` | Admin; Operator for viewer | Create identity if needed and grant active-tenant membership |
+| Users | `PATCH /v1/users/{id}` | Admin; Operator for viewer | Update membership role/status and force_password_change |
+| Users | `DELETE /v1/users/{id}` | Admin; Operator for viewer | Revoke active-tenant membership |
+| Users | `POST /v1/users/{id}/password-reset` | Admin; Operator for viewer | Reset password, revoke active-tenant sessions |
+| Users | `POST /v1/users/{id}/sessions/revoke` | Admin; Operator for viewer | Revoke active-tenant sessions |
 | Rules | `GET /v1/rules` | Authenticated | List rules |
 | Rules | `POST /v1/rules` | Operator/Admin | Create rule, rebuild snapshot |
 | Rules | `PATCH /v1/rules/{id}` | Operator/Admin | Update rule, rebuild snapshot |
