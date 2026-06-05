@@ -67,7 +67,12 @@ type conflictMatch struct {
 }
 
 func (s *Store) SyncDueFeeds(ctx context.Context) (int, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text FROM feed_sources
+	tx, err := s.beginContextOrPlatformTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, tenant_id::text FROM feed_sources
 WHERE enabled
   AND (next_run_at IS NULL OR next_run_at <= now())
 ORDER BY COALESCE(next_run_at, now()), name`)
@@ -75,24 +80,32 @@ ORDER BY COALESCE(next_run_at, now()), name`)
 		return 0, err
 	}
 	defer rows.Close()
-	var ids []string
+	type dueFeed struct {
+		id       string
+		tenantID string
+	}
+	var feeds []dueFeed
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var feed dueFeed
+		if err := rows.Scan(&feed.id, &feed.tenantID); err != nil {
 			return 0, err
 		}
-		ids = append(ids, id)
+		feeds = append(feeds, feed)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
 	var joined error
-	for _, id := range ids {
-		if _, err := s.SyncFeedSource(ctx, id, nil, "scheduled feed sync"); err != nil {
+	for _, feed := range feeds {
+		feedCtx := contextWithTenant(ctx, feed.tenantID)
+		if _, err := s.SyncFeedSource(feedCtx, feed.id, nil, "scheduled feed sync"); err != nil {
 			joined = errors.Join(joined, err)
 		}
 	}
-	return len(ids), joined
+	return len(feeds), joined
 }
 
 func (s *Store) SyncFeedSource(ctx context.Context, sourceID string, actor *Actor, reason string) (FeedRun, error) {
@@ -106,6 +119,17 @@ func (s *Store) SyncFeedSource(ctx context.Context, sourceID string, actor *Acto
 	}
 	defer lock.Unlock()
 
+	if tenantIDFromContext(ctx) == "" {
+		if tenantIDFromActor := actorTenantID(actor); tenantIDFromActor != "" {
+			ctx = contextWithTenant(ctx, tenantIDFromActor)
+		} else {
+			var err error
+			ctx, err = s.tenantContextForFeedSource(ctx, sourceID)
+			if err != nil {
+				return FeedRun{}, err
+			}
+		}
+	}
 	source, err := s.GetFeedSource(ctx, sourceID)
 	if err != nil {
 		return FeedRun{}, err
@@ -408,7 +432,7 @@ func aggregateFeedEntries(entries []normalizedFeedEntry, whitelist []feedWhiteli
 }
 
 func (s *Store) replaceFeedEntries(ctx context.Context, source FeedSource, entries []normalizedFeedEntry, whitelist []feedWhitelist, actor *Actor, reason string) (uint32, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginContextTenantTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -438,8 +462,8 @@ func (s *Store) replaceFeedEntries(ctx context.Context, source FeedSource, entri
 			return 0, err
 		}
 		var reputationID string
-		err = tx.QueryRow(ctx, `INSERT INTO reputation_entries(id, source_id, ip_or_cidr, score, action, reason, ttl_seconds, expires_at, status, metadata)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		err = tx.QueryRow(ctx, `INSERT INTO reputation_entries(id, tenant_id, source_id, ip_or_cidr, score, action, reason, ttl_seconds, expires_at, status, metadata)
+VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (source_id, ip_or_cidr, action, score, ttl_seconds) DO UPDATE SET
     reason=EXCLUDED.reason,
     expires_at=EXCLUDED.expires_at,
@@ -457,8 +481,8 @@ RETURNING id::text`,
 			if err != nil {
 				return 0, err
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO feed_conflicts(id, source_id, reputation_id, whitelist_id, status)
-VALUES ($1,$2,$3,$4,'active')
+			if _, err := tx.Exec(ctx, `INSERT INTO feed_conflicts(id, tenant_id, source_id, reputation_id, whitelist_id, status)
+VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,'active')
 ON CONFLICT (reputation_id, whitelist_id) DO UPDATE SET status='active', resolved_at=NULL, detected_at=now()`,
 				conflictID, source.ID, reputationID, match.WhitelistID,
 			); err != nil {
@@ -491,12 +515,23 @@ func (s *Store) startFeedRun(ctx context.Context, sourceID string) (FeedRun, err
 		return FeedRun{}, err
 	}
 	var run FeedRun
-	err = s.pool.QueryRow(ctx, `INSERT INTO feed_runs(id, source_id, status)
-VALUES ($1,$2,'running')
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return FeedRun{}, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `INSERT INTO feed_runs(id, tenant_id, source_id, status)
+VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,'running')
 RETURNING id::text, source_id::text, started_at, finished_at, status, items_fetched, items_valid, parse_errors, error, snapshot_version`,
 		id, sourceID,
 	).Scan(&run.ID, &run.SourceID, &run.StartedAt, &run.FinishedAt, &run.Status, &run.ItemsFetched, &run.ItemsValid, &run.ParseErrors, &run.Error, &run.SnapshotVersion)
-	return run, err
+	if err != nil {
+		return FeedRun{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FeedRun{}, err
+	}
+	return run, nil
 }
 
 func (s *Store) finishFeedRun(ctx context.Context, source FeedSource, runID string, snapshotVersion *uint32, fetched, valid, parseErrors uint32, runErr error) (FeedRun, error) {
@@ -510,7 +545,7 @@ func (s *Store) finishFeedRun(ctx context.Context, source FeedSource, runID stri
 		status = "error"
 		errText = agentRedactedError(runErr)
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginContextTenantTx(ctx)
 	if err != nil {
 		return FeedRun{}, err
 	}
@@ -566,9 +601,20 @@ WHERE id=$1`, source.ID, feedStatusHealthy, parseErrors, nextRun)
 }
 
 func (s *Store) GetFeedSource(ctx context.Context, id string) (FeedSource, error) {
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return FeedSource{}, err
+	}
+	defer tx.Rollback(ctx)
 	var source FeedSource
-	err := scanFeedSource(s.pool.QueryRow(ctx, feedSourceSelectSQL()+` WHERE id=$1`, strings.TrimSpace(id)), &source)
-	return source, err
+	err = scanFeedSource(tx.QueryRow(ctx, feedSourceSelectSQL()+` WHERE id=$1`, strings.TrimSpace(id)), &source)
+	if err != nil {
+		return FeedSource{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return FeedSource{}, err
+	}
+	return source, nil
 }
 
 func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, input FeedSourceInput, reason string) (FeedSource, error) {
@@ -580,6 +626,9 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 	}
 	if err := validateFeedSourceInput(input); err != nil {
 		return FeedSource{}, err
+	}
+	if tenantID := actorTenantID(actor); tenantID != "" {
+		ctx = contextWithTenant(ctx, tenantID)
 	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
@@ -599,7 +648,7 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 		interval = before.IntervalSeconds
 	}
 	nextRun := time.Now().UTC().Add(time.Duration(effectiveFeedIntervalSeconds(FeedSource{Type: input.Type, IntervalSeconds: interval})) * time.Second)
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -641,7 +690,12 @@ func (s *Store) ListFeedRuns(ctx context.Context, limit int) ([]FeedRun, error) 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `SELECT r.id::text, r.source_id::text, fs.name, r.started_at, r.finished_at, r.status,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT r.id::text, r.source_id::text, fs.name, r.started_at, r.finished_at, r.status,
        r.items_fetched, r.items_valid, r.parse_errors, r.error, r.snapshot_version
 FROM feed_runs r
 JOIN feed_sources fs ON fs.id = r.source_id
@@ -659,11 +713,19 @@ LIMIT $1`, limit)
 		}
 		out = append(out, run)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) ListFeedConflicts(ctx context.Context) ([]FeedConflict, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id::text, c.source_id::text, fs.name, c.reputation_id::text, c.whitelist_id::text,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT c.id::text, c.source_id::text, fs.name, c.reputation_id::text, c.whitelist_id::text,
        r.ip_or_cidr::text, w.ip_or_cidr::text, c.status, c.detected_at
 FROM feed_conflicts c
 JOIN feed_sources fs ON fs.id = c.source_id
@@ -683,11 +745,19 @@ ORDER BY c.detected_at DESC`)
 		}
 		out = append(out, conflict)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) loadFeedWhitelist(ctx context.Context) ([]feedWhitelist, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, ip_or_cidr::text FROM whitelist_entries
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, ip_or_cidr::text FROM whitelist_entries
 WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 	if err != nil {
 		return nil, err
@@ -707,7 +777,10 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 		item.Prefix = prefix
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func matchingWhitelists(prefix netip.Prefix, whitelist []feedWhitelist) []conflictMatch {

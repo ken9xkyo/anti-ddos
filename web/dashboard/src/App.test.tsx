@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { DashboardShell, type Tab } from './App';
-import { dashboardFixture, operatorUser, viewerUser } from './test/fixtures';
+import { dashboardFixture, defaultTenant, operatorUser, viewerUser } from './test/fixtures';
 import type { DashboardData, User } from './types';
 
 const data = dashboardFixture();
@@ -22,6 +22,7 @@ function renderShellWithData(user: User, dashboardData: DashboardData, activeTab
       error=""
       lastRefresh={new Date().toISOString()}
       onRefresh={vi.fn()}
+      onTenantSwitch={vi.fn()}
       onLogout={vi.fn()}
     />
   );
@@ -56,6 +57,35 @@ describe('DashboardShell', () => {
     for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Reputation', 'Snapshots', 'Accounts', 'Nodes']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
+  });
+
+  it('switches active tenant from the topbar', async () => {
+    const onTenantSwitch = vi.fn();
+    render(
+      <DashboardShell
+        user={{
+          ...operatorUser,
+          active_tenant: defaultTenant,
+          tenants: [
+            { tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'operator', status: 'active' },
+            { tenant_id: 'tenant-b', slug: 'tenant-b', name: 'Tenant B', role: 'admin', status: 'active' }
+          ]
+        }}
+        data={data}
+        activeTab="overview"
+        setActiveTab={vi.fn()}
+        loading={false}
+        error=""
+        lastRefresh={new Date().toISOString()}
+        onRefresh={vi.fn()}
+        onTenantSwitch={onTenantSwitch}
+        onLogout={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('tenant'), { target: { value: 'tenant-b' } });
+
+    await waitFor(() => expect(onTenantSwitch).toHaveBeenCalledWith('tenant-b'));
   });
 
   it('keeps viewer read-only', () => {
@@ -139,6 +169,7 @@ describe('DashboardShell', () => {
         error="dashboard unavailable"
         lastRefresh=""
         onRefresh={vi.fn()}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -248,6 +279,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -317,6 +349,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -373,6 +406,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -425,6 +459,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -479,6 +514,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );
@@ -873,6 +909,7 @@ describe('DashboardShell', () => {
         error=""
         lastRefresh={new Date().toISOString()}
         onRefresh={onRefresh}
+        onTenantSwitch={vi.fn()}
         onLogout={vi.fn()}
       />
     );

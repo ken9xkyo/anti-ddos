@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
+  Building2,
   Clock,
   LogOut,
   RefreshCw,
@@ -32,6 +33,7 @@ export function DashboardShell({
   error,
   lastRefresh,
   onRefresh,
+  onTenantSwitch,
   onLogout
 }: {
   user: User;
@@ -42,13 +44,27 @@ export function DashboardShell({
   error: string;
   lastRefresh: string;
   onRefresh: () => void | Promise<void>;
+  onTenantSwitch?: (tenantID: string) => void | Promise<void>;
   onLogout: () => void;
 }) {
+  const [switchingTenant, setSwitchingTenant] = useState(false);
   const canMutate = user.role === 'admin' || user.role === 'operator';
+  const tenants = user.tenants ?? [];
+  const activeTenantID = user.active_tenant?.id ?? tenants[0]?.tenant_id ?? '';
   const stale = useMemo(() => {
     if (!lastRefresh) return true;
     return Date.now() - new Date(lastRefresh).getTime() > 6000;
   }, [lastRefresh]);
+
+  const switchTenant = async (tenantID: string) => {
+    if (!tenantID || tenantID === activeTenantID || !onTenantSwitch) return;
+    try {
+      setSwitchingTenant(true);
+      await onTenantSwitch(tenantID);
+    } finally {
+      setSwitchingTenant(false);
+    }
+  };
 
   return (
     <main className="app-shell">
@@ -93,7 +109,24 @@ export function DashboardShell({
             <h1>{tabLabel(activeTab)}</h1>
           </div>
           <div className="topbar-actions">
-            <span className="user-chip">{user.username} · {user.role}</span>
+            {tenants.length > 0 ? (
+              <label className="tenant-select">
+                <Building2 size={14} />
+                <select
+                  aria-label="tenant"
+                  value={activeTenantID}
+                  onChange={(event) => switchTenant(event.target.value)}
+                  disabled={switchingTenant || loading || !onTenantSwitch}
+                >
+                  {tenants.map((tenant) => (
+                    <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                      {tenant.name || tenant.slug} · {tenant.role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <span className="user-chip">{user.username} · {user.role}{user.platform_role ? ` · ${user.platform_role}` : ''}</span>
             <FreshnessPill stale={stale} text={lastRefresh ? formatTime(lastRefresh) : 'pending'} />
             <button type="button" className="icon-action" aria-label="refresh" onClick={onRefresh} disabled={loading}>
               <RefreshCw size={16} className={loading ? 'spin' : ''} />

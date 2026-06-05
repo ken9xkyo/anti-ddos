@@ -27,6 +27,9 @@ import type {
   SnapshotMetadata,
   TelegramConfig,
   TelegramConfigInput,
+  Tenant,
+  TenantAccess,
+  TenantInput,
   UDPSourcePortBlock,
   UDPSourcePortBlockFilters,
   UDPSourcePortBlockInput,
@@ -50,10 +53,14 @@ export class ApiClient {
     localStorage.removeItem('anti_ddos_token');
   }
 
-  async login(username: string, password: string): Promise<Session> {
+  async login(username: string, password: string, tenantSlug?: string): Promise<Session> {
+    const body: { username: string; password: string; tenant_slug?: string } = { username, password };
+    if (tenantSlug?.trim()) {
+      body.tenant_slug = tenantSlug.trim();
+    }
     const session = await this.request<Session>('/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify(body)
     }, false);
     this.setToken(session.token);
     return session;
@@ -107,6 +114,33 @@ export class ApiClient {
 
   async users(): Promise<User[]> {
     return asArray(await this.request<User[] | null>('/v1/users'));
+  }
+
+  async tenants(): Promise<TenantAccess[]> {
+    return asArray(await this.request<TenantAccess[] | null>('/v1/tenants'));
+  }
+
+  async createTenant(input: TenantInput): Promise<Tenant> {
+    return this.request<Tenant>('/v1/tenants', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateTenant(id: string, input: TenantInput): Promise<Tenant> {
+    return this.request<Tenant>(`/v1/tenants/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async switchTenant(input: { tenant_id?: string; tenant_slug?: string }): Promise<Session> {
+    const session = await this.request<Session>('/v1/tenants/switch', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+    this.setToken(session.token);
+    return session;
   }
 
   async createUser(input: { reason: string; username: string; password: string; role: string }): Promise<User> {

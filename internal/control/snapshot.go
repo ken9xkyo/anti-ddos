@@ -22,7 +22,7 @@ func (s *Store) RebuildSnapshot(ctx context.Context, actor *Actor, reason string
 	if strings.TrimSpace(reason) == "" {
 		return nil, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +81,8 @@ func (s *Store) rebuildSnapshotInTx(ctx context.Context, tx pgx.Tx, actor *Actor
 	if rollbackFrom != nil {
 		rollbackValue = *rollbackFrom
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(version, checksum, object_checksum, snapshot, rollback_from, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)`,
+	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(tenant_id, version, checksum, object_checksum, snapshot, rollback_from, created_by)
+VALUES (NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $1, $2, $3, $4, $5, $6)`,
 		signed.Version,
 		signed.Checksum,
 		signed.ObjectChecksum,
@@ -119,7 +119,7 @@ func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersio
 	if strings.TrimSpace(reason) == "" {
 		return SnapshotMetadata{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return SnapshotMetadata{}, err
 	}
@@ -159,8 +159,8 @@ func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersio
 		actorID = actor.ID
 	}
 	rollbackFrom := latest.Version
-	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(version, checksum, object_checksum, snapshot, rollback_from, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.ObjectChecksum, raw, rollbackFrom, actorID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(tenant_id, version, checksum, object_checksum, snapshot, rollback_from, created_by)
+VALUES (NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.ObjectChecksum, raw, rollbackFrom, actorID); err != nil {
 		return SnapshotMetadata{}, err
 	}
 	meta := SnapshotMetadata{
@@ -180,7 +180,12 @@ VALUES ($1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.Object
 }
 
 func (s *Store) ListSnapshots(ctx context.Context, includeSnapshot bool) ([]SnapshotMetadata, error) {
-	rows, err := s.pool.Query(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
 FROM policy_snapshots ORDER BY version DESC`)
 	if err != nil {
 		return nil, err
@@ -194,19 +199,35 @@ FROM policy_snapshots ORDER BY version DESC`)
 		}
 		out = append(out, meta)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) LatestPolicyVersion(ctx context.Context) (uint32, error) {
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
 	var version uint32
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&version)
-	return version, err
+	err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&version)
+	if err != nil {
+		return 0, err
+	}
+	return version, tx.Commit(ctx)
 }
 
 func (s *Store) FetchSnapshot(ctx context.Context, activeVersion uint32) (*agent.PolicySnapshot, error) {
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 	var raw []byte
 	var version uint32
-	err := s.pool.QueryRow(ctx, `SELECT version, snapshot FROM policy_snapshots ORDER BY version DESC LIMIT 1`).Scan(&version, &raw)
+	err = tx.QueryRow(ctx, `SELECT version, snapshot FROM policy_snapshots ORDER BY version DESC LIMIT 1`).Scan(&version, &raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -220,7 +241,7 @@ func (s *Store) FetchSnapshot(ctx context.Context, activeVersion uint32) (*agent
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return nil, err
 	}
-	return &snapshot, nil
+	return &snapshot, tx.Commit(ctx)
 }
 
 func latestSnapshot(ctx context.Context, q dbQuerier) (*SnapshotMetadata, []byte, error) {

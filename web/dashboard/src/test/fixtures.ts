@@ -1,7 +1,27 @@
 import type { DashboardData, User } from '../types';
 
-export const viewerUser: User = { id: 'u1', username: 'viewer', role: 'viewer' };
-export const operatorUser: User = { id: 'u2', username: 'operator', role: 'operator' };
+export const defaultTenant = {
+  id: '00000000-0000-4000-8000-000000001000',
+  slug: 'default',
+  name: 'Default Tenant',
+  status: 'active'
+};
+
+export const viewerUser: User = {
+  id: 'u1',
+  username: 'viewer',
+  role: 'viewer',
+  active_tenant: defaultTenant,
+  tenants: [{ tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'viewer', status: 'active' }]
+};
+
+export const operatorUser: User = {
+  id: 'u2',
+  username: 'operator',
+  role: 'operator',
+  active_tenant: defaultTenant,
+  tenants: [{ tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'operator', status: 'active' }]
+};
 
 export function dashboardFixture(): DashboardData {
   const now = new Date('2026-05-28T11:00:00Z').toISOString();

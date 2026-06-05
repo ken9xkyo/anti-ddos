@@ -11,14 +11,14 @@ import (
 )
 
 func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input UserUpdateInput, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
+	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
 		return User{}, errors.New("admin role required")
 	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return User{}, err
 	}
@@ -42,16 +42,22 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if err := validateUserRoleStatus(role, status); err != nil {
 		return User{}, err
 	}
-	if err := ensureActiveAdminRemains(ctx, tx, before, role, status); err != nil {
+	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, role, status); err != nil {
 		return User{}, err
 	}
 	var after User
-	if err := tx.QueryRow(ctx, `UPDATE app_users
-SET role=$2, status=$3, force_password_change=$4, updated_at=now()
-WHERE id=$1
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
-		id, role, status, forcePasswordChange,
-	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE tenant_memberships
+SET role=$3, status=$4, updated_at=now()
+WHERE tenant_id=$1 AND user_id=$2`, actor.TenantID, id, role, status); err != nil {
+		return User{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE app_users
+SET force_password_change=$2, updated_at=now()
+WHERE id=$1`, id, forcePasswordChange); err != nil {
+		return User{}, err
+	}
+	after, err = s.getUser(ctx, tx, id)
+	if err != nil {
 		return User{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "update_user", "user", id, before, after, reason, ""); err != nil {
@@ -61,7 +67,7 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 }
 
 func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, input PasswordResetInput, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
+	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
 		return User{}, errors.New("admin role required")
 	}
 	reason = mutationReason(reason, input.Reason)
@@ -79,7 +85,7 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return User{}, err
 	}
@@ -92,12 +98,16 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	if err := tx.QueryRow(ctx, `UPDATE app_users
 SET password_hash=$2, force_password_change=$3, updated_at=now()
 WHERE id=$1
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
+RETURNING id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at`,
 		id, string(hash), forcePasswordChange,
-	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+	).Scan(&after.ID, &after.Username, &after.Role, &after.PlatformRole, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {
+		return User{}, err
+	}
+	after, err = s.getUser(ctx, tx, id)
+	if err != nil {
 		return User{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "reset_user_password", "user", id, before, after, reason, ""); err != nil {
@@ -107,13 +117,13 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 }
 
 func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
+	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
 		return User{}, errors.New("admin role required")
 	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return User{}, err
 	}
@@ -122,7 +132,7 @@ func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason
 	if err != nil {
 		return User{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {
 		return User{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "revoke_user_sessions", "user", id, user, user, strings.TrimSpace(reason), ""); err != nil {
@@ -153,7 +163,7 @@ func (s *Store) ChangeOwnPassword(ctx context.Context, actor *Actor, input OwnPa
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return User{}, err
 	}
@@ -166,9 +176,9 @@ func (s *Store) ChangeOwnPassword(ctx context.Context, actor *Actor, input OwnPa
 	if err := tx.QueryRow(ctx, `UPDATE app_users
 SET password_hash=$2, force_password_change=false, updated_at=now()
 WHERE id=$1
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
+RETURNING id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at`,
 		actor.ID, string(hash),
-	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+	).Scan(&after.ID, &after.Username, &after.Role, &after.PlatformRole, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
 	tokenHash := hashToken(currentToken)
@@ -196,7 +206,7 @@ func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input R
 	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
 		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -263,7 +273,7 @@ func (s *Store) DisableRule(ctx context.Context, actor *Actor, id, reason string
 	if strings.TrimSpace(reason) == "" {
 		return Rule{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -300,7 +310,7 @@ func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -354,7 +364,7 @@ func (s *Store) DisableWhitelistEntry(ctx context.Context, actor *Actor, id, rea
 	if strings.TrimSpace(reason) == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -390,7 +400,7 @@ func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -442,7 +452,7 @@ func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, rea
 	if strings.TrimSpace(reason) == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -477,7 +487,7 @@ func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id s
 	if reason == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
@@ -522,7 +532,7 @@ func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id,
 	if strings.TrimSpace(reason) == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
@@ -553,7 +563,7 @@ func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason 
 	if strings.TrimSpace(reason) == "" {
 		return FeedSource{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -592,12 +602,14 @@ func validateUserRoleStatus(role, status string) error {
 	return nil
 }
 
-func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, before User, role, status string) error {
+func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, _ string, before User, role, status string) error {
 	if before.Role != RoleAdmin || (role == RoleAdmin && status == StatusActive) {
 		return nil
 	}
 	var remaining int
-	if err := q.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM tenant_memberships
+WHERE tenant_id = NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid
+  AND user_id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
 		return err
 	}
 	if remaining == 0 {

@@ -36,6 +36,7 @@ export function AccessView({ currentUser }: { currentUser: User }) {
   const [revokeTarget, setRevokeTarget] = useState<User | null>(null);
   const [reason, setReason] = useState('revoke user sessions');
   const isAdmin = currentUser.role === 'admin';
+  const activeTenantName = currentUser.active_tenant?.name || currentUser.active_tenant?.slug || 'active tenant';
 
   const load = async () => {
     try {
@@ -163,14 +164,14 @@ export function AccessView({ currentUser }: { currentUser: User }) {
       <section className="wide-panel">
         <PanelHeader
           icon={<Users size={18} />}
-          title="User Management"
-          eyebrow="local RBAC"
+          title="Tenant Access"
+          eyebrow={`tenant RBAC · ${activeTenantName}`}
           actions={isAdmin ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add user</button> : null}
         />
         <InlineResult result={result} />
       </section>
 
-      <AdminGrid rows={users} columns={columns} loading={loading} emptyText="No local users" height={520} />
+      <AdminGrid rows={users} columns={columns} loading={loading} emptyText="No tenant members" height={520} />
 
       <AdminDrawer
         open={mode !== ''}

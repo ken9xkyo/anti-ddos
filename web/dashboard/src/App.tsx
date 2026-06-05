@@ -46,6 +46,21 @@ export default function App() {
     };
   }, [loadDashboard, user]);
 
+  const switchTenant = async (tenantID: string) => {
+    try {
+      setLoading(true);
+      const session = await api.switchTenant({ tenant_id: tenantID });
+      setUser(session.user);
+      setData(null);
+      setLastRefresh('');
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'tenant switch failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!user) {
     return (
       <ThemeProvider theme={opsTheme}>
@@ -67,6 +82,7 @@ export default function App() {
         error={error}
         lastRefresh={lastRefresh}
         onRefresh={loadDashboard}
+        onTenantSwitch={switchTenant}
         onLogout={() => {
           api.clearToken();
           setUser(null);

@@ -1,55 +1,90 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','entityTextColor':'#000000','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#000000','relationshipLabelColor':'#000000'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#172033','primaryBorderColor':'#94a3b8','lineColor':'#94a3b8','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#172033','edgeLabelBackground':'#ffffff','textColor':'#172033','entityTextColor':'#172033','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#172033','relationshipLabelColor':'#334155'}}}%%
 erDiagram
-    APP_USERS ||--|| POLICY_SNAPSHOTS : "tạo"
-    APP_USERS ||--|| AUDIT_EVENTS : "thực hiện"
-    APP_USERS ||--|| ALERTS : "tạo"
-    AGENTS ||--|| AGENT_INTERFACES : "báo cáo"
-    AGENTS ||--|| POLICY_APPLY_STATUS : "báo cáo"
-    AGENTS ||--|| SECURITY_EVENTS : "gửi"
-    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : "có"
-    BACKEND_SERVICES ||--|| RULES : "scope"
-    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : "scope"
-    BACKEND_SERVICES ||--|| ALERTS : "ảnh hưởng"
-    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : "giải thích"
-    FEED_SOURCES ||--|| REPUTATION_ENTRIES : "import"
+    TENANTS ||--o{ TENANT_MEMBERSHIPS : grants
+    APP_USERS ||--o{ TENANT_MEMBERSHIPS : joins
+    APP_USERS ||--o{ USER_SESSIONS : owns
+    TENANTS ||--o{ USER_SESSIONS : active
+    TENANTS ||--o{ AGENTS : isolates
+    TENANTS ||--o{ BACKEND_SERVICES : isolates
+    TENANTS ||--o{ FEED_SOURCES : isolates
+    TENANTS ||--o{ POLICY_SNAPSHOTS : versions
+    TENANTS ||--o{ SECURITY_EVENTS : samples
+    TENANTS ||--o{ ALERTS : raises
+    TENANTS ||--o{ AUDIT_EVENTS : records
+    AGENTS ||--o{ AGENT_INTERFACES : reports
+    AGENTS ||--o{ POLICY_APPLY_STATUS : reports
+    AGENTS ||--o{ SECURITY_EVENTS : sends
+    BACKEND_SERVICES ||--o{ FORWARDING_POLICIES : routes
+    BACKEND_SERVICES ||--o{ RULES : scopes
+    BACKEND_SERVICES ||--o{ WHITELIST_ENTRIES : scopes
+    BACKEND_SERVICES ||--o{ BASELINE_PROFILES : calibrates
+    RULES ||--o{ MANUAL_BLACKLIST_ENTRIES : explains
+    FEED_SOURCES ||--o{ REPUTATION_ENTRIES : imports
+    REPUTATION_ENTRIES ||--o{ FEED_CONFLICTS : conflicts
+    WHITELIST_ENTRIES ||--o{ FEED_CONFLICTS : suppresses
+    APP_USERS ||--o{ POLICY_SNAPSHOTS : creates
+    APP_USERS ||--o{ AUDIT_EVENTS : acts
 
-    APP_USERS {
+    TENANTS {
         uuid id PK
-        text username UK
-        text role
+        text slug UK
+        text name
         text status
         timestamptz created_at
     }
+    APP_USERS {
+        uuid id PK
+        text username UK
+        text role "legacy source"
+        text platform_role
+        text status
+    }
+    TENANT_MEMBERSHIPS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid user_id FK
+        text role
+        text status
+    }
+    USER_SESSIONS {
+        uuid id PK
+        uuid user_id FK
+        uuid active_tenant_id FK
+        text token_hash UK
+        timestamptz expires_at
+    }
     AGENTS {
         uuid id PK
-        text hostname UK
+        uuid tenant_id FK
+        text hostname "UK per tenant"
         text status
         bigint active_policy_version
-        timestamptz last_seen_at
     }
     AGENT_INTERFACES {
         uuid id PK
+        uuid tenant_id FK
         uuid agent_id FK
         text name
         integer ifindex
-        text mac
     }
     BACKEND_SERVICES {
         uuid id PK
+        uuid tenant_id FK
         bigint ebpf_id UK
+        text name "UK per tenant"
         inet backend_cidr
-        text protocol
         boolean enabled
     }
     FORWARDING_POLICIES {
         uuid id PK
+        uuid tenant_id FK
         uuid service_id FK
         inet backend_target
         text output_interface
-        integer devmap_key
     }
     RULES {
         uuid id PK
+        uuid tenant_id FK
         uuid service_id FK
         bigint ebpf_id UK
         text action
@@ -57,55 +92,71 @@ erDiagram
     }
     WHITELIST_ENTRIES {
         uuid id PK
+        uuid tenant_id FK
         uuid service_id FK
         inet ip_or_cidr
         text scope
-        boolean enabled
     }
     MANUAL_BLACKLIST_ENTRIES {
         uuid id PK
+        uuid tenant_id FK
         uuid rule_id FK
         inet ip_or_cidr
-        integer score
         boolean enabled
     }
     FEED_SOURCES {
         uuid id PK
-        text name UK
+        uuid tenant_id FK
+        text name "UK per tenant"
         text status
         boolean enabled
-        integer interval_seconds
     }
     REPUTATION_ENTRIES {
         uuid id PK
+        uuid tenant_id FK
         uuid source_id FK
         inet ip_or_cidr
-        integer score
         text status
     }
+    FEED_CONFLICTS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid source_id FK
+        uuid reputation_id FK
+        uuid whitelist_id FK
+    }
     POLICY_SNAPSHOTS {
+        uuid tenant_id PK
         bigint version PK
         text checksum
         text object_checksum
-        bigint rollback_from FK
         uuid created_by FK
     }
     POLICY_APPLY_STATUS {
         uuid id PK
+        uuid tenant_id FK
         uuid agent_id FK
         bigint policy_version
         text status
-        text error_stage
     }
     SECURITY_EVENTS {
         uuid id PK
+        uuid tenant_id FK
         uuid agent_id FK
         bigint policy_version
         inet src_ip
         integer action
     }
+    BASELINE_PROFILES {
+        uuid id PK
+        uuid tenant_id FK
+        uuid service_id FK
+        text time_window
+        boolean approved
+    }
     ALERTS {
         uuid id PK
+        uuid tenant_id FK
         uuid service_id FK
         uuid created_by FK
         text severity
@@ -113,8 +164,8 @@ erDiagram
     }
     AUDIT_EVENTS {
         uuid id PK
+        uuid tenant_id FK
         uuid actor_id FK
         text action
         text entity_type
-        timestamptz created_at
     }

@@ -57,6 +57,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/v1/me", s.handleMe)
 	s.mux.HandleFunc("/v1/me/password", s.handleMePassword)
+	s.mux.HandleFunc("/v1/tenants/switch", s.handleTenantSwitch)
+	s.mux.HandleFunc("/v1/tenants", s.handleTenants)
+	s.mux.HandleFunc("/v1/tenants/", s.handleTenantByID)
 	s.mux.HandleFunc("/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/v1/users/", s.handleUserByID)
 	s.mux.HandleFunc("/v1/services", s.handleServices)
@@ -123,13 +126,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		TenantSlug string `json:"tenant_slug,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	session, err := s.store.Authenticate(r.Context(), req.Username, req.Password, s.cfg.SessionTTL)
+	session, err := s.store.AuthenticateForTenant(r.Context(), req.Username, req.Password, req.TenantSlug, s.cfg.SessionTTL)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
@@ -185,6 +189,66 @@ func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.store.ChangeOwnPassword(r.Context(), actor, req, bearerTokenOrCookie(r))
 	writeResult(w, user, err)
+}
+
+func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		tenants, err := s.store.ListTenants(r.Context(), actor)
+		writeResult(w, tenants, err)
+	case http.MethodPost:
+		var req TenantInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		tenant, err := s.store.CreateTenant(r.Context(), actor, req)
+		writeResult(w, tenant, err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleTenantByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/tenants/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, errors.New("tenant not found"))
+		return
+	}
+	if r.Method != http.MethodPatch {
+		methodNotAllowed(w)
+		return
+	}
+	var req TenantInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	tenant, err := s.store.UpdateTenant(r.Context(), actor, id, req)
+	writeResult(w, tenant, err)
+}
+
+func (s *Server) handleTenantSwitch(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var req TenantSwitchInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	session, err := s.store.SwitchTenant(r.Context(), actor, bearerTokenOrCookie(r), req)
+	writeResult(w, session, err)
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -805,7 +869,12 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	resp, err := s.store.RegisterAgent(r.Context(), req)
+	tenantID, err := s.store.ResolveTenantID(r.Context(), r.Header.Get("X-Tenant-ID"), r.Header.Get("X-Tenant-Slug"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	resp, err := s.store.RegisterAgentForTenant(contextWithTenant(r.Context(), tenantID), tenantID, req)
 	writeResult(w, resp, err)
 }
 
@@ -820,6 +889,12 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, action := parts[0], parts[1]
+	tenantID, err := s.store.AgentTenantID(r.Context(), agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	ctx := contextWithTenant(r.Context(), tenantID)
 	switch action {
 	case "heartbeat":
 		if r.Method != http.MethodPost {
@@ -830,7 +905,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		resp, err := s.store.HeartbeatAgent(r.Context(), agentID, req)
+		resp, err := s.store.HeartbeatAgent(ctx, agentID, req)
 		writeResult(w, resp, err)
 	case "snapshot":
 		if r.Method != http.MethodGet {
@@ -838,7 +913,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		active, _ := strconv.ParseUint(r.URL.Query().Get("active_version"), 10, 32)
-		snapshot, err := s.store.FetchSnapshot(r.Context(), uint32(active))
+		snapshot, err := s.store.FetchSnapshot(ctx, uint32(active))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -857,7 +932,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		err := s.store.RecordAgentApply(r.Context(), agentID, req)
+		err := s.store.RecordAgentApply(ctx, agentID, req)
 		writeResult(w, map[string]bool{"ok": true}, err)
 	case "events":
 		if r.Method != http.MethodPost {
@@ -871,7 +946,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		result, err := s.store.IngestSecurityEvents(r.Context(), agentID, req, s.metrics)
+		result, err := s.store.IngestSecurityEvents(ctx, agentID, req, s.metrics)
 		writeResult(w, result, err)
 	default:
 		http.NotFound(w, r)
@@ -890,6 +965,7 @@ func (s *Server) requireActor(w http.ResponseWriter, r *http.Request) (*Actor, b
 		writeError(w, http.StatusUnauthorized, err)
 		return nil, false
 	}
+	*r = *r.WithContext(contextWithTenant(r.Context(), actor.TenantID))
 	return actor, true
 }
 

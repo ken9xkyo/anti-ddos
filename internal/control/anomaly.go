@@ -42,17 +42,23 @@ func (s *Store) CreateBaselineProfile(ctx context.Context, actor *Actor, input B
 		return BaselineProfile{}, err
 	}
 	evidence := defaultJSON(input.Evidence)
-	tx, err := s.pool.Begin(ctx)
+	if tenantID := actorTenantID(actor); tenantID != "" {
+		ctx = contextWithTenant(ctx, tenantID)
+	}
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := s.getService(ctx, tx, input.ServiceID); err != nil {
+		return BaselineProfile{}, err
+	}
 
 	var profile BaselineProfile
 	err = scanBaselineProfile(tx.QueryRow(ctx, `INSERT INTO baseline_profiles(
-    id, service_id, interface_name, protocol, port, time_window, expected_pps, expected_bps, expected_cps,
+    id, tenant_id, service_id, interface_name, protocol, port, time_window, expected_pps, expected_bps, expected_cps,
     history_hours, confidence, evidence
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, time_window, expected_pps,
           expected_bps, expected_cps, history_hours, confidence::float8, approved, status, evidence,
           created_at, updated_at, approved_at`,
@@ -82,7 +88,12 @@ RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, tim
 }
 
 func (s *Store) ListBaselineProfiles(ctx context.Context) ([]BaselineProfile, error) {
-	rows, err := s.pool.Query(ctx, `SELECT bp.id::text, bp.service_id::text, bs.ebpf_id, bs.name, bp.interface_name,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT bp.id::text, bp.service_id::text, bs.ebpf_id, bs.name, bp.interface_name,
        bp.protocol, bp.port, bp.time_window, bp.expected_pps, bp.expected_bps, bp.expected_cps,
        bp.history_hours, bp.confidence::float8, bp.approved, bp.status, bp.evidence,
        bp.created_at, bp.updated_at, bp.approved_at
@@ -101,7 +112,10 @@ ORDER BY bs.name, bp.time_window, bp.protocol, bp.port`)
 		}
 		out = append(out, profile)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) ApproveBaselineProfile(ctx context.Context, actor *Actor, id, reason string) (BaselineProfile, error) {
@@ -111,7 +125,10 @@ func (s *Store) ApproveBaselineProfile(ctx context.Context, actor *Actor, id, re
 	if strings.TrimSpace(reason) == "" {
 		return BaselineProfile{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	if tenantID := actorTenantID(actor); tenantID != "" {
+		ctx = contextWithTenant(ctx, tenantID)
+	}
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
@@ -147,7 +164,10 @@ func (s *Store) RecalibrateBaselineProfile(ctx context.Context, actor *Actor, id
 	if reason == "" {
 		return BaselineProfile{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	if tenantID := actorTenantID(actor); tenantID != "" {
+		ctx = contextWithTenant(ctx, tenantID)
+	}
+	tx, err := s.beginActorTenantTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
@@ -190,6 +210,23 @@ func (s *Store) EvaluateAnomalies(ctx context.Context, prom *PrometheusClient, r
 	if prom == nil || !prom.Configured() {
 		return nil, nil
 	}
+	if tenantIDFromContext(ctx) == "" {
+		tenantIDs, err := s.activeTenantIDs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]AnomalyEvaluation, 0)
+		var joined error
+		for _, tenantID := range tenantIDs {
+			evaluations, err := s.EvaluateAnomalies(contextWithTenant(ctx, tenantID), prom, reason)
+			if err != nil {
+				joined = errors.Join(joined, err)
+				continue
+			}
+			out = append(out, evaluations...)
+		}
+		return out, joined
+	}
 	services, err := s.ListServices(ctx)
 	if err != nil {
 		return nil, err
@@ -228,7 +265,12 @@ func (s *Store) ListAnomalies(ctx context.Context, limit int) ([]AnomalyEvaluati
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `SELECT ae.id::text, COALESCE(ae.service_id::text, ''), COALESCE(bs.ebpf_id, 0), COALESCE(bs.name, ''),
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT ae.id::text, COALESCE(ae.service_id::text, ''), COALESCE(bs.ebpf_id, 0), COALESCE(bs.name, ''),
        COALESCE(ae.baseline_id::text, ''), ae.evaluated_at, ae.time_window, ae.pps, ae.bps, ae.cps, ae.drop_ratio,
        ae.score::float8, ae.confidence::float8, ae.signals, ae.recommendation, ae.recommended_action,
        ae.proposed_ttl_seconds, COALESCE(ae.proposed_rule_id::text, ''), ae.auto_enforced, ae.status, ae.reason,
@@ -249,11 +291,30 @@ LIMIT $1`, limit)
 		}
 		out = append(out, eval)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
-	tx, err := s.pool.Begin(ctx)
+	if tenantIDFromContext(ctx) == "" {
+		tenantIDs, err := s.activeTenantIDs(ctx)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		var joined error
+		for _, tenantID := range tenantIDs {
+			count, err := s.ExpireTTLRules(contextWithTenant(ctx, tenantID))
+			total += count
+			if err != nil {
+				joined = errors.Join(joined, err)
+			}
+		}
+		return total, joined
+	}
+	tx, err := s.beginContextTenantTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -468,16 +529,20 @@ func (s *Store) CreateSystemRule(ctx context.Context, input RuleInput, reason st
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.pool.Begin(ctx)
+	ctx, err = s.tenantContextForService(ctx, strings.TrimSpace(input.ServiceID))
+	if err != nil {
+		return Rule{}, err
+	}
+	tx, err := s.beginContextTenantTx(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
 	var rule Rule
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
-    id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
+    id, tenant_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
     dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`,
@@ -499,7 +564,12 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 }
 
 func (s *Store) approvedBaselineForService(ctx context.Context, serviceID string) (*BaselineProfile, error) {
-	row := s.pool.QueryRow(ctx, `SELECT bp.id::text, bp.service_id::text, bs.ebpf_id, bs.name, bp.interface_name,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `SELECT bp.id::text, bp.service_id::text, bs.ebpf_id, bs.name, bp.interface_name,
        bp.protocol, bp.port, bp.time_window, bp.expected_pps, bp.expected_bps, bp.expected_cps,
        bp.history_hours, bp.confidence::float8, bp.approved, bp.status, bp.evidence,
        bp.created_at, bp.updated_at, bp.approved_at
@@ -513,6 +583,9 @@ LIMIT 1`, serviceID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &profile, nil
@@ -580,11 +653,16 @@ func (s *Store) insertAnomalyEvaluation(ctx context.Context, input AnomalyEvalua
 	if strings.TrimSpace(input.ProposedRuleID) != "" {
 		ruleID = input.ProposedRuleID
 	}
-	row := s.pool.QueryRow(ctx, `INSERT INTO anomaly_evaluations(
-    id, service_id, baseline_id, time_window, pps, bps, cps, drop_ratio, score, confidence, signals,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `INSERT INTO anomaly_evaluations(
+    id, tenant_id, service_id, baseline_id, time_window, pps, bps, cps, drop_ratio, score, confidence, signals,
     recommendation, recommended_action, proposed_ttl_seconds, proposed_rule_id, auto_enforced,
     status, reason, source, evidence
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id::text, COALESCE(service_id::text, ''), $21::bigint, $22::text, COALESCE(baseline_id::text, ''),
           evaluated_at, time_window, pps, bps, cps, drop_ratio, score::float8, confidence::float8, signals,
           recommendation, recommended_action, proposed_ttl_seconds, COALESCE(proposed_rule_id::text, ''),
@@ -594,7 +672,14 @@ RETURNING id::text, COALESCE(service_id::text, ''), $21::bigint, $22::text, COAL
 		input.RecommendedAction, input.ProposedTTLSeconds, ruleID, input.AutoEnforced, input.Status,
 		input.Reason, input.Source, defaultJSON(input.Evidence), input.ServiceEBPFID, input.ServiceName,
 	)
-	return scanAnomalyEvaluation(row)
+	eval, err := scanAnomalyEvaluation(row)
+	if err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AnomalyEvaluation{}, err
+	}
+	return eval, nil
 }
 
 func scanAnomalyEvaluation(row rowScanner) (AnomalyEvaluation, error) {
@@ -632,8 +717,13 @@ func scanAnomalyEvaluation(row rowScanner) (AnomalyEvaluation, error) {
 }
 
 func (s *Store) topEventSourceForService(ctx context.Context, serviceEBPFID uint32) (string, error) {
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
 	var source string
-	err := s.pool.QueryRow(ctx, `SELECT src_ip::text
+	err = tx.QueryRow(ctx, `SELECT src_ip::text
 FROM security_events
 WHERE service_id=$1 AND event_time > now() - interval '5 minutes'
 GROUP BY src_ip
@@ -642,11 +732,22 @@ LIMIT 1`, serviceEBPFID).Scan(&source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
-	return source, err
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return source, nil
 }
 
 func (s *Store) sourceWhitelistConflict(ctx context.Context, source, serviceID string) (bool, error) {
-	rows, err := s.pool.Query(ctx, `SELECT ip_or_cidr::text, scope, COALESCE(service_id::text, '')
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT ip_or_cidr::text, scope, COALESCE(service_id::text, '')
 FROM whitelist_entries
 WHERE enabled AND (expires_at IS NULL OR expires_at > now())
   AND (scope = 'global' OR service_id = $1)`, serviceID)
@@ -663,10 +764,14 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())
 			continue
 		}
 		if cidrMatches(source, cidr) {
+			rows.Close()
 			return true, nil
 		}
 	}
-	return false, rows.Err()
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, tx.Commit(ctx)
 }
 
 func validateBaselineProfileInput(input BaselineProfileInput) error {

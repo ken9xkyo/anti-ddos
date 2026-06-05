@@ -34,7 +34,7 @@ func resetControlTestDB(t *testing.T) (context.Context, *pgxpool.Pool, string) {
 	if err := RunMigrations(ctx, pool); err != nil {
 		t.Fatalf("idempotent migration run: %v", err)
 	}
-	return ctx, pool, dsn
+	return contextWithTenant(ctx, "00000000-0000-4000-8000-000000001000"), pool, dsn
 }
 
 func login(t *testing.T, baseURL, username, password string) string {
@@ -81,6 +81,7 @@ func agentJSON(t *testing.T, method, url, token string, body any) *testHTTPRespo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Tenant-Slug", "default")
 	return doTestHTTP(t, req)
 }
 

@@ -2,7 +2,7 @@
 
 Anti-DDoS Scrubbing Gateway là hệ thống lọc DDoS L3/L4 đặt trước các dịch vụ backend. Lưu lượng đi vào WAN NIC của scrubbing server được xử lý sớm bằng XDP/eBPF; chỉ lưu lượng hợp lệ theo allowlist của protected service mới được L2 MAC rewrite và chuyển tiếp bằng `XDP_REDIRECT` qua DEVMAP tới interface hướng backend.
 
-MVP này tập trung vào một node Ubuntu 24.04, IPv4, native XDP, policy snapshot an toàn, dashboard vận hành, Prometheus/Grafana và audit/RBAC. Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
+MVP này tập trung vào một node Ubuntu 24.04, IPv4, native XDP, policy snapshot an toàn, dashboard vận hành, Prometheus/Grafana, audit và Multi-Tenant RBAC. Control plane dùng shared database/shared schema với `tenant_id` trên dữ liệu nghiệp vụ và PostgreSQL RLS làm lớp cô lập defense-in-depth. Hệ thống không kết thúc TLS, không proxy HTTP, không xử lý L7/DPI và không thay thế WAF.
 
 ## Thành phần chính
 
@@ -11,8 +11,8 @@ MVP này tập trung vào một node Ubuntu 24.04, IPv4, native XDP, policy snap
 | Data Plane | XDP/eBPF, eBPF maps | Phân tích packet, drop/rate-limit/redirect, ghi bộ đếm và sự kiện lấy mẫu |
 | Forwarding Plane | L2 MAC rewrite, DEVMAP | Chỉ redirect lưu lượng sạch tới backend/service đã khai báo |
 | Node Plane | Node Agent | Load/attach/rollback XDP, đồng bộ policy snapshot, expose `/metrics` |
-| Control Plane | Control API, PostgreSQL | Quản lý người dùng, dịch vụ, policy, feed, snapshot, audit và rollback |
-| Management Plane | Admin Dashboard, Prometheus, Grafana | Hiển thị thời gian thực, metrics, điều tra event và dashboard vận hành |
+| Control Plane | Control API, PostgreSQL | Quản lý tenants, memberships, dịch vụ, policy, feed, snapshot, audit và rollback |
+| Management Plane | Admin Dashboard, Prometheus, Grafana | Hiển thị thời gian thực, tenant switcher, metrics, điều tra event và dashboard vận hành |
 
 ## Cảnh báo an toàn XDP/NIC
 
@@ -39,6 +39,8 @@ Khởi tạo Admin đầu tiên:
 make admin-bootstrap
 ```
 
+Lệnh bootstrap chạy migrations nếu cần, tạo tenant mặc định `default`, tạo user đầu tiên với `platform_role=platform_admin` và gán membership `admin` trong tenant `default`.
+
 Dùng trong lab không tương tác:
 
 ```bash
@@ -53,6 +55,18 @@ Mở các giao diện:
 - Grafana: `http://127.0.0.1:3000`
 
 Tài liệu chi tiết: [docs/deployment/docker-compose.md](docs/deployment/docker-compose.md).
+
+## Multi-Tenant RBAC Và Data Isolation
+
+Sau migration, các endpoint control-plane chạy trong active tenant của session:
+
+- `POST /v1/auth/login` nhận optional `tenant_slug`; response trả `active_tenant`, danh sách `tenants[]` và role effective trong tenant.
+- `platform_admin` có thể list/create/update tenants và switch tenant qua `/v1/tenants`.
+- `viewer`, `operator`, `admin` là role theo tenant membership; `app_users.role` chỉ còn là legacy migration source.
+- Dữ liệu policy, services, feeds, events, snapshots, agents, alerts và audit đều có `tenant_id`; PostgreSQL RLS yêu cầu app transaction set `anti_ddos.tenant_id`.
+- Tenant dashboard ưu tiên dữ liệu control-plane tenant-scoped. Global Prometheus traffic không được trộn vào dashboard tenant nếu metric chưa có tenant label.
+
+Tenant `default` chứa dữ liệu cũ sau migration để giữ compatibility cho đường dẫn API hiện có.
 
 ## Quy trình Dev/Test/Deploy
 
@@ -79,6 +93,11 @@ Một số kiểm thử tích hợp PostgreSQL sẽ tự dùng PostgreSQL contai
 Có thể chạy riêng theo nhóm bằng các target `control-core-postgres-test`, `observability-postgres-test`,
 `anomaly-alert-only-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` và
 `dashboard-postgres-test`.
+Sau thay đổi RBAC/RLS, ưu tiên chạy thêm target tổng hợp:
+
+```bash
+make control-postgres-test
+```
 
 ## Chạy Node Agent trên host
 
@@ -90,6 +109,19 @@ make AGENT_WAN_IFACE=enp94s0f0 AGENT_OUTPUT_IFACES=enp134s0f1 agent-remove
 ```
 
 Nếu chưa có interface được phê duyệt, hãy dùng các script lab VETH thay vì Agent trên NIC thật.
+
+Control API tenant-aware yêu cầu `POST /v1/agents/register` có thêm `X-Tenant-Slug` hoặc `X-Tenant-ID`. Khi gọi Agent API trực tiếp, dùng tenant slug mặc định:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${ANTI_DDOS_AGENT_SHARED_TOKEN}" \
+  -H "X-Tenant-Slug: default" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname":"node-a","xdp_mode":"native","devmap_support":true}' \
+  http://127.0.0.1:8080/v1/agents/register
+```
+
+Sau khi register, heartbeat/snapshot/apply/events tự resolve tenant từ `agent_id`. Nếu host Agent binary chưa truyền tenant header khi register, control sync sẽ bị từ chối với lỗi `tenant header is required`; dùng tenant-aware Agent build hoặc đăng ký qua API có header trước khi vận hành control loop.
 
 ### Lưu ý DEVMAP trên output NIC
 

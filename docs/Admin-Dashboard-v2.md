@@ -1,6 +1,6 @@
 # Admin Dashboard v2 / Admin Console vNext
 
-Trang thai: da cap nhat theo implementation Admin Console vNext va UDP source-port block workflow trong working tree ngay 2026-06-03.
+Trang thai: da cap nhat theo implementation Admin Console vNext, multi-tenant RBAC va UDP source-port block workflow trong working tree ngay 2026-06-04.
 
 Tai lieu nay mo ta dashboard/admin console sau khi Dashboard v2 duoc mo rong thanh console van hanh day du cho Anti-DDoS Scrubbing Gateway. Day la spec san pham + contract trien khai, khong phai landing-page brief.
 
@@ -11,7 +11,7 @@ Admin Console vNext la giao dien ops console day dac, chuyen nghiep, dung cho Vi
 Muc tieu chinh:
 
 - Giu man hinh dau tien la console van hanh, khong co landing page.
-- Cho phep quan sat he thong, dieu tra event, quan tri policy, feed, snapshot va local access trong mot shell thong nhat.
+- Cho phep quan sat he thong, dieu tra event, quan tri policy, feed, snapshot va tenant access trong mot shell thong nhat.
 - Dung React/Vite hien tai, khong nang major Vite.
 - Dung MUI Community, MUI X Data Grid va MUI X Charts; khong dung Pro/Premium/commercial features.
 - Tat ca mutation quan trong phai co reason va audit.
@@ -20,7 +20,7 @@ Muc tieu chinh:
 
 Ngoai pham vi increment nay:
 
-- SSO/MFA/OIDC va tenant/group model.
+- SSO/MFA/OIDC va dynamic permission editor.
 - Physical delete policy object.
 - Rule engine moi hoac thay doi XDP/eBPF data path ngoai UDP source-port blocking.
 - Grafana replacement.
@@ -33,7 +33,7 @@ Ngoai pham vi increment nay:
 | AD2-REQ-001 | Dashboard la ops console, khong landing page | Done | Shell render truc tiep sau login |
 | AD2-REQ-002 | MUI Community + MUI X Data Grid + MUI X Charts tren React/Vite hien tai | Done | `package.json`, build gate |
 | AD2-REQ-003 | Viewer read-only, Operator/Admin operational mutations, Admin access/secret mutations | Done | Vitest RBAC coverage |
-| AD2-REQ-004 | User Management console | Done | Accounts menu + Go endpoints |
+| AD2-REQ-004 | Tenant Access console | Done | Accounts menu + Go endpoints |
 | AD2-REQ-005 | Rule CRUD voi soft-disable | Done | Rules tab + Go endpoints |
 | AD2-REQ-006 | Whitelist CRUD voi soft-disable | Done | Whitelist tab + Go endpoints |
 | AD2-REQ-007 | Feed CRUD/sync/soft-disable, Admin-only credential_ref | Done | Reputation tab + Go endpoints |
@@ -46,16 +46,17 @@ Ngoai pham vi increment nay:
 
 | Persona | Muc tieu | Quyen UI/API |
 |---|---|---|
-| Viewer | Theo doi tinh trang, xem services, alerts, events, feeds, snapshots | Chi doc; khong hien nut create/edit/disable/sync/test/rollback |
-| Operator | Truc van hanh va thay doi policy runtime | Service, rule, whitelist, feed operational actions, snapshot rollback, alert test/runbook; khong quan ly users, khong doi credentials |
-| Admin | Quan tri access va secrets | Bao gom Operator; them user management, password reset, session revoke, Telegram config, feed `credential_ref` |
+| Viewer | Theo doi tinh trang trong active tenant | Chi doc; khong hien nut create/edit/disable/sync/test/rollback |
+| Operator | Truc van hanh va thay doi policy runtime trong active tenant | Service, rule, whitelist, feed operational actions, snapshot rollback, alert test/runbook; khong quan ly members, khong doi credentials |
+| Admin | Quan tri tenant access va secrets trong active tenant | Bao gom Operator; them member management, password reset, session revoke, Telegram config, feed `credential_ref` |
+| Platform Admin | Quan tri tenants | Thay duoc tenants, switch tenant, create/update tenants qua API; effective admin khi vao tenant |
 
 Nguyen tac:
 
 - Moi mutation phai co `reason` trong body hoac `X-Audit-Reason`.
 - UI khong render mutation control cho Viewer.
 - Backend van enforce RBAC; UI chi la lop bao ve dau tien.
-- Admin khong duoc vo tinh revoke/ha cap admin active cuoi cung.
+- Admin khong duoc vo tinh revoke/ha cap admin active cuoi cung trong tenant; platform khong duoc mat platform admin active cuoi cung.
 - Password va credential value khong duoc ghi raw vao audit/log/response.
 
 ## 4. Navigation
@@ -73,12 +74,12 @@ Nguyen tac:
 | UDP Ports | Configuration | Global UDP reflection/amplification source-port blocklist | Lazy-load `/v1/udp-source-port-blocks` khi vao tab |
 | Reputation | Threat Intelligence | Feed CRUD/sync + run/conflict visibility | Polling feed summary + lazy/action refresh |
 | Snapshots | Setting | Snapshot list, semantic diff, rollback | Lazy-load `/v1/snapshots?include_snapshot=false` |
-| Accounts | Setting | Local user management | Lazy-load `/v1/users` khi vao tab |
+| Accounts | Setting | Tenant member management | Lazy-load `/v1/users` khi vao tab |
 | Nodes | Setting | Agents, XDP mode, interfaces, map utilization | Polling dashboard endpoints |
 
 Top bar:
 
-- Hien username/role.
+- Hien tenant switcher, username/role va platform role neu co.
 - Freshness chip dua tren `lastRefresh`.
 - Refresh action.
 - Logout action.
@@ -255,15 +256,15 @@ Actions:
 
 Hien thi:
 
-- Local users tu `/v1/users`.
+- Active-tenant members tu `/v1/users`.
 - Columns: username, role, status, force_password_change, last_login_at, created_at.
 
 Actions:
 
-- Admin create user voi role ban dau.
-- Admin PATCH role/status/force_password_change.
+- Tenant Admin create global user identity neu can va grant membership vao active tenant voi role ban dau.
+- Tenant Admin PATCH membership role/status va user `force_password_change`.
 - Admin reset password bang `/v1/users/{id}/password-reset`.
-- Admin revoke sessions bang `/v1/users/{id}/sessions/revoke`.
+- Admin revoke active-tenant sessions bang `/v1/users/{id}/sessions/revoke`.
 - Backend co `/v1/me/password` de user doi password va clear `force_password_change`; dedicated self-service UI la backlog nho neu can expose trong topbar/profile.
 
 ### 6.12 Nodes
@@ -285,19 +286,23 @@ Hien thi:
 
 ## 7. Backend API contracts
 
-Admin Console vNext reuses existing auth/session columns and adds feature-specific migrations where needed, including `udp_source_port_blocks` for UDP source-port blocking.
+Admin Console vNext uses tenant-scoped auth/session state and feature-specific migrations, including `tenant_memberships`, `user_sessions.active_tenant_id` and `udp_source_port_blocks`.
 
 | Domain | Method/path | Role | Semantics |
 |---|---|---|---|
-| Auth | `POST /v1/auth/login` | Public | Dang nhap local user |
+| Auth | `POST /v1/auth/login` | Public | Dang nhap user, optional `tenant_slug` |
+| Tenants | `GET /v1/tenants` | Authenticated | List tenant access cua actor |
+| Tenants | `POST /v1/tenants` | Platform Admin | Create tenant |
+| Tenants | `PATCH /v1/tenants/{id}` | Platform Admin | Update tenant name/status |
+| Tenants | `POST /v1/tenants/switch` | Authenticated | Switch active tenant trong session |
 | Me | `GET /v1/me` | Authenticated | Lay current user |
 | Me | `POST /v1/me/password` | Authenticated | Doi password, clear force change, revoke sessions khac |
-| Users | `GET /v1/users` | Admin | List local users |
-| Users | `POST /v1/users` | Admin | Create user |
-| Users | `PATCH /v1/users/{id}` | Admin | Update role/status/force_password_change |
-| Users | `DELETE /v1/users/{id}` | Admin | Legacy revoke user route |
-| Users | `POST /v1/users/{id}/password-reset` | Admin | Reset password, revoke sessions |
-| Users | `POST /v1/users/{id}/sessions/revoke` | Admin | Revoke active sessions |
+| Users | `GET /v1/users` | Authenticated | List active-tenant members |
+| Users | `POST /v1/users` | Tenant Admin | Create identity if needed and grant active-tenant membership |
+| Users | `PATCH /v1/users/{id}` | Tenant Admin | Update membership role/status and force_password_change |
+| Users | `DELETE /v1/users/{id}` | Tenant Admin | Revoke active-tenant membership |
+| Users | `POST /v1/users/{id}/password-reset` | Tenant Admin | Reset password, revoke active-tenant sessions |
+| Users | `POST /v1/users/{id}/sessions/revoke` | Tenant Admin | Revoke active-tenant sessions |
 | Rules | `GET /v1/rules` | Authenticated | List rules |
 | Rules | `POST /v1/rules` | Operator/Admin | Create rule, rebuild snapshot |
 | Rules | `PATCH /v1/rules/{id}` | Operator/Admin | Update rule, rebuild snapshot |
@@ -306,7 +311,7 @@ Admin Console vNext reuses existing auth/session columns and adds feature-specif
 | Whitelist | `POST /v1/whitelist` | Operator/Admin | Create entry, rebuild snapshot |
 | Whitelist | `PATCH /v1/whitelist/{id}` | Operator/Admin | Update entry, rebuild snapshot |
 | Whitelist | `DELETE /v1/whitelist/{id}` | Operator/Admin | Soft-disable entry, rebuild snapshot |
-| UDP Ports | `GET /v1/udp-source-port-blocks?q=&state=&expiry=` | Authenticated | List global UDP source-port blocks |
+| UDP Ports | `GET /v1/udp-source-port-blocks?q=&state=&expiry=` | Authenticated | List tenant UDP source-port blocks |
 | UDP Ports | `POST /v1/udp-source-port-blocks` | Operator/Admin | Create entry, rebuild snapshot |
 | UDP Ports | `PATCH /v1/udp-source-port-blocks/{id}` | Operator/Admin | Update entry, rebuild snapshot |
 | UDP Ports | `DELETE /v1/udp-source-port-blocks/{id}` | Operator/Admin | Soft-disable entry, rebuild snapshot |

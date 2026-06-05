@@ -143,7 +143,12 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	if reason == "" {
 		return TelegramConfig{}, errors.New("reason is required")
 	}
-	beforeRaw, err := s.getTelegramConfigRaw(ctx)
+	tx, err := s.beginActorTenantTx(ctx, actor)
+	if err != nil {
+		return TelegramConfig{}, err
+	}
+	defer tx.Rollback(ctx)
+	beforeRaw, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return TelegramConfig{}, err
 	}
@@ -156,9 +161,9 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	}
 	before := maskTelegramConfig(beforeRaw)
 	enabled := boolDefault(input.Enabled, true)
-	row := s.pool.QueryRow(ctx, `INSERT INTO telegram_configs(id, bot_token_ref, chat_id, parse_mode, enabled)
-VALUES (1,$1,$2,$3,$4)
-ON CONFLICT (id) DO UPDATE SET
+	row := tx.QueryRow(ctx, `INSERT INTO telegram_configs(tenant_id, id, bot_token_ref, chat_id, parse_mode, enabled)
+VALUES (NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, 1,$1,$2,$3,$4)
+ON CONFLICT (tenant_id, id) DO UPDATE SET
     bot_token_ref=EXCLUDED.bot_token_ref,
     chat_id=EXCLUDED.chat_id,
     parse_mode=EXCLUDED.parse_mode,
@@ -171,10 +176,10 @@ RETURNING bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at`,
 		return TelegramConfig{}, err
 	}
 	masked := maskTelegramConfig(cfg)
-	if err := insertAudit(ctx, s.pool, actor, "configure_telegram", "telegram_config", "1", before, masked, reason, ""); err != nil {
+	if err := insertAudit(ctx, tx, actor, "configure_telegram", "telegram_config", "1", before, masked, reason, ""); err != nil {
 		return TelegramConfig{}, err
 	}
-	return masked, nil
+	return masked, tx.Commit(ctx)
 }
 
 func (s *Store) GetTelegramConfig(ctx context.Context) (TelegramConfig, error) {
@@ -186,7 +191,16 @@ func (s *Store) GetTelegramConfig(ctx context.Context) (TelegramConfig, error) {
 }
 
 func (s *Store) getTelegramConfigRaw(ctx context.Context) (TelegramConfig, error) {
-	return scanTelegramConfig(s.pool.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return TelegramConfig{}, err
+	}
+	defer tx.Rollback(ctx)
+	cfg, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
+	if err != nil {
+		return TelegramConfig{}, err
+	}
+	return cfg, tx.Commit(ctx)
 }
 
 func scanTelegramConfig(row rowScanner) (TelegramConfig, error) {
@@ -277,15 +291,23 @@ func (s *Store) createAlert(ctx context.Context, actor *Actor, input AlertInput)
 	if actor != nil {
 		actorID = actor.ID
 	}
-	alert, err := scanAlert(s.pool.QueryRow(ctx, `INSERT INTO alerts(
-    id, severity, type, dedupe_key, service_id, affected_service, vector, evidence, recommended_action, created_by
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return Alert{}, err
+	}
+	defer tx.Rollback(ctx)
+	alert, err := scanAlert(tx.QueryRow(ctx, `INSERT INTO alerts(
+    id, tenant_id, severity, type, dedupe_key, service_id, affected_service, vector, evidence, recommended_action, created_by
+) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10)
 RETURNING id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service, vector,
           evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at`,
 		id, normalizeAlertSeverity(input.Severity), strings.TrimSpace(input.Type), strings.TrimSpace(input.DedupeKey),
 		serviceID, strings.TrimSpace(input.AffectedService), strings.TrimSpace(input.Vector), defaultJSON(input.Evidence),
 		strings.TrimSpace(input.RecommendedAction), actorID))
 	if err != nil {
+		return Alert{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Alert{}, err
 	}
 	if s.metrics != nil {
@@ -327,7 +349,12 @@ func (s *Store) ListAlerts(ctx context.Context, limit int) ([]Alert, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service,
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service,
        vector, evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at
 FROM alerts
 ORDER BY created_at DESC
@@ -354,11 +381,19 @@ LIMIT $1`, limit)
 		}
 		out[i].Deliveries = deliveries
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
 func (s *Store) ListAlertDeliveries(ctx context.Context, alertID string) ([]AlertDelivery, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at
 FROM alert_deliveries
 WHERE alert_id=$1
 ORDER BY created_at`, strings.TrimSpace(alertID))
@@ -374,7 +409,10 @@ ORDER BY created_at`, strings.TrimSpace(alertID))
 		}
 		out = append(out, delivery)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) deliverAlert(ctx context.Context, alert Alert) (Alert, error) {
@@ -467,14 +505,22 @@ func (s *Store) alertRetryDelay(attempt uint32) time.Duration {
 
 func (s *Store) alertPolicy(ctx context.Context, alertType, severity string) (alertPolicy, error) {
 	policy := alertPolicy{RateLimitSeconds: defaultAlertRateLimitSeconds, MaxAttempts: defaultAlertMaxAttempts, Enabled: true}
-	err := s.pool.QueryRow(ctx, `SELECT rate_limit_seconds, max_attempts, template, enabled
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return policy, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT rate_limit_seconds, max_attempts, template, enabled
 FROM alert_policies
 WHERE alert_type=$1 AND severity=$2 AND channel='telegram'
 LIMIT 1`, alertType, severity).Scan(&policy.RateLimitSeconds, &policy.MaxAttempts, &policy.Template, &policy.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policy, nil
 	}
-	return policy, err
+	if err != nil {
+		return policy, err
+	}
+	return policy, tx.Commit(ctx)
 }
 
 func (s *Store) recentAlertSent(ctx context.Context, alert Alert, window time.Duration) (bool, error) {
@@ -482,7 +528,12 @@ func (s *Store) recentAlertSent(ctx context.Context, alert Alert, window time.Du
 		return false, nil
 	}
 	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT EXISTS (
     SELECT 1
     FROM alerts a
     JOIN alert_deliveries d ON d.alert_id = a.id
@@ -491,7 +542,10 @@ func (s *Store) recentAlertSent(ctx context.Context, alert Alert, window time.Du
       AND d.status = 'sent'
       AND d.created_at >= now() - ($3::text)::interval
 )`, alert.ID, alert.DedupeKey, fmt.Sprintf("%d seconds", int(window.Seconds()))).Scan(&exists)
-	return exists, err
+	if err != nil {
+		return false, err
+	}
+	return exists, tx.Commit(ctx)
 }
 
 func (s *Store) RecentAlertExists(ctx context.Context, dedupeKey string, window time.Duration) bool {
@@ -499,7 +553,12 @@ func (s *Store) RecentAlertExists(ctx context.Context, dedupeKey string, window 
 		return false
 	}
 	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT EXISTS (
     SELECT 1 FROM alerts
     WHERE dedupe_key=$1 AND created_at >= now() - ($2::text)::interval
 )`, strings.TrimSpace(dedupeKey), fmt.Sprintf("%d seconds", int(window.Seconds()))).Scan(&exists)
@@ -507,10 +566,19 @@ func (s *Store) RecentAlertExists(ctx context.Context, dedupeKey string, window 
 }
 
 func (s *Store) setAlertStatus(ctx context.Context, id, status string) (Alert, error) {
-	return scanAlert(s.pool.QueryRow(ctx, `UPDATE alerts SET status=$2, updated_at=now()
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return Alert{}, err
+	}
+	defer tx.Rollback(ctx)
+	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE alerts SET status=$2, updated_at=now()
 WHERE id=$1
 RETURNING id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service, vector,
           evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at`, id, status))
+	if err != nil {
+		return Alert{}, err
+	}
+	return alert, tx.Commit(ctx)
 }
 
 func (s *Store) recordAlertDelivery(ctx context.Context, alertID, channel, status string, attempt uint32, errText string, response json.RawMessage) (AlertDelivery, error) {
@@ -522,10 +590,19 @@ func (s *Store) recordAlertDelivery(ctx context.Context, alertID, channel, statu
 	if status == alertStatusSent {
 		sentAt = time.Now().UTC()
 	}
-	return scanAlertDelivery(s.pool.QueryRow(ctx, `INSERT INTO alert_deliveries(id, alert_id, channel, status, attempt, error, response, sent_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	tx, err := s.beginContextTenantTx(ctx)
+	if err != nil {
+		return AlertDelivery{}, err
+	}
+	defer tx.Rollback(ctx)
+	delivery, err := scanAlertDelivery(tx.QueryRow(ctx, `INSERT INTO alert_deliveries(id, tenant_id, alert_id, channel, status, attempt, error, response, sent_at)
+VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8)
 RETURNING id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at`,
 		id, alertID, channel, status, attempt, errText, defaultJSON(response), sentAt))
+	if err != nil {
+		return AlertDelivery{}, err
+	}
+	return delivery, tx.Commit(ctx)
 }
 
 func scanAlert(row rowScanner) (Alert, error) {

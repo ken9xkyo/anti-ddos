@@ -10,6 +10,8 @@ const (
 	RoleOperator = "operator"
 	RoleViewer   = "viewer"
 
+	PlatformRoleAdmin = "platform_admin"
+
 	StatusActive  = "active"
 	StatusRevoked = "revoked"
 
@@ -26,14 +28,47 @@ const (
 	NeighborResolved = 1
 )
 
+type Tenant struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type TenantAccess struct {
+	TenantID  string    `json:"tenant_id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type TenantInput struct {
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+	Status string `json:"status,omitempty"`
+}
+
+type TenantSwitchInput struct {
+	TenantID   string `json:"tenant_id,omitempty"`
+	TenantSlug string `json:"tenant_slug,omitempty"`
+}
+
 type User struct {
-	ID                  string     `json:"id"`
-	Username            string     `json:"username"`
-	Role                string     `json:"role"`
-	Status              string     `json:"status"`
-	ForcePasswordChange bool       `json:"force_password_change"`
-	CreatedAt           time.Time  `json:"created_at"`
-	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	ID                  string         `json:"id"`
+	Username            string         `json:"username"`
+	Role                string         `json:"role"`
+	PlatformRole        string         `json:"platform_role,omitempty"`
+	Status              string         `json:"status"`
+	ForcePasswordChange bool           `json:"force_password_change"`
+	CreatedAt           time.Time      `json:"created_at"`
+	LastLoginAt         *time.Time     `json:"last_login_at,omitempty"`
+	ActiveTenant        *Tenant        `json:"active_tenant,omitempty"`
+	Tenants             []TenantAccess `json:"tenants,omitempty"`
 }
 
 type UserUpdateInput struct {

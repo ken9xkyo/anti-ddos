@@ -44,6 +44,42 @@ describe('ApiClient', () => {
     expect(localStorage.getItem('anti_ddos_token')).toBe('token-operator');
   });
 
+  it('supports tenant-scoped login and tenant switch sessions', async () => {
+    const calls: Array<{ path: string; body: unknown; auth: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      const headers = new Headers(init?.headers);
+      calls.push({
+        path,
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+        auth: headers.get('Authorization')
+      });
+      return jsonResponse({
+        token: path.includes('switch') ? 'token-tenant-b' : 'token-default',
+        user: operatorUser,
+        expires_at: '2026-05-28T12:00:00Z'
+      });
+    }));
+
+    const client = new ApiClient();
+    await client.login('operator', 'secret', 'default');
+    await client.switchTenant({ tenant_id: 'tenant-b' });
+
+    expect(calls).toEqual([
+      {
+        path: '/v1/auth/login',
+        body: { username: 'operator', password: 'secret', tenant_slug: 'default' },
+        auth: null
+      },
+      {
+        path: '/v1/tenants/switch',
+        body: { tenant_id: 'tenant-b' },
+        auth: 'Bearer token-default'
+      }
+    ]);
+    expect(localStorage.getItem('anti_ddos_token')).toBe('token-tenant-b');
+  });
+
   it('loads dashboard data from every dashboard dependency endpoint', async () => {
     const data = dashboardFixture();
     const responses = dashboardResponses(data);

@@ -510,6 +510,213 @@ INSERT INTO udp_source_port_blocks(id, port, label, reason, owner, enabled) VALU
 ON CONFLICT (port) DO NOTHING;
 `,
 	},
+	{
+		Version: 7,
+		Name:    "multi_tenant_rbac",
+		SQL: `
+CREATE TABLE IF NOT EXISTS tenants (
+    id uuid PRIMARY KEY,
+    slug text NOT NULL UNIQUE,
+    name text NOT NULL,
+    status text NOT NULL CHECK (status IN ('active', 'revoked')) DEFAULT 'active',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO tenants(id, slug, name, status)
+VALUES ('00000000-0000-4000-8000-000000001000', 'default', 'Default Tenant', 'active')
+ON CONFLICT (slug) DO NOTHING;
+
+ALTER TABLE app_users
+    ADD COLUMN IF NOT EXISTS platform_role text NOT NULL DEFAULT '';
+
+UPDATE app_users SET platform_role='platform_admin' WHERE role='admin' AND platform_role='';
+
+ALTER TABLE user_sessions
+    ADD COLUMN IF NOT EXISTS active_tenant_id uuid REFERENCES tenants(id);
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+    id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    role text NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
+    status text NOT NULL CHECK (status IN ('active', 'revoked')) DEFAULT 'active',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS tenant_memberships_user_idx ON tenant_memberships(user_id, status);
+CREATE INDEX IF NOT EXISTS tenant_memberships_tenant_role_idx ON tenant_memberships(tenant_id, role, status);
+
+INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
+SELECT u.id, t.id, u.id, u.role, u.status
+FROM app_users u
+CROSS JOIN tenants t
+WHERE t.slug='default'
+ON CONFLICT (tenant_id, user_id) DO NOTHING;
+
+UPDATE user_sessions SET active_tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE active_tenant_id IS NULL;
+
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE agent_interfaces ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE backend_services ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE forwarding_policies ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE whitelist_entries ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE manual_blacklist_entries ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE feed_sources ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE feed_runs ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE reputation_entries ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE feed_conflicts ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE policy_snapshots ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE policy_apply_status ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE security_events ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE baseline_profiles ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE anomaly_evaluations ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE telegram_configs ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE alert_policies ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE alert_deliveries ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE udp_source_port_blocks ADD COLUMN IF NOT EXISTS tenant_id uuid;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS tenant_id uuid;
+
+UPDATE agents SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE agent_interfaces ai SET tenant_id=a.tenant_id FROM agents a WHERE ai.agent_id=a.id AND ai.tenant_id IS NULL;
+UPDATE agent_interfaces SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE backend_services SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE forwarding_policies fp SET tenant_id=bs.tenant_id FROM backend_services bs WHERE fp.service_id=bs.id AND fp.tenant_id IS NULL;
+UPDATE forwarding_policies SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE rules r SET tenant_id=bs.tenant_id FROM backend_services bs WHERE r.service_id=bs.id AND r.tenant_id IS NULL;
+UPDATE rules SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE whitelist_entries w SET tenant_id=bs.tenant_id FROM backend_services bs WHERE w.service_id=bs.id AND w.tenant_id IS NULL;
+UPDATE whitelist_entries SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE manual_blacklist_entries b SET tenant_id=r.tenant_id FROM rules r WHERE b.rule_id=r.id AND b.tenant_id IS NULL;
+UPDATE manual_blacklist_entries SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE feed_sources SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE feed_runs fr SET tenant_id=fs.tenant_id FROM feed_sources fs WHERE fr.source_id=fs.id AND fr.tenant_id IS NULL;
+UPDATE feed_runs SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE reputation_entries re SET tenant_id=fs.tenant_id FROM feed_sources fs WHERE re.source_id=fs.id AND re.tenant_id IS NULL;
+UPDATE reputation_entries SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE feed_conflicts fc SET tenant_id=fs.tenant_id FROM feed_sources fs WHERE fc.source_id=fs.id AND fc.tenant_id IS NULL;
+UPDATE feed_conflicts SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE policy_snapshots SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE policy_apply_status pas SET tenant_id=a.tenant_id FROM agents a WHERE pas.agent_id=a.id AND pas.tenant_id IS NULL;
+UPDATE policy_apply_status SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE security_events se SET tenant_id=a.tenant_id FROM agents a WHERE se.agent_id=a.id AND se.tenant_id IS NULL;
+UPDATE security_events SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE baseline_profiles bp SET tenant_id=bs.tenant_id FROM backend_services bs WHERE bp.service_id=bs.id AND bp.tenant_id IS NULL;
+UPDATE baseline_profiles SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE anomaly_evaluations ae SET tenant_id=bs.tenant_id FROM backend_services bs WHERE ae.service_id=bs.id AND ae.tenant_id IS NULL;
+UPDATE anomaly_evaluations SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE telegram_configs SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE alert_policies SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE alerts a SET tenant_id=bs.tenant_id FROM backend_services bs WHERE a.service_id=bs.id AND a.tenant_id IS NULL;
+UPDATE alerts SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE alert_deliveries ad SET tenant_id=a.tenant_id FROM alerts a WHERE ad.alert_id=a.id AND ad.tenant_id IS NULL;
+UPDATE alert_deliveries SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE udp_source_port_blocks SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+UPDATE audit_events SET tenant_id=(SELECT id FROM tenants WHERE slug='default') WHERE tenant_id IS NULL;
+
+ALTER TABLE agents ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE agent_interfaces ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE backend_services ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE forwarding_policies ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE rules ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE whitelist_entries ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE manual_blacklist_entries ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE feed_sources ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE feed_runs ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE reputation_entries ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE feed_conflicts ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE policy_snapshots ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE policy_apply_status ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE security_events ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE baseline_profiles ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE anomaly_evaluations ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE telegram_configs ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE alert_policies ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE alerts ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE alert_deliveries ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE udp_source_port_blocks ALTER COLUMN tenant_id SET NOT NULL;
+ALTER TABLE audit_events ALTER COLUMN tenant_id SET NOT NULL;
+
+ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_hostname_key;
+CREATE UNIQUE INDEX IF NOT EXISTS agents_tenant_hostname_unique_idx ON agents(tenant_id, hostname);
+ALTER TABLE backend_services DROP CONSTRAINT IF EXISTS backend_services_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS backend_services_tenant_name_unique_idx ON backend_services(tenant_id, name);
+ALTER TABLE feed_sources DROP CONSTRAINT IF EXISTS feed_sources_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS feed_sources_tenant_name_unique_idx ON feed_sources(tenant_id, name);
+ALTER TABLE udp_source_port_blocks DROP CONSTRAINT IF EXISTS udp_source_port_blocks_port_key;
+CREATE UNIQUE INDEX IF NOT EXISTS udp_source_port_blocks_tenant_port_unique_idx ON udp_source_port_blocks(tenant_id, port);
+ALTER TABLE alert_policies DROP CONSTRAINT IF EXISTS alert_policies_alert_type_severity_channel_key;
+CREATE UNIQUE INDEX IF NOT EXISTS alert_policies_tenant_type_severity_channel_unique_idx ON alert_policies(tenant_id, alert_type, severity, channel);
+
+ALTER TABLE policy_snapshots DROP CONSTRAINT IF EXISTS policy_snapshots_rollback_from_fkey;
+ALTER TABLE policy_snapshots DROP CONSTRAINT IF EXISTS policy_snapshots_pkey;
+ALTER TABLE policy_snapshots ADD PRIMARY KEY (tenant_id, version);
+
+ALTER TABLE telegram_configs DROP CONSTRAINT IF EXISTS telegram_configs_pkey;
+ALTER TABLE telegram_configs ADD PRIMARY KEY (tenant_id, id);
+
+CREATE INDEX IF NOT EXISTS agents_tenant_idx ON agents(tenant_id, status);
+CREATE INDEX IF NOT EXISTS agent_interfaces_tenant_idx ON agent_interfaces(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS backend_services_tenant_idx ON backend_services(tenant_id, enabled);
+CREATE INDEX IF NOT EXISTS forwarding_policies_tenant_idx ON forwarding_policies(tenant_id, service_id);
+CREATE INDEX IF NOT EXISTS rules_tenant_idx ON rules(tenant_id, service_id);
+CREATE INDEX IF NOT EXISTS whitelist_entries_tenant_idx ON whitelist_entries(tenant_id, scope, service_id);
+CREATE INDEX IF NOT EXISTS manual_blacklist_entries_tenant_idx ON manual_blacklist_entries(tenant_id, rule_id);
+CREATE INDEX IF NOT EXISTS feed_sources_tenant_idx ON feed_sources(tenant_id, enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS feed_runs_tenant_idx ON feed_runs(tenant_id, source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS reputation_entries_tenant_idx ON reputation_entries(tenant_id, source_id, status);
+CREATE INDEX IF NOT EXISTS policy_snapshots_tenant_created_idx ON policy_snapshots(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS policy_apply_status_tenant_idx ON policy_apply_status(tenant_id, agent_id, reported_at DESC);
+CREATE INDEX IF NOT EXISTS security_events_tenant_time_idx ON security_events(tenant_id, event_time DESC);
+CREATE INDEX IF NOT EXISTS baseline_profiles_tenant_idx ON baseline_profiles(tenant_id, service_id, approved, time_window);
+CREATE INDEX IF NOT EXISTS anomaly_evaluations_tenant_idx ON anomaly_evaluations(tenant_id, evaluated_at DESC);
+CREATE INDEX IF NOT EXISTS alerts_tenant_idx ON alerts(tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS alert_deliveries_tenant_idx ON alert_deliveries(tenant_id, alert_id, created_at);
+CREATE INDEX IF NOT EXISTS audit_events_tenant_idx ON audit_events(tenant_id, created_at DESC);
+
+DO $$
+DECLARE
+    table_name text;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'agents',
+        'agent_interfaces',
+        'backend_services',
+        'forwarding_policies',
+        'rules',
+        'whitelist_entries',
+        'manual_blacklist_entries',
+        'feed_sources',
+        'feed_runs',
+        'reputation_entries',
+        'feed_conflicts',
+        'policy_snapshots',
+        'policy_apply_status',
+        'security_events',
+        'baseline_profiles',
+        'anomaly_evaluations',
+        'telegram_configs',
+        'alert_policies',
+        'alerts',
+        'alert_deliveries',
+        'udp_source_port_blocks',
+        'audit_events'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', table_name);
+        EXECUTE format(
+            'CREATE POLICY tenant_isolation ON %I FOR ALL USING (tenant_id = NULLIF(current_setting(''anti_ddos.tenant_id'', true), '''')::uuid OR current_setting(''anti_ddos.platform'', true) = ''true'') WITH CHECK (tenant_id = NULLIF(current_setting(''anti_ddos.tenant_id'', true), '''')::uuid OR current_setting(''anti_ddos.platform'', true) = ''true'')',
+            table_name
+        );
+    END LOOP;
+END $$;
+`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

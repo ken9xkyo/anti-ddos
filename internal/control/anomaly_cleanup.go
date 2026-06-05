@@ -2,12 +2,29 @@ package control
 
 import (
 	"context"
+	"errors"
 )
 
 const legacyAutoEnforceDisableReason = "baseline anomaly detection is alert-only"
 
 func (s *Store) DisableLegacyAutoEnforceRules(ctx context.Context) (int, error) {
-	tx, err := s.pool.Begin(ctx)
+	if tenantIDFromContext(ctx) == "" {
+		tenantIDs, err := s.activeTenantIDs(ctx)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		var joined error
+		for _, tenantID := range tenantIDs {
+			count, err := s.DisableLegacyAutoEnforceRules(contextWithTenant(ctx, tenantID))
+			total += count
+			if err != nil {
+				joined = errors.Join(joined, err)
+			}
+		}
+		return total, joined
+	}
+	tx, err := s.beginContextTenantTx(ctx)
 	if err != nil {
 		return 0, err
 	}

@@ -92,11 +92,19 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	}
 
 	resetQueries()
-	if _, err := store.BuildDashboardOverview(ctx, NewPrometheusClient(prom.URL, nil), time.Minute); err != nil {
+	overview, err := store.BuildDashboardOverview(ctx, NewPrometheusClient(prom.URL, nil), time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertObservedQuery(t, &queryMu, &queries, `tcp_syn="1"`)
-	assertObservedQuery(t, &queryMu, &queries, `action=~"0|1|6"`)
+	queryMu.Lock()
+	overviewQueries := append([]string(nil), queries...)
+	queryMu.Unlock()
+	if len(overviewQueries) != 0 {
+		t.Fatalf("tenant dashboard should not query global prometheus traffic, got %#v", overviewQueries)
+	}
+	if !strings.Contains(overview.Prometheus.Error, "tenant-scoped prometheus labels unavailable") {
+		t.Fatalf("dashboard overview did not report tenant-scoped prometheus fallback: %#v", overview.Prometheus)
+	}
 
 	evals, err := store.EvaluateAnomalies(ctx, NewPrometheusClient("", nil), "unconfigured prometheus")
 	if err != nil || len(evals) != 0 {

@@ -3,6 +3,7 @@
 
 Last updated: 2026-06-04
 
+- [multi-tenant-rbac](multi-tenant-rbac.md) - Tenant membership RBAC, RLS transaction helpers, and agent tenant binding | flow | auth, tenant, rls, agents, dashboard
 - [detections-alert-only](detections-alert-only.md) - Baselines/anomaly evaluations are alert-only and legacy auto rules are cleaned up | flow | detection, baseline, anomaly, rules
 - [agent-neighbor-probe](agent-neighbor-probe.md) - Agent probes neighbor with NTF_USE before fail-closed | flow | agent, forwarding, neighbor
 - [telegram-token-config](telegram-token-config.md) - Telegram token is DB raw + API/UI masked | flow | telegram, secrets, dashboard

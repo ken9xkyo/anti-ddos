@@ -1,6 +1,6 @@
 # Control API
 
-Trang thai: tai lieu mo ta Control Plane HTTP API hien co trong working tree ngay 2026-06-03.
+Trang thai: tai lieu mo ta Control Plane HTTP API hien co trong working tree ngay 2026-06-04.
 
 Control API la JSON API dung cho dashboard/admin console, agent control loop va cac workflow van hanh Anti-DDoS. Tat ca endpoint nghiep vu nam duoi `/v1`, tru `/healthz` va `/metrics`.
 
@@ -18,21 +18,24 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 
 - Auth user dung `Authorization: Bearer <session_token>` hoac cookie `anti_ddos_session`.
 - Auth agent dung `Authorization: Bearer <agent_shared_token>` neu `AgentSharedToken` duoc cau hinh. Neu token nay rong, agent endpoints khong bi chan boi shared token.
+- User session co `active_tenant_id`; moi endpoint control-plane chay trong active tenant. Du lieu tenant duoc co lap bang app-level tenant context va PostgreSQL RLS (`anti_ddos.tenant_id`).
 - Mutation reason lay tu body `reason` truoc, fallback sang header `X-Audit-Reason`.
 - Nhieu store error duoc map thanh `400`; loi role co text `role required` duoc map thanh `403`.
 - `POST /v1/agents/{id}/snapshot` khong ton tai; agent fetch snapshot bang `GET`.
 
-## 2. Roles
+## 2. Tenant RBAC
 
 | Role | Mo ta |
 |---|---|
-| `viewer` | Doc dashboard, policy, events, alerts, feeds, snapshots |
-| `operator` | Bao gom viewer; duoc thao tac operational mutations |
-| `admin` | Bao gom operator; duoc quan tri users va feed/secret credentials |
+| `viewer` | Tenant-scoped read cho dashboard, policy, events, alerts, feeds, snapshots |
+| `operator` | Bao gom viewer; duoc thao tac operational mutations trong active tenant |
+| `admin` | Bao gom operator; duoc quan tri tenant members va feed/secret credentials trong active tenant |
+| `platform_admin` | Global platform role tren `app_users.platform_role`; duoc list/create/update tenants va switch vao tenant voi effective `admin` |
 
 Mutation policy:
 
-- User mutations: Admin only. `GET /v1/users` is authenticated read in the current server.
+- User/member mutations: Tenant Admin only. `GET /v1/users` list memberships trong active tenant.
+- Tenant create/update: Platform Admin only.
 - Service, forwarding policy, whitelist, rules, blacklist, UDP source-port block, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
 - Telegram config: Operator/Admin, nhung thay doi write-only `bot_token_ref` can Admin.
 - Feed `credential_ref`: Admin only khi create/update; raw values and secret refs are write-only and response is masked as `***`.
@@ -43,6 +46,8 @@ Mutation policy:
 | Field | Values |
 |---|---|
 | `role` | `admin`, `operator`, `viewer` |
+| `platform_role` | `platform_admin` or empty |
+| tenant `status` | `active`, `revoked` |
 | user `status` | `active`, `revoked` |
 | packet/action constants | `0` pass, `1` drop, `2` rate_limit, `3` observe, `4` sample, `6` redirect |
 | policy scope constants | `0` global, `1` service |
@@ -66,9 +71,12 @@ Request:
 ```json
 {
   "username": "operator",
-  "password": "password phrase"
+  "password": "password phrase",
+  "tenant_slug": "default"
 }
 ```
+
+`tenant_slug` optional. Neu bo trong, server chon active tenant mac dinh cua user; platform admin thay duoc moi active tenant.
 
 Response `Session`:
 
@@ -80,9 +88,19 @@ Response `Session`:
     "id": "uuid",
     "username": "operator",
     "role": "operator",
+    "platform_role": "",
     "status": "active",
     "force_password_change": false,
-    "created_at": "2026-05-29T12:00:00Z"
+    "created_at": "2026-05-29T12:00:00Z",
+    "active_tenant": {
+      "id": "uuid",
+      "slug": "default",
+      "name": "Default Tenant",
+      "status": "active"
+    },
+    "tenants": [
+      {"tenant_id":"uuid","slug":"default","name":"Default Tenant","role":"operator","status":"active"}
+    ]
   }
 }
 ```
@@ -119,18 +137,41 @@ Request `OwnPasswordInput`:
 
 Password minimum length is 12 characters.
 
-## 6. Users
+## 6. Tenants
+
+Authenticated. `GET /v1/tenants` returns tenants available to the actor. Mutations require `platform_admin`.
+
+| Method | Path | Body | Response | Semantics |
+|---|---|---|---|---|
+| GET | `/v1/tenants` | none | `TenantAccess[]` | List available active tenants and effective roles |
+| POST | `/v1/tenants` | `TenantInput` | `Tenant` | Create tenant |
+| PATCH | `/v1/tenants/{id}` | `TenantInput` | `Tenant` | Update tenant name/status |
+| POST | `/v1/tenants/switch` | `{tenant_id}` or `{tenant_slug}` | `Session` | Switch current session active tenant |
+
+`TenantInput`:
+
+```json
+{
+  "slug": "customer-a",
+  "name": "Customer A",
+  "status": "active"
+}
+```
+
+Switch tenant writes an audit event. Platform admin gets effective tenant `admin`; normal users can switch only to active tenant memberships.
+
+## 7. Users
 
 Authenticated read, Admin mutation.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/users` | none | `User[]` | List local users |
-| POST | `/v1/users` | `{username,password,role,reason}` | `User` | Create active user |
+| GET | `/v1/users` | none | `User[]` | List active-tenant members |
+| POST | `/v1/users` | `{username,password,role,reason}` | `User` | Create global identity if needed and grant active-tenant membership |
 | PATCH | `/v1/users/{id}` | `UserUpdateInput` | `User` | Update role/status/force_password_change |
-| DELETE | `/v1/users/{id}` | reason via header | `User` | Legacy revoke user route; sets status `revoked` |
-| POST | `/v1/users/{id}/password-reset` | `PasswordResetInput` | `User` | Reset password and revoke active sessions |
-| POST | `/v1/users/{id}/sessions/revoke` | optional `{reason}` | `User` | Revoke active sessions |
+| DELETE | `/v1/users/{id}` | reason via header | `User` | Revoke active-tenant membership |
+| POST | `/v1/users/{id}/password-reset` | `PasswordResetInput` | `User` | Reset password and revoke sessions for active tenant |
+| POST | `/v1/users/{id}/sessions/revoke` | optional `{reason}` | `User` | Revoke sessions for active tenant |
 
 `UserUpdateInput`:
 
@@ -146,9 +187,10 @@ Authenticated read, Admin mutation.
 Safety:
 
 - Backend prevents revoking/downgrading the last active admin.
+- Backend prevents revoking/downgrading the last active platform admin.
 - Raw password is never included in returned user or audit before/after payload.
 
-## 7. Services
+## 8. Services
 
 Authenticated read, Operator/Admin mutation.
 
@@ -180,7 +222,7 @@ Authenticated read, Operator/Admin mutation.
 
 Dashboard vNext policy: next-hop MAC is not manually configured in the dashboard. The Agent resolves/configures next-hop MAC during forwarding metadata resolution.
 
-## 8. Forwarding policies
+## 9. Forwarding policies
 
 Authenticated read, Operator/Admin mutation.
 
@@ -206,7 +248,7 @@ Authenticated read, Operator/Admin mutation.
 - `enabled`
 - `owner`
 
-## 9. Whitelist
+## 10. Whitelist
 
 Authenticated read, Operator/Admin mutation.
 
@@ -233,7 +275,7 @@ Authenticated read, Operator/Admin mutation.
 }
 ```
 
-## 10. Rules
+## 11. Rules
 
 Authenticated read, Operator/Admin mutation.
 
@@ -269,7 +311,7 @@ Authenticated read, Operator/Admin mutation.
 
 If `ttl_seconds` is set and `expires_at` is omitted, backend derives expiry from current time.
 
-## 11. Blacklist
+## 12. Blacklist
 
 Authenticated read, Operator/Admin mutation.
 
@@ -338,13 +380,13 @@ Feed rows come from non-inactive `reputation_entries` with `action='drop'` joine
 
 Manual blacklist action must be `drop`. Create/update/disable rebuild policy snapshots. Effective snapshot generation de-duplicates exact CIDR keys; enabled manual entries take precedence over feed reputation entries for the same exact CIDR.
 
-## 12. UDP Source Port Blocks
+## 13. UDP Source Port Blocks
 
 Authenticated read, Operator/Admin mutation.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/udp-source-port-blocks?q=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List global UDP source-port block entries |
+| GET | `/v1/udp-source-port-blocks?q=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List tenant UDP source-port block entries |
 | POST | `/v1/udp-source-port-blocks` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Create entry and rebuild snapshot |
 | PATCH | `/v1/udp-source-port-blocks/{id}` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Update entry and rebuild snapshot |
 | DELETE | `/v1/udp-source-port-blocks/{id}` | `X-Audit-Reason` | `UDPSourcePortBlock` | Soft-disable entry and rebuild snapshot |
@@ -387,9 +429,9 @@ Optional list filters:
 
 The migration seeds disabled entries for common UDP reflection/amplification source ports: `0`, `19`, `53`, `69`, `111`, `123`, `137`, `161`, `162`, `389`, `427`, `520`, `1194`, `1900`, `3702`, `5353`, `10001`, `11211`, `20800`, `27005`.
 
-Only enabled and non-expired entries are included in policy snapshots as `udp_source_port_blocks`. Snapshot feature flag `udp_src_port_block` is present only when active entries exist. Datapath semantics are global: after a protected service match and whitelist precedence, non-whitelisted UDP packets with a matching source port are dropped with reason `11`. Whitelisted sources bypass this check; packets outside the service allowlist keep the existing `REASON_NOT_ALLOWED_SERVICE` behavior.
+Only enabled and non-expired entries are included in tenant policy snapshots as `udp_source_port_blocks`. Snapshot feature flag `udp_src_port_block` is present only when active entries exist. Datapath semantics apply inside the tenant snapshot: after a protected service match and whitelist precedence, non-whitelisted UDP packets with a matching source port are dropped with reason `11`. Whitelisted sources bypass this check; packets outside the service allowlist keep the existing `REASON_NOT_ALLOWED_SERVICE` behavior.
 
-## 13. Feeds and reputation
+## 14. Feeds and reputation
 
 Authenticated read, Operator/Admin mutation. `credential_ref` create/update requires Admin.
 
@@ -422,7 +464,7 @@ Authenticated read, Operator/Admin mutation. `credential_ref` create/update requ
 
 Soft-disable can rebuild snapshot when active feed state changes.
 
-## 14. Telegram and alerts
+## 15. Telegram and alerts
 
 Authenticated read. Operational alert actions require Operator/Admin through store checks.
 
@@ -463,7 +505,7 @@ Authenticated read. Operational alert actions require Operator/Admin through sto
 
 ISP escalation does not perform automatic BGP/RTBH/FlowSpec. It creates/evaluates alert/runbook payload for manual escalation.
 
-## 15. Snapshots
+## 16. Snapshots
 
 Authenticated read, Operator/Admin mutation for build/rollback.
 
@@ -494,7 +536,7 @@ Authenticated read, Operator/Admin mutation for build/rollback.
 - `runtime`
 - `object_checksum`
 
-## 16. Audit
+## 17. Audit
 
 Authenticated.
 
@@ -518,7 +560,7 @@ Audit event fields:
 
 Sensitive policy: raw passwords, Telegram bot tokens and credential values must not be stored in audit payloads.
 
-## 17. Security events and investigation
+## 18. Security events and investigation
 
 Authenticated user endpoints.
 
@@ -539,9 +581,9 @@ Event query parameters:
 - `src`
 - `limit`
 
-Agent event ingest is documented in section 19.
+Agent event ingest is documented in section 21.
 
-## 18. Baselines and anomalies
+## 19. Baselines and anomalies
 
 Authenticated read. Baseline mutation and anomaly evaluate require Operator/Admin through store checks.
 
@@ -571,9 +613,9 @@ Authenticated read. Baseline mutation and anomaly evaluate require Operator/Admi
 - `confidence`
 - `evidence`
 
-## 19. Dashboard read API
+## 20. Dashboard read API
 
-Authenticated. These endpoints are optimized for dashboard polling and view models.
+Authenticated. These endpoints are optimized for dashboard polling and view models. Dashboard overview uses tenant-scoped control-plane data; global Prometheus traffic is not mixed into tenant dashboards unless tenant labels are available.
 
 | Method | Path | Response |
 |---|---|---|
@@ -593,13 +635,14 @@ Dashboard overview includes:
 - `snapshot_version`
 - `latest_apply_status`
 
-## 20. Agent control API
+## 21. Agent control API
 
 Agent endpoints use the agent shared bearer token, not user sessions.
+`POST /v1/agents/register` also requires `X-Tenant-ID` or `X-Tenant-Slug`. Heartbeat, snapshot, apply and event ingestion resolve tenant from `agent_id` after registration.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| POST | `/v1/agents/register` | `AgentRegisterRequest` | `AgentRegisterResponse` | Register or refresh agent identity |
+| POST | `/v1/agents/register` | `AgentRegisterRequest` + tenant header | `AgentRegisterResponse` | Register or refresh agent identity in tenant |
 | POST | `/v1/agents/{id}/heartbeat` | `AgentHeartbeatRequest` | `AgentHeartbeatResponse` | Report status/interfaces/map utilization |
 | GET | `/v1/agents/{id}/snapshot?active_version=N` | query | `{"snapshot": ...}` or `204` | Fetch desired snapshot when newer than active |
 | POST | `/v1/agents/{id}/apply` | `AgentApplyRequest` | `{"ok":true}` | Report apply result |
@@ -659,12 +702,13 @@ Agent endpoints use the agent shared bearer token, not user sessions.
 
 Batch limit: max 1000 events.
 
-## 21. Endpoint summary
+## 22. Endpoint summary
 
 | Domain | Endpoints |
 |---|---|
 | Health | `GET /healthz`, `GET /metrics` |
 | Auth | `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me`, `POST /v1/me/password` |
+| Tenants | `GET/POST /v1/tenants`, `PATCH /v1/tenants/{id}`, `POST /v1/tenants/switch` |
 | Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, `POST /v1/users/{id}/password-reset`, `POST /v1/users/{id}/sessions/revoke` |
 | Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist`, `PATCH/DELETE /v1/blacklist/{id}`, `GET/POST /v1/udp-source-port-blocks`, `PATCH/DELETE /v1/udp-source-port-blocks/{id}` |
 | Feeds | `GET/POST /v1/feed-sources`, `GET/PATCH/DELETE /v1/feed-sources/{id}`, `POST /v1/feed-sources/{id}/sync`, `GET /v1/feed-runs`, `GET /v1/feed-conflicts` |
@@ -673,7 +717,7 @@ Batch limit: max 1000 events.
 | Observability | `GET /v1/audit`, `GET /v1/security-events`, `GET /v1/security-events/summary`, `GET /v1/security-events/investigate`, `GET/POST /v1/baselines`, `POST /v1/baselines/{id}/approve`, `POST /v1/baselines/{id}/recalibrate`, `GET /v1/anomalies`, `POST /v1/anomalies/evaluate`, `GET /v1/dashboard/overview`, `GET /v1/dashboard/agents`, `GET /v1/dashboard/services`, `GET /v1/dashboard/rules` |
 | Agents | `POST /v1/agents/register`, `POST /v1/agents/{id}/heartbeat`, `GET /v1/agents/{id}/snapshot`, `POST /v1/agents/{id}/apply`, `POST /v1/agents/{id}/events` |
 
-## 22. Verification guidance
+## 23. Verification guidance
 
 When changing Control API behavior, update this document and run relevant gates:
 
