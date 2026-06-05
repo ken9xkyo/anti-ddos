@@ -31,7 +31,7 @@ export function IncidentsView({
   const [working, setWorking] = useState('');
   const [result, setResult] = useState('');
   const [telegramForm, setTelegramForm] = useState<TelegramFormState>(() => telegramFormFromConfig(config));
-  const canConfigureTelegram = user.role === 'admin';
+  const canConfigureTelegram = user.role === 'admin' || user.role === 'operator';
 
   useEffect(() => {
     setTelegramForm(telegramFormFromConfig(config));
@@ -119,7 +119,7 @@ export function IncidentsView({
             </div>
           </form>
         ) : (
-          <p className="muted">Telegram configuration changes require admin role.</p>
+          <p className="muted">Telegram configuration changes require operator role.</p>
         )}
 
         <div className="button-row">

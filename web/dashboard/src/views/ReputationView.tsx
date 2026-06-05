@@ -246,7 +246,7 @@ export function ReputationView({
           <TextField label="Interval seconds" value={form.interval_seconds} onChange={(event) => setForm({ ...form, interval_seconds: event.target.value })} inputMode="numeric" fullWidth />
         </Stack>
         <TextField label="URL" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} fullWidth />
-        <TextField label="Credential ref" value={form.credential_ref} onChange={(event) => setForm({ ...form, credential_ref: event.target.value })} fullWidth disabled={!canConfigureCredential} />
+        {canConfigureCredential ? <TextField label="Credential ref" value={form.credential_ref} onChange={(event) => setForm({ ...form, credential_ref: event.target.value })} fullWidth /> : null}
         <Stack direction="row" spacing={1}>
           <TextField label="Status" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} fullWidth />
           <TextField label="License note" value={form.license_note} onChange={(event) => setForm({ ...form, license_note: event.target.value })} fullWidth />

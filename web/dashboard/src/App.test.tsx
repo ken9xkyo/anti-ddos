@@ -6,6 +6,12 @@ import type { DashboardData, User } from './types';
 
 const data = dashboardFixture();
 const adminUser: User = { id: 'u3', username: 'admin', role: 'admin' };
+const platformAdminUser: User = {
+  ...adminUser,
+  platform_role: 'platform_admin',
+  active_tenant: defaultTenant,
+  tenants: [{ tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'admin', status: 'active' }]
+};
 
 function renderShell(user: User, activeTab: Tab = 'overview') {
   return renderShellWithData(user, data, activeTab);
@@ -57,6 +63,12 @@ describe('DashboardShell', () => {
     for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Reputation', 'Snapshots', 'Accounts', 'Nodes']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('button', { name: 'Tenants' })).not.toBeInTheDocument();
+  });
+
+  it('shows tenant management navigation to platform admins', () => {
+    renderShell(platformAdminUser);
+    expect(screen.getByRole('button', { name: 'Tenants' })).toBeInTheDocument();
   });
 
   it('switches active tenant from the topbar', async () => {
@@ -86,6 +98,62 @@ describe('DashboardShell', () => {
     fireEvent.change(screen.getByLabelText('tenant'), { target: { value: 'tenant-b' } });
 
     await waitFor(() => expect(onTenantSwitch).toHaveBeenCalledWith('tenant-b'));
+  });
+
+  it('runs platform tenant create, edit and accounts jump workflows', async () => {
+    const onTenantSwitch = vi.fn(async () => undefined);
+    const setActiveTab = vi.fn();
+    const tenantRows = [
+      { tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'admin', status: 'active' },
+      { tenant_id: 'tenant-b', slug: 'tenant-b', name: 'Tenant B', role: 'admin', status: 'active' }
+    ];
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      if (path === '/v1/tenants?include_revoked=true' && !init?.method) return jsonResponse(tenantRows);
+      if (path === '/v1/tenants' && init?.method === 'POST') return jsonResponse({ id: 'tenant-c', slug: 'tenant-c', name: 'Tenant C', status: 'active' });
+      if (path === `/v1/tenants/${defaultTenant.id}` && init?.method === 'PATCH') return jsonResponse({ ...defaultTenant, name: 'Default Tenant Updated' });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    render(
+      <DashboardShell
+        user={platformAdminUser}
+        data={data}
+        activeTab="tenants"
+        setActiveTab={setActiveTab}
+        loading={false}
+        error=""
+        lastRefresh={new Date().toISOString()}
+        onRefresh={vi.fn()}
+        onTenantSwitch={onTenantSwitch}
+        onLogout={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText('Tenant B')).toBeInTheDocument();
+    clickButtonByText(/add tenant/i);
+    await fillField(/^slug/i, 'tenant-c');
+    await fillField(/^name/i, 'Tenant C');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/tenants' && call.method === 'POST')).toBe(true));
+
+    fireEvent.click(screen.getAllByText(/^edit$/i)[0].closest('button')!);
+    await fillField(/^name/i, 'Default Tenant Updated');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === `/v1/tenants/${defaultTenant.id}` && call.method === 'PATCH')).toBe(true));
+
+    const accountButtons = screen.getAllByText(/^accounts$/i);
+    fireEvent.click(accountButtons[accountButtons.length - 1].closest('button')!);
+    await waitFor(() => expect(onTenantSwitch).toHaveBeenCalledWith('tenant-b'));
+    expect(setActiveTab).toHaveBeenCalledWith('access');
+    expect(calls.find((call) => call.path === '/v1/tenants' && call.method === 'POST')?.body).toMatchObject({ slug: 'tenant-c', name: 'Tenant C', status: 'active' });
+    expect(calls.find((call) => call.path === `/v1/tenants/${defaultTenant.id}` && call.method === 'PATCH')?.body).toMatchObject({ name: 'Default Tenant Updated', status: 'active' });
   });
 
   it('keeps viewer read-only', () => {
@@ -493,7 +561,7 @@ describe('DashboardShell', () => {
     });
   });
 
-  it('allows only admin to save Telegram config', async () => {
+  it('allows operator to save Telegram config', async () => {
     const onRefresh = vi.fn(async () => undefined);
     const calls: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -501,12 +569,9 @@ describe('DashboardShell', () => {
       return jsonResponse({ ...data.telegramConfig, chat_id: '5678' });
     }));
 
-    renderShell(operatorUser, 'incidents');
-    expect(screen.queryByRole('button', { name: /save config/i })).not.toBeInTheDocument();
-
     render(
       <DashboardShell
-        user={adminUser}
+        user={operatorUser}
         data={data}
         activeTab="incidents"
         setActiveTab={vi.fn()}
@@ -953,6 +1018,36 @@ describe('DashboardShell', () => {
     expect(calls.find((call) => call.path === '/v1/feed-sources/f1' && call.method === 'DELETE')?.reason).toBe('retire feed');
   });
 
+  it('hides feed credential controls from operators', async () => {
+    const feedData = {
+      ...data,
+      feedSources: data.feedSources.map((source) => source.id === 'f1' ? { ...source, credential_ref: undefined } : source)
+    };
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      if (path === '/v1/feed-sources' && !init?.method) return jsonResponse(feedData.feedSources);
+      if (path === '/v1/feed-sources/f1' && init?.method === 'PATCH') return jsonResponse({ ...feedData.feedSources[0], license_note: 'operator-ok' });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShellWithData(operatorUser, feedData, 'reputation');
+    expect((await screen.findAllByText('spamhaus-drop')).length).toBeGreaterThan(0);
+    clickButtonByText(/^edit$/i);
+    expect(screen.queryByLabelText(/credential ref/i)).not.toBeInTheDocument();
+    await fillField(/license note/i, 'operator-ok');
+    await fillField(/^reason/i, 'operator updates feed metadata');
+    clickButtonByText(/save feed/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/feed-sources/f1' && call.method === 'PATCH')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/feed-sources/f1' && call.method === 'PATCH')?.body).not.toHaveProperty('credential_ref');
+  });
+
   it('runs user create, reactivate, password reset and session revoke workflows', async () => {
     const managedUser: User = {
       ...operatorUser,
@@ -1019,6 +1114,43 @@ describe('DashboardShell', () => {
       force_password_change: true
     });
     expect(calls.find((call) => call.path === '/v1/users/u2/sessions/revoke' && call.method === 'POST')?.body).toEqual({ reason: 'clear stale sessions' });
+  });
+
+  it('lets operator manage viewer accounts only', async () => {
+    const managedViewer: User = { id: 'u4', username: 'analyst', role: 'viewer', status: 'active', force_password_change: true };
+    const managedOperator: User = { id: 'u5', username: 'peer-operator', role: 'operator', status: 'active', force_password_change: false };
+    const calls: Array<{ path: string; method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = input.toString();
+      calls.push({
+        path,
+        method: init?.method,
+        body: init?.body ? JSON.parse(init.body as string) : undefined
+      });
+      if (path === '/v1/users' && !init?.method) return jsonResponse([managedViewer, managedOperator]);
+      if (path === '/v1/users' && init?.method === 'POST') return jsonResponse({ id: 'u6', username: 'new-viewer', role: 'viewer', status: 'active' });
+      if (path === '/v1/users/u4' && init?.method === 'PATCH') return jsonResponse({ ...managedViewer, status: 'revoked' });
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    renderShell(operatorUser, 'access');
+    expect(await screen.findByText('analyst')).toBeInTheDocument();
+    expect(screen.getByText(/add viewer/i).closest('button')).toBeTruthy();
+    expect(screen.getByText('read only')).toBeInTheDocument();
+
+    clickButtonByText(/add viewer/i);
+    await fillField(/^username/i, 'new-viewer');
+    await fillField(/temporary password/i, 'TempPass123!');
+    await fillField(/^reason/i, 'create tenant viewer');
+    clickButtonByText(/^save$/i);
+    await waitFor(() => expect(calls.some((call) => call.path === '/v1/users' && call.method === 'POST')).toBe(true));
+
+    expect(calls.find((call) => call.path === '/v1/users' && call.method === 'POST')?.body).toEqual({
+      reason: 'create tenant viewer',
+      username: 'new-viewer',
+      password: 'TempPass123!',
+      role: 'viewer'
+    });
   });
 
   it('loads snapshot semantic diff and confirms rollback', async () => {

@@ -2,6 +2,7 @@ import {
   Activity,
   AlertTriangle,
   Ban,
+  Building2,
   DatabaseBackup,
   Gauge,
   ListChecks,
@@ -42,6 +43,7 @@ export const navGroups = [
     label: 'Setting',
     items: [
       { id: 'snapshots', label: 'Snapshots', icon: DatabaseBackup },
+      { id: 'tenants', label: 'Tenants', icon: Building2, platformOnly: true },
       { id: 'access', label: 'Accounts', icon: Users },
       { id: 'fleet', label: 'Nodes', icon: Server }
     ]

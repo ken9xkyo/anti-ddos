@@ -116,8 +116,8 @@ export class ApiClient {
     return asArray(await this.request<User[] | null>('/v1/users'));
   }
 
-  async tenants(): Promise<TenantAccess[]> {
-    return asArray(await this.request<TenantAccess[] | null>('/v1/tenants'));
+  async tenants(includeRevoked = false): Promise<TenantAccess[]> {
+    return asArray(await this.request<TenantAccess[] | null>(includeRevoked ? '/v1/tenants?include_revoked=true' : '/v1/tenants'));
   }
 
   async createTenant(input: TenantInput): Promise<Tenant> {

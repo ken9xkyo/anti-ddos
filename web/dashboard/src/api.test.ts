@@ -80,6 +80,21 @@ describe('ApiClient', () => {
     expect(localStorage.getItem('anti_ddos_token')).toBe('token-tenant-b');
   });
 
+  it('loads active or full tenant lists', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return jsonResponse([]);
+    }));
+
+    const client = new ApiClient();
+    client.setToken('platform-token');
+    await client.tenants();
+    await client.tenants(true);
+
+    expect(calls).toEqual(['/v1/tenants', '/v1/tenants?include_revoked=true']);
+  });
+
   it('loads dashboard data from every dashboard dependency endpoint', async () => {
     const data = dashboardFixture();
     const responses = dashboardResponses(data);

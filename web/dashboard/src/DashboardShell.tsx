@@ -21,6 +21,7 @@ import { WhitelistAdminView } from './views/WhitelistAdminView';
 import { BlacklistAdminView } from './views/BlacklistAdminView';
 import { UDPPortsAdminView } from './views/UDPPortsAdminView';
 import { SnapshotsView } from './views/SnapshotsView';
+import { TenantsView } from './views/TenantsView';
 import { AccessView } from './views/AccessView';
 import type { DashboardData, User } from './types';
 
@@ -49,8 +50,13 @@ export function DashboardShell({
 }) {
   const [switchingTenant, setSwitchingTenant] = useState(false);
   const canMutate = user.role === 'admin' || user.role === 'operator';
+  const isPlatformAdmin = user.platform_role === 'platform_admin';
   const tenants = user.tenants ?? [];
   const activeTenantID = user.active_tenant?.id ?? tenants[0]?.tenant_id ?? '';
+  const visibleNavGroups = useMemo(() => navGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !('platformOnly' in item) || !item.platformOnly || isPlatformAdmin)
+  })).filter((group) => group.items.length > 0), [isPlatformAdmin]);
   const stale = useMemo(() => {
     if (!lastRefresh) return true;
     return Date.now() - new Date(lastRefresh).getTime() > 6000;
@@ -77,7 +83,7 @@ export function DashboardShell({
           </div>
         </div>
         <nav className="side-nav" aria-label="Dashboard views">
-          {navGroups.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <div className="nav-group-label">{group.label}</div>
               <div className="nav-group-items">
@@ -155,6 +161,7 @@ export function DashboardShell({
         {data && activeTab === 'detection' ? <DetectionView anomalies={data.anomalies} baselines={data.baselines} rules={data.rules} /> : null}
         {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
         {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}
+        {data && activeTab === 'tenants' && isPlatformAdmin ? <TenantsView currentUser={user} onTenantSwitch={onTenantSwitch} onOpenAccounts={() => setActiveTab('access')} /> : null}
         {data && activeTab === 'access' ? <AccessView currentUser={user} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}
         {data && activeTab === 'investigation' ? <InvestigationView events={data.events} /> : null}
