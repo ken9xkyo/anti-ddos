@@ -133,9 +133,6 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 		return TelegramConfig{}, err
 	}
 	tokenInput := strings.TrimSpace(input.BotTokenRef)
-	if actor.Role != RoleAdmin && tokenInput != "" && tokenInput != telegramTokenMask {
-		return TelegramConfig{}, errors.New("admin role required for telegram token changes")
-	}
 	if err := validateTelegramConfigInput(input); err != nil {
 		return TelegramConfig{}, err
 	}

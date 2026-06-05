@@ -963,6 +963,22 @@ func maskFeedSourceCredentials(sources []FeedSource) []FeedSource {
 	return out
 }
 
+func maskFeedSourceCredentialForActor(source FeedSource, actor *Actor) FeedSource {
+	if actor != nil && actor.Role == RoleAdmin {
+		return maskFeedSourceCredential(source)
+	}
+	source.CredentialRef = ""
+	return source
+}
+
+func maskFeedSourceCredentialsForActor(sources []FeedSource, actor *Actor) []FeedSource {
+	out := make([]FeedSource, len(sources))
+	for i, source := range sources {
+		out[i] = maskFeedSourceCredentialForActor(source, actor)
+	}
+	return out
+}
+
 func resolveCredentialRef(ref string) (string, string) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {

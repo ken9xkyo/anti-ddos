@@ -11,9 +11,6 @@ import (
 )
 
 func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input UserUpdateInput, reason string) (User, error) {
-	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
-		return User{}, errors.New("admin role required")
-	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
@@ -42,6 +39,9 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if err := validateUserRoleStatus(role, status); err != nil {
 		return User{}, err
 	}
+	if err := requireTenantUserTargetPermission(actor, before, role); err != nil {
+		return User{}, err
+	}
 	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, role, status); err != nil {
 		return User{}, err
 	}
@@ -67,9 +67,6 @@ WHERE id=$1`, id, forcePasswordChange); err != nil {
 }
 
 func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, input PasswordResetInput, reason string) (User, error) {
-	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
-		return User{}, errors.New("admin role required")
-	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
@@ -92,6 +89,9 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	defer tx.Rollback(ctx)
 	before, err := s.getUser(ctx, tx, id)
 	if err != nil {
+		return User{}, err
+	}
+	if err := requireTenantUserTargetPermission(actor, before, ""); err != nil {
 		return User{}, err
 	}
 	var after User
@@ -117,9 +117,6 @@ RETURNING id::text, username, role, platform_role, status, force_password_change
 }
 
 func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason string) (User, error) {
-	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
-		return User{}, errors.New("admin role required")
-	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
@@ -130,6 +127,9 @@ func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason
 	defer tx.Rollback(ctx)
 	user, err := s.getUser(ctx, tx, id)
 	if err != nil {
+		return User{}, err
+	}
+	if err := requireTenantUserTargetPermission(actor, user, ""); err != nil {
 		return User{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {

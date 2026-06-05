@@ -184,6 +184,41 @@ func tenantRoleAllowsAdmin(role string) bool {
 	return role == RoleAdmin
 }
 
+func requireTenantUserCreatePermission(actor *Actor, role string) error {
+	if actor == nil {
+		return errors.New("authentication required")
+	}
+	if tenantRoleAllowsAdmin(actor.Role) {
+		return nil
+	}
+	if actor.Role != RoleOperator {
+		return errors.New("operator role required")
+	}
+	if role != RoleViewer {
+		return errors.New("admin role required for non-viewer member changes")
+	}
+	return nil
+}
+
+func requireTenantUserTargetPermission(actor *Actor, target User, requestedRole string) error {
+	if actor == nil {
+		return errors.New("authentication required")
+	}
+	if tenantRoleAllowsAdmin(actor.Role) {
+		return nil
+	}
+	if actor.Role != RoleOperator {
+		return errors.New("operator role required")
+	}
+	if target.Role != RoleViewer {
+		return errors.New("admin role required for non-viewer member changes")
+	}
+	if requestedRole != "" && requestedRole != RoleViewer {
+		return errors.New("admin role required for non-viewer member changes")
+	}
+	return nil
+}
+
 func actorTenantID(actor *Actor) string {
 	if actor == nil {
 		return ""

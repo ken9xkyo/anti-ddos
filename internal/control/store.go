@@ -247,9 +247,6 @@ func (s *Store) RevokeToken(ctx context.Context, token string) error {
 }
 
 func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password, role, reason string) (User, error) {
-	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
-		return User{}, errors.New("admin role required")
-	}
 	username = strings.TrimSpace(username)
 	role = strings.TrimSpace(strings.ToLower(role))
 	if username == "" {
@@ -257,6 +254,9 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	}
 	if role != RoleAdmin && role != RoleOperator && role != RoleViewer {
 		return User{}, fmt.Errorf("unsupported role %q", role)
+	}
+	if err := requireTenantUserCreatePermission(actor, role); err != nil {
+		return User{}, err
 	}
 	if len(password) < 12 {
 		return User{}, errors.New("password must be at least 12 characters")
@@ -272,6 +272,17 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	user, created, err := s.ensureUserIdentity(ctx, tx, username, password, role)
 	if err != nil {
 		return User{}, err
+	}
+	if actor.Role == RoleOperator {
+		existing, err := s.getUser(ctx, tx, user.ID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return User{}, err
+		}
+		if err == nil {
+			if err := requireTenantUserTargetPermission(actor, existing, role); err != nil {
+				return User{}, err
+			}
+		}
 	}
 	membershipID, err := newUUID()
 	if err != nil {
@@ -327,9 +338,6 @@ ORDER BY u.username`)
 }
 
 func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string) (User, error) {
-	if actor == nil || !tenantRoleAllowsAdmin(actor.Role) {
-		return User{}, errors.New("admin role required")
-	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
@@ -340,6 +348,9 @@ func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string)
 	defer tx.Rollback(ctx)
 	before, err := s.getUser(ctx, tx, id)
 	if err != nil {
+		return User{}, err
+	}
+	if err := requireTenantUserTargetPermission(actor, before, ""); err != nil {
 		return User{}, err
 	}
 	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, before.Role, StatusRevoked); err != nil {

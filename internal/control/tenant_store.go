@@ -130,9 +130,30 @@ ORDER BY t.slug`, userID)
 	return out, rows.Err()
 }
 
-func (s *Store) ListTenants(ctx context.Context, actor *Actor) ([]TenantAccess, error) {
+func (s *Store) ListTenants(ctx context.Context, actor *Actor, includeRevoked bool) ([]TenantAccess, error) {
 	if actor == nil {
 		return nil, errors.New("authentication required")
+	}
+	if includeRevoked {
+		if actor.PlatformRole != PlatformRoleAdmin {
+			return nil, errors.New("platform_admin role required")
+		}
+		rows, err := s.pool.Query(ctx, `SELECT id::text, slug, name, 'admin', status, created_at, updated_at
+FROM tenants
+ORDER BY slug`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := make([]TenantAccess, 0)
+		for rows.Next() {
+			var access TenantAccess
+			if err := rows.Scan(&access.TenantID, &access.Slug, &access.Name, &access.Role, &access.Status, &access.CreatedAt, &access.UpdatedAt); err != nil {
+				return nil, err
+			}
+			out = append(out, access)
+		}
+		return out, rows.Err()
 	}
 	return s.userTenantAccesses(ctx, actor.ID, actor.PlatformRole)
 }

@@ -198,7 +198,7 @@ func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		tenants, err := s.store.ListTenants(r.Context(), actor)
+		tenants, err := s.store.ListTenants(r.Context(), actor, r.URL.Query().Get("include_revoked") == "true")
 		writeResult(w, tenants, err)
 	case http.MethodPost:
 		var req TenantInput
@@ -640,7 +640,7 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		sources, err := s.store.ListFeedSources(r.Context())
 		if err == nil {
-			sources = maskFeedSourceCredentials(sources)
+			sources = maskFeedSourceCredentialsForActor(sources, actor)
 		}
 		writeResult(w, sources, err)
 	case http.MethodPost:
@@ -650,7 +650,7 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 		}
 		source, err := s.store.CreateFeedSource(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
 		if err == nil {
-			source = maskFeedSourceCredential(source)
+			source = maskFeedSourceCredentialForActor(source, actor)
 		}
 		writeResult(w, source, err)
 	default:
@@ -697,7 +697,7 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		source, err := s.store.GetFeedSource(r.Context(), id)
 		if err == nil {
-			source = maskFeedSourceCredential(source)
+			source = maskFeedSourceCredentialForActor(source, actor)
 		}
 		writeResult(w, source, err)
 	case http.MethodPatch:
@@ -707,13 +707,13 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 		}
 		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
 		if err == nil {
-			source = maskFeedSourceCredential(source)
+			source = maskFeedSourceCredentialForActor(source, actor)
 		}
 		writeResult(w, source, err)
 	case http.MethodDelete:
 		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
 		if err == nil {
-			source = maskFeedSourceCredential(source)
+			source = maskFeedSourceCredentialForActor(source, actor)
 		}
 		writeResult(w, source, err)
 	default:
@@ -1057,6 +1057,12 @@ func routeName(r *http.Request) string {
 		return "/v1/me"
 	case path == "/v1/me/password":
 		return "/v1/me/password"
+	case path == "/v1/tenants":
+		return "/v1/tenants"
+	case path == "/v1/tenants/switch":
+		return "/v1/tenants/switch"
+	case strings.HasPrefix(path, "/v1/tenants/"):
+		return "/v1/tenants/{id}"
 	case path == "/v1/users":
 		return "/v1/users"
 	case strings.HasPrefix(path, "/v1/users/"):
