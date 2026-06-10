@@ -1,0 +1,33 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2563eb', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#1d4ed8', 'lineColor': '#94a3b8', 'secondaryColor': '#059669', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+flowchart TB
+    subgraph host["Scrubbing host"]
+        wan["WAN NIC"]
+        output["Output NIC"]
+        xdp["xdp_entry<br/>bpf/xdp_data_plane.bpf.c"]
+        maps[("Pinned eBPF maps")]
+        agent["anti-ddos-agent<br/>cmd/agent"]
+        snapshot["last-valid snapshot"]
+    end
+
+    subgraph management["Management stack"]
+        api["control-api<br/>cmd/control-api"]
+        admin["control-admin<br/>cmd/control-admin"]
+        ui["Admin Dashboard<br/>React/Vite"]
+        db[("PostgreSQL")]
+        prom["Prometheus"]
+        graf["Grafana"]
+    end
+
+    wan --> xdp
+    xdp <--> maps
+    xdp -->|"XDP_REDIRECT through tx_devmap"| output
+    agent -->|"load/attach/pin"| xdp
+    agent -->|"apply policy A/B slot"| maps
+    agent -->|"persist"| snapshot
+    agent -->|"metrics + sampled events"| prom
+    agent -->|"agent API sync"| api
+    ui -->|"JSON /v1"| api
+    admin -->|"bootstrap first admin"| db
+    api -->|"migrations + tenant data"| db
+    api -->|"PromQL query/status"| prom
+    prom --> graf

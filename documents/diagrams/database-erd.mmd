@@ -1,0 +1,61 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2563eb', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#1d4ed8', 'lineColor': '#94a3b8', 'secondaryColor': '#059669', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+erDiagram
+    tenants ||--o{ tenant_memberships : has
+    app_users ||--o{ tenant_memberships : joins
+    app_users ||--o{ user_sessions : owns
+    tenants ||--o{ backend_services : scopes
+    backend_services ||--o{ forwarding_policies : exposes
+    backend_services ||--o{ rules : protects
+    backend_services ||--o{ whitelist_entries : scopes
+    rules ||--o{ manual_blacklist_entries : references
+    tenants ||--o{ feed_sources : scopes
+    feed_sources ||--o{ feed_runs : records
+    feed_sources ||--o{ reputation_entries : produces
+    reputation_entries ||--o{ feed_conflicts : conflicts
+    whitelist_entries ||--o{ feed_conflicts : protects
+    tenants ||--o{ policy_snapshots : versions
+    agents ||--o{ agent_interfaces : reports
+    agents ||--o{ policy_apply_status : applies
+    agents ||--o{ security_events : emits
+    backend_services ||--o{ baseline_profiles : baselines
+    baseline_profiles ||--o{ anomaly_evaluations : evaluates
+    alerts ||--o{ alert_deliveries : sends
+
+    tenants {
+        uuid id PK
+        text slug
+        text name
+        text status
+    }
+    app_users {
+        uuid id PK
+        text username
+        text platform_role
+        text status
+    }
+    backend_services {
+        uuid id PK
+        bigint ebpf_id
+        inet backend_cidr
+        text protocol
+        uuid tenant_id
+    }
+    policy_snapshots {
+        uuid tenant_id PK
+        bigint version PK
+        jsonb snapshot
+        text checksum
+    }
+    agents {
+        uuid id PK
+        text hostname
+        uuid tenant_id
+        bigint active_policy_version
+    }
+    security_events {
+        uuid id PK
+        uuid tenant_id
+        uuid agent_id
+        inet src_ip
+        integer reason
+    }

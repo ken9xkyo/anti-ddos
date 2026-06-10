@@ -1,0 +1,29 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2563eb', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#1d4ed8', 'lineColor': '#94a3b8', 'secondaryColor': '#059669', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+flowchart LR
+    inputs["Tenant-scoped policy inputs<br/>services, rules, lists, feeds, UDP ports"]
+    build["BuildPolicySnapshot"]
+    sign["Canonical checksum + object checksum"]
+    db[("policy_snapshots")]
+    agentFetch["Agent fetches newer version"]
+    validate["Verify schema, checksum, capacity, object"]
+    resolve["Resolve forwarding metadata"]
+    inactive["Populate inactive A/B maps"]
+    devmap["Update tx_devmap"]
+    flip["Flip runtime_config.active_slot"]
+    persist["Persist last-valid snapshot"]
+    ack["Record apply status"]
+
+    inputs --> build
+    build --> sign
+    sign --> db
+    db --> agentFetch
+    agentFetch --> validate
+    validate --> resolve
+    resolve --> inactive
+    inactive --> devmap
+    devmap --> flip
+    flip --> persist
+    persist --> ack
+    validate -. "fail: keep previous active slot" .-> ack
+    inactive -. "fail: clear inactive slot" .-> ack
+    devmap -. "fail: rollback touched entries" .-> ack

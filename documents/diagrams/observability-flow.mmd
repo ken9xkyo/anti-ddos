@@ -1,0 +1,24 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2563eb', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#1d4ed8', 'lineColor': '#94a3b8', 'secondaryColor': '#059669', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+flowchart LR
+    xdp["XDP counters + ringbuf events"]
+    agent["Node Agent"]
+    metrics["Agent /metrics"]
+    events["POST /v1/agents/{id}/events"]
+    controlMetrics["Control API /metrics"]
+    db[("security_events, alerts, audit")]
+    prom["Prometheus"]
+    graf["Grafana"]
+    dashboard["Admin Dashboard"]
+    telegram["Telegram"]
+
+    xdp -->|"drop_counters, forwarding counters"| agent
+    xdp -->|"sampled event_record"| agent
+    agent --> metrics
+    agent --> events
+    events --> db
+    db --> dashboard
+    prom --> dashboard
+    metrics --> prom
+    controlMetrics --> prom
+    prom --> graf
+    db -->|"alert lifecycle"| telegram
