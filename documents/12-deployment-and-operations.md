@@ -14,6 +14,8 @@ Docker Compose chạy management/control stack:
 
 Node Agent chạy trên host vì cần quyền eBPF/XDP và access interface. Compose không attach XDP.
 
+Target SaaS operations giả định mỗi lab/prod workflow có ít nhất một Customer Account (`Tenant`) active trước khi đăng ký agent, tạo protected service hoặc build snapshot.
+
 ## Default Ports
 
 | Service | Host bind |
@@ -37,6 +39,8 @@ make dev-health
 
 `make deploy` maps to `dev-up`, which builds BPF object and compose images before `docker compose up -d`.
 
+After bootstrap, create or activate a lab Customer Account, assign tenant membership to `tenant_owner`/`tenant_admin`, then perform service/policy/agent operations inside that tenant. In a target SaaS rebuild, platform bootstrap should create a `platform_owner` or `platform_admin` account; tenant users should be created through tenant membership workflows.
+
 ## Compose Services
 
 | Service | Image/build | Notes |
@@ -46,6 +50,15 @@ make dev-health
 | `prometheus` | `prom/prometheus:v3.5.2` default | Scrapes control and host Agent |
 | `grafana` | `grafana/grafana:12.4.3-security-02` default | Dashboard JSON mounted |
 | `admin-dashboard` | `deploy/docker/admin-dashboard.Dockerfile` | React build served by nginx |
+
+## Tenant Operations Guardrails
+
+- Tenant provisioning/suspension/offboarding/revocation is platform workflow and must be audited.
+- Tenant onboarding must create at least one `tenant_owner` and one approved service inventory before production policy rollout.
+- Agent registration requires tenant identifier; do not register a production agent into a placeholder/default tenant.
+- Tenant suspension should block new mutation and agent registration while preserving audit and required read-only support workflows.
+- Tenant offboarding must define export/retention/deletion steps before revocation.
+- Platform support access to tenant operations must be time-bound, reason-required and visible in audit.
 
 ## Host Agent Operations
 

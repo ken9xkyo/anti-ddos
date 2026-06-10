@@ -2,7 +2,21 @@
 
 ## Quy Ước
 
-Ma trận này chỉ ra nơi cần đọc source khi team mới muốn clone hoặc verify một subsystem. Nếu tài liệu và source lệch nhau, source hiện tại thắng.
+Ma trận này chỉ ra nơi cần đọc source khi team mới muốn clone hoặc verify một subsystem. Với target SaaS RBAC, role names trong `documents/` là canonical product-facing spec. Source hiện tại vẫn là implementation anchor cho endpoint, migration, eBPF ABI, Agent behavior, dashboard flow và tests.
+
+Nếu tài liệu target RBAC và source hiện tại khác nhau về tên role, không expose tên role implementation-only ra sản phẩm mới; dùng source để hiểu nơi cần thay đổi khi implement. Nếu tài liệu low-level và source khác nhau về ABI/endpoint/migration hiện hữu, verify source trước khi build contract tương thích.
+
+## Target SaaS RBAC Traceability
+
+| Target concept | Tài liệu chính | Source anchor hiện tại |
+|---|---|---|
+| Tenant = Customer Account | [11-security-rbac-and-secrets.md](11-security-rbac-and-secrets.md), [07-database-schema-and-migrations.md](07-database-schema-and-migrations.md) | `internal/control/tenant.go`, `internal/control/tenant_store.go` |
+| Platform roles | [11-security-rbac-and-secrets.md](11-security-rbac-and-secrets.md) | `internal/control/types.go`, `internal/control/store.go` |
+| Tenant roles | [11-security-rbac-and-secrets.md](11-security-rbac-and-secrets.md), [09-admin-dashboard.md](09-admin-dashboard.md) | `internal/control/types.go`, `internal/control/rbac_test.go` |
+| Active tenant session | [06-control-plane-api.md](06-control-plane-api.md), [11-security-rbac-and-secrets.md](11-security-rbac-and-secrets.md) | `internal/control/tenant.go`, `internal/control/store.go` |
+| Tenant-scoped DB/RLS | [07-database-schema-and-migrations.md](07-database-schema-and-migrations.md) | `internal/control/migrations.go`, `internal/control/tenant.go` |
+| Agent tenant binding | [05-node-agent.md](05-node-agent.md), [06-control-plane-api.md](06-control-plane-api.md) | `internal/control/agent_store.go`, `internal/agent/control_client.go` |
+| Audit and support/break-glass | [10-observability-alerting-and-audit.md](10-observability-alerting-and-audit.md), [11-security-rbac-and-secrets.md](11-security-rbac-and-secrets.md) | `internal/control/store.go`, `internal/control/alert.go` |
 
 ## Runtime Entrypoints
 
@@ -108,6 +122,7 @@ Ma trận này chỉ ra nơi cần đọc source khi team mới muốn clone ho�
 | IPv6 datapath | Out of scope |
 | Auto-enforce anomaly | Disabled by design, alert-only |
 | Production secret manager integration | Only ref conventions documented in current source |
+| Target SaaS RBAC implementation | Documents define target taxonomy; source anchors show where implementation must align |
 
 ## Source Alignment
 

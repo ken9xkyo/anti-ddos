@@ -1,24 +1,41 @@
-%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2563eb', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#1d4ed8', 'lineColor': '#94a3b8', 'secondaryColor': '#059669', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#f8fafc", "primaryTextColor": "#0f172a", "primaryBorderColor": "#2563eb", "lineColor": "#475569", "secondaryColor": "#ecfdf5", "tertiaryColor": "#fff7ed", "fontFamily": "Inter, Arial, sans-serif"}}}%%
 flowchart TD
-    login["POST /v1/auth/login"]
-    session["user_sessions.active_tenant_id"]
-    actor["Actor with role + platform_role"]
-    platform{platform_admin?}
-    tenantTx["beginContextTenantTx<br/>set anti_ddos.tenant_id"]
-    platformTx["beginPlatformTx<br/>set anti_ddos.platform=true"]
-    rls["PostgreSQL RLS tenant_isolation"]
-    data["Tenant-scoped rows"]
-    switch["POST /v1/tenants/switch"]
-    membership["tenant_memberships"]
+    platformUser["Platform user"]
+    platformRole["Platform role<br/>platform_owner<br/>platform_admin<br/>platform_support<br/>platform_auditor"]
+    platformConsole["Platform console<br/>tenant lifecycle<br/>platform audit<br/>support grants"]
+    supportGrant["Support grant<br/>tenant-specific<br/>reason-required<br/>TTL-bound"]
 
-    login --> membership
-    membership --> session
-    session --> actor
-    actor --> platform
-    platform -->|no| tenantTx
-    platform -->|yes for platform operations| platformTx
-    actor --> switch
-    switch --> session
-    tenantTx --> rls
-    platformTx --> rls
-    rls --> data
+    tenantUser["Tenant user"]
+    membership["TenantMembership<br/>tenant_owner<br/>tenant_admin<br/>security_operator<br/>network_operator<br/>viewer<br/>auditor"]
+    activeTenant["Active tenant session<br/>Tenant = Customer Account"]
+    effectiveRole["Effective tenant role"]
+
+    auth["Auth /v1/auth/login<br/>/v1/me<br/>/v1/tenants/switch"]
+    apiGuard{"Resource permission"}
+    securityResources["Security resources<br/>rules, lists, feeds, snapshots, alerts"]
+    networkResources["Network resources<br/>services, forwarding, agents"]
+    readResources["Read resources<br/>dashboard, events, summaries"]
+    auditResources["Tenant audit<br/>change history"]
+    rls["Tenant transaction<br/>RLS tenant_id context"]
+    platformTx["Platform transaction<br/>reason + audit required"]
+    audit["AuditEvent<br/>actor, tenant, reason, before/after"]
+
+    platformUser --> platformRole --> platformConsole
+    platformConsole --> platformTx
+    platformConsole --> supportGrant
+    supportGrant --> activeTenant
+
+    tenantUser --> auth --> activeTenant
+    activeTenant --> membership --> effectiveRole --> apiGuard
+
+    apiGuard -->|"security_operator / tenant_admin / tenant_owner"| securityResources
+    apiGuard -->|"network_operator / tenant_admin / tenant_owner"| networkResources
+    apiGuard -->|"all active tenant roles"| readResources
+    apiGuard -->|"auditor / tenant_admin / tenant_owner"| auditResources
+
+    securityResources --> rls
+    networkResources --> rls
+    readResources --> rls
+    auditResources --> rls
+    rls --> audit
+    platformTx --> audit

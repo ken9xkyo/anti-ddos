@@ -16,6 +16,8 @@ Prometheus compose config scrapes:
 - `control-api:8080/metrics`
 - `host.docker.internal:9091/metrics` for host Agent
 
+Target SaaS rule: metrics, events, alerts and audit views must preserve tenant/customer boundaries. A tenant user only sees data for active Customer Account. Platform metrics may aggregate operational health, but customer data drill-down requires platform role plus audited workflow when it reaches tenant data.
+
 ## Agent Metrics Inputs
 
 Agent derives metrics from:
@@ -25,6 +27,8 @@ Agent derives metrics from:
 - Map stats for utilization.
 - Forwarding counters based on current snapshot services.
 - Ringbuf event forwarder status.
+
+Agent identity is tenant-bound after registration. Any event, apply status or node state emitted by the agent must be stored and queried with that tenant context.
 
 ## Control Metrics
 
@@ -44,6 +48,8 @@ Control API exposes:
 | `anti_ddos_control_prometheus_queries_total` | Prometheus query attempts |
 | Feed/alert metrics | Sync success/errors, active entries/conflicts, alerts sent/failed |
 
+Metric labels should avoid raw tenant/customer names if metrics leave the trusted platform boundary. Prefer tenant ID or redacted slug where required by privacy policy.
+
 ## Security Events
 
 XDP writes sampled `event_record` into ringbuf. Agent converts event fields to Control API JSON and batches them to `/v1/agents/{id}/events`.
@@ -53,9 +59,10 @@ Control API:
 - Rejects missing agent ID.
 - Accepts empty batch as no-op.
 - Rejects batch size > 1000.
+- Resolves tenant from agent identity.
 - Normalizes source prefix `/24`.
 - Stores tenant-scoped rows in `security_events`.
-- Provides list, summary and investigate endpoints.
+- Provides list, summary and investigate endpoints scoped to active tenant.
 
 ## Prometheus Recording Rules
 
@@ -81,14 +88,24 @@ Alerting domain includes:
 
 Telegram token handling:
 
-- Stored/configured as reference or raw value depending current implementation path, but API/UI mask sensitive output.
-- Operators/Admin can configure Telegram for tenant; feed credential visibility/mutation has stricter admin rules.
+- Stored/configured as reference or raw value depending implementation path, but API/UI mask sensitive output.
+- `tenant_owner` and `tenant_admin` can configure tenant integrations.
+- `security_operator` can trigger alert workflows and tests when granted by tenant policy.
+- `viewer` and `auditor` are read-only.
 
 Alert types include test alerts and ISP escalation. ISP escalation endpoint may query Prometheus for peak PPS/BPS when request omits those fields.
 
 ## Audit
 
-Mutations call `insertAudit` with actor, entity type/id, before/after JSON and reason. `audit_events` is partitioned by `created_at` with default partition. Redaction runs before storing audit JSON so secrets do not appear in audit entries.
+Mutations call audit insert logic with actor, tenant target, entity type/id, before/after JSON and reason. `audit_events` is partitioned by `created_at` with default partition. Redaction runs before storing audit JSON so secrets do not appear in audit entries.
+
+Target audit rules:
+
+- Tenant audit is visible to `tenant_owner`, `tenant_admin` and `auditor`.
+- Platform audit is visible to `platform_owner`, `platform_admin` and `platform_auditor`.
+- Platform support access creates audit at grant time, session start, sensitive read/export and mutation.
+- Break-glass audit must include reason/ticket, TTL, approver when applicable and affected Customer Account.
+- Audit export must preserve tenant scope and redact secrets.
 
 ## Source Alignment
 

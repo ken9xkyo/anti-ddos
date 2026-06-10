@@ -27,7 +27,7 @@ flowchart TB
     agent -->|"metrics + sampled events"| prom
     agent -->|"agent API sync"| api
     ui -->|"JSON /v1"| api
-    admin -->|"bootstrap first admin"| db
+    admin -->|"bootstrap first platform_owner/platform_admin"| db
     api -->|"migrations + tenant data"| db
     api -->|"PromQL query/status"| prom
     prom --> graf

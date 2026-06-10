@@ -52,10 +52,29 @@ Một số tests tự dùng PostgreSQL container riêng nếu `ANTI_DDOS_CONTROL
 | Snapshot version cũ | Agent reject vì không newer than active version |
 | Object checksum mismatch | Agent reject validate |
 | Unresolved neighbor | Apply resolve fail hoặc XDP drop `REASON_NEIGHBOR_UNRESOLVED` |
-| Viewer mutation | 403 backend hoặc UI không hiện action |
-| Operator multi-tenant active violation | Migration v8 hoặc tenant access guard chặn |
+| `viewer` mutation | 403 backend hoặc UI không hiện action |
+| `auditor` mutation | 403 backend hoặc UI chỉ hiện audit/read-only surfaces |
+| `security_operator` đổi forwarding/service | 403; UI không hiện network mutation controls |
+| `network_operator` đổi rule/list/feed/snapshot enforcement | 403; UI không hiện security mutation controls |
+| `tenant_owner`/`tenant_admin` quản lý member | Invite/suspend/revoke membership audited; session bị revoke khi cần |
+| Cross-tenant query | Không trả dữ liệu tenant khác; RLS/isolation guard chặn |
+| Tenant suspended | Mutation và agent registration mới bị chặn; audit/read-only theo policy còn kiểm soát |
+| Platform support access | Chỉ vào tenant được grant, có TTL/reason/banner và audit events |
+| Agent register thiếu tenant | Reject; không tạo agent orphan |
 | Feed failure | Record feed run/status, giữ last valid entries/snapshot |
 | Prometheus missing | Dashboard/control report unconfigured, không crash |
+
+## SaaS RBAC Test Matrix
+
+| Area | Minimum tests |
+|---|---|
+| Auth/session | Login returns active tenant, memberships, effective role; tenant switch validates membership/support grant |
+| Tenant lifecycle | Provision, activate, suspend, offboard, revoke require platform role and audit |
+| Membership lifecycle | Invite, activate, suspend, revoke enforce `tenant_owner`/`tenant_admin` permission and invalidate sessions |
+| Resource authorization | Services/forwarding require network permission; rules/lists/feeds/snapshots require security permission |
+| Read-only roles | `viewer` and `auditor` cannot mutate through UI or API |
+| Platform audit | Platform auditor read-only; support/break-glass access tracked |
+| Tenant isolation | DB/API tests prove tenant-scoped resources cannot leak across Customer Accounts |
 
 ## Documentation Verification
 
@@ -66,11 +85,15 @@ Sau khi cập nhật tài liệu:
 - So endpoint list với `internal/control/server.go`.
 - So DB migrations với `internal/control/migrations.go`.
 - So BPF ABI/maps với `include/anti_ddos/bpf_contract.h` và `bpf/xdp_data_plane.bpf.c`.
+- Search validation bảo đảm target role names nhất quán trong requirements, RBAC, API, dashboard và rebuild docs.
+- Search validation bảo đảm billing/entitlement/subscription/plan/quota chỉ xuất hiện như out-of-scope hoặc thuật ngữ vận hành không liên quan RBAC.
+- Search validation bảo đảm cross-tenant/platform access luôn đi kèm audit và reason requirements.
 
 ## Source Alignment
 
 - Make targets: `Makefile`
 - BPF tests: `tests/xdp/xdp_fixture_test.c`
 - Go tests: `internal/**/*.go` test files
+- Current RBAC/source anchors: `internal/control/rbac_test.go`, `internal/control/tenant.go`
 - Dashboard tests: `web/dashboard/src/App.test.tsx`, `web/dashboard/src/api.test.ts`
 - Lab scripts: `scripts/lab/*.sh`, `scripts/e2e/phase4_services_forwarding.py`

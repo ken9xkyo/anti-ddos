@@ -2,7 +2,12 @@
 
 ## Mục Tiêu
 
-Admin Dashboard là management UI cho vận hành anti-DDoS. UI dùng React 18, TypeScript, Vite, Material UI, lucide-react và gọi Control API qua `ApiClient`. Dashboard không truy cập DB trực tiếp.
+Admin Dashboard là management UI cho vận hành anti-DDoS theo mô hình multitenant SaaS. UI dùng React 18, TypeScript, Vite, Material UI, lucide-react và gọi Control API qua `ApiClient`. Dashboard không truy cập DB trực tiếp.
+
+Dashboard phải phục vụ hai bề mặt tách biệt:
+
+- Tenant workspace cho Customer Account đang active.
+- Platform console cho tenant lifecycle, platform audit và support access.
 
 ## Runtime And Build
 
@@ -20,57 +25,78 @@ Admin Dashboard là management UI cho vận hành anti-DDoS. UI dùng React 18, 
 - Khi chưa có user, hiển thị login form.
 - Login gọi `POST /v1/auth/login`; token lưu localStorage key `anti_ddos_token`.
 - Sau login, UI gọi `GET /v1/me`, sau đó poll dashboard data mỗi 3 giây.
-- `DashboardShell` hiển thị tenant switcher khi user có nhiều tenant.
+- Shell luôn hiển thị active Customer Account khi user đang ở tenant workspace.
+- Tenant switcher liệt kê memberships active và support grants active nếu user là platform support.
 - Tenant switch gọi `POST /v1/tenants/switch`, update token/session mới.
+- Platform users có platform console riêng, không trộn với tenant workspace.
 - Refresh button gọi lại aggregated dashboard loader.
-- Logout chỉ clear token local và state UI; API logout có client method riêng nhưng shell hiện clear local token trực tiếp.
+- Logout clear token local/state UI và nên gọi API logout khi implementation hỗ trợ.
 
 ## Navigation
 
-| Group | Views | API chính |
-|---|---|---|
-| Operation | Dashboard, Incidents, Detections, Events | `/v1/dashboard/*`, `/v1/alerts`, `/v1/baselines`, `/v1/anomalies`, `/v1/security-events` |
-| Configuration | Services, Rules, Whitelist, Blacklist, UDP Ports | `/v1/services`, `/v1/rules`, `/v1/whitelist`, `/v1/blacklist`, `/v1/udp-source-port-blocks` |
-| Threat Intelligence | Reputation | `/v1/feed-sources`, `/v1/feed-runs`, `/v1/feed-conflicts` |
-| Setting | Snapshots, Tenants, Accounts, Nodes | `/v1/snapshots`, `/v1/tenants`, `/v1/users`, `/v1/dashboard/agents` |
+| Group | Views | API chính | Target audience |
+|---|---|---|---|
+| Operation | Dashboard, Incidents, Detections, Events | `/v1/dashboard/*`, `/v1/alerts`, `/v1/baselines`, `/v1/anomalies`, `/v1/security-events` | Tenant roles |
+| Configuration | Services, Rules, Whitelist, Blacklist, UDP Ports | `/v1/services`, `/v1/rules`, `/v1/whitelist`, `/v1/blacklist`, `/v1/udp-source-port-blocks` | Security/network tenant roles |
+| Threat Intelligence | Reputation | `/v1/feed-sources`, `/v1/feed-runs`, `/v1/feed-conflicts` | Security tenant roles |
+| Setting | Snapshots, Accounts, Nodes, Tenant Settings | `/v1/snapshots`, `/v1/users`, `/v1/dashboard/agents`, tenant settings API | `tenant_owner`, `tenant_admin`, `security_operator`, `network_operator` |
+| Platform | Tenants, Support Access, Platform Audit | `/v1/tenants`, `/v1/audit` platform scope, support grant API | Platform roles |
 
-`Tenants` có `platformOnly: true` và chỉ hiển thị với `platform_role === "platform_admin"`.
+Tenant workspace never shows another tenant's data. Platform console must visually distinguish platform scope from active tenant scope.
 
 ## RBAC In UI
 
-| User state | UI behavior |
+| Role | UI behavior |
 |---|---|
-| `viewer` | Read-only; mutation buttons/forms bị ẩn hoặc disabled trong các admin views |
-| `operator` | `canMutate=true`; có thể thao tác policy, services, lists, snapshots, Telegram test/config theo backend permission |
-| `admin` | `canMutate=true`; thêm quyền feed credential mutation và account management rộng hơn |
-| `platform_admin` | Thấy Tenants view và tenant switcher cross-tenant |
+| `platform_owner` | Platform console, platform role management, tenant revoke/offboarding approval, break-glass policy |
+| `platform_admin` | Platform console, tenant provision/update/suspend, support grant management |
+| `platform_support` | Only assigned support tenant sessions; UI shows support banner, TTL and reason |
+| `platform_auditor` | Read-only platform audit and support access history |
+| `tenant_owner` | Full tenant workspace including membership/settings/offboarding request |
+| `tenant_admin` | Tenant workspace admin actions except owner-only critical actions |
+| `security_operator` | Mutation controls for rules, whitelist, blacklist, UDP blocks, feeds, snapshots and incidents |
+| `network_operator` | Mutation controls for services, forwarding, agents/nodes and network metadata |
+| `viewer` | Read-only operational dashboard/API; no mutation buttons/forms |
+| `auditor` | Read-only audit/change/alert history; operational mutation hidden/disabled |
 
-`canMutate` trong shell được tính bằng `user.role === "admin" || user.role === "operator"`.
+UI action visibility is an ergonomics layer only. Backend authorization remains source of enforcement and must return 403 for forbidden action attempts.
 
 ## Page-Level Notes
 
-| View file | Mục đích | Mutation chính |
+| View file | Mục đích | Target mutation/read behavior |
 |---|---|---|
-| `OverviewView.tsx` | Tổng quan traffic, agent, snapshot, decisions | Không |
-| `IncidentsView.tsx` | Alerts, Telegram config/test, ISP escalation | Operator/Admin |
-| `DetectionView.tsx` | Baselines/anomalies alert-only | Chủ yếu observe/evaluate |
-| `InvestigationView.tsx` | Security event investigation | Không |
-| `ServicesView.tsx` | Protected service CRUD, forwarding status | Operator/Admin |
-| `RulesAdminView.tsx` | Rule create/edit/disable | Operator/Admin |
-| `WhitelistAdminView.tsx` | Whitelist create/edit/disable | Operator/Admin |
-| `BlacklistAdminView.tsx` | Manual blacklist and feed/manual combined list | Operator/Admin |
-| `UDPPortsAdminView.tsx` | UDP source-port block create/edit/disable | Operator/Admin |
-| `ReputationView.tsx` | Feed sources/runs/conflicts | Admin for credential changes, operator for non-secret metadata |
-| `SnapshotsView.tsx` | Snapshot list/diff/build/rollback | Operator/Admin |
-| `TenantsView.tsx` | Tenant create/update | Platform admin |
-| `AccessView.tsx` | User/account lifecycle | Admin; operator limited to viewers |
-| `FleetView.tsx` | Agent/nodes status | Read-oriented |
+| `OverviewView.tsx` | Tổng quan traffic, agent, snapshot, decisions | Read for all active tenant roles |
+| `IncidentsView.tsx` | Alerts, Telegram config/test, ISP escalation | Security mutation by `security_operator`, `tenant_admin`, `tenant_owner`; read by `viewer`/`auditor` |
+| `DetectionView.tsx` | Baselines/anomalies alert-only | Security evaluate/approve/recalibrate; read for all tenant roles |
+| `InvestigationView.tsx` | Security event investigation | Read for all tenant roles; audit export by `auditor`, `tenant_admin`, `tenant_owner` |
+| `ServicesView.tsx` | Protected service CRUD, forwarding status | Network mutation by `network_operator`, `tenant_admin`, `tenant_owner` |
+| `RulesAdminView.tsx` | Rule create/edit/disable | Security mutation |
+| `WhitelistAdminView.tsx` | Whitelist create/edit/disable | Security mutation |
+| `BlacklistAdminView.tsx` | Manual blacklist and feed/manual combined list | Security mutation |
+| `UDPPortsAdminView.tsx` | UDP source-port block create/edit/disable | Security mutation |
+| `ReputationView.tsx` | Feed sources/runs/conflicts | Security mutation; secret ref change by `tenant_admin`/`tenant_owner` |
+| `SnapshotsView.tsx` | Snapshot list/diff/build/rollback | Build/rollback by `security_operator`, `tenant_admin`, `tenant_owner`; read for all tenant roles |
+| `TenantsView.tsx` | Customer Account lifecycle | `platform_owner`, `platform_admin`; read-only for `platform_auditor` |
+| `AccessView.tsx` | Tenant member lifecycle | `tenant_owner`, `tenant_admin`; support grant UI in platform console |
+| `FleetView.tsx` | Agent/nodes status | Network controls by `network_operator`; read for all tenant roles |
+
+## SaaS UX Requirements
+
+- Tenant switcher must show customer name/slug and current effective role.
+- Support sessions must show platform support actor, reason/ticket and expiry.
+- Empty states must be tenant-scoped: empty service list means the active Customer Account has no services, not that platform has no services.
+- Error states must distinguish forbidden, suspended tenant, revoked membership and missing active tenant.
+- Mutation forms must require reason where backend audit requires it.
+- Audit views must make tenant scope visible and prevent accidental platform/tenant audit mixing.
+- Platform tenant console must include lifecycle state, created/suspended/offboarding/revoked timestamps and actor history.
+- `viewer`/`auditor` read-only states must hide primary mutation controls and also disable contextual row actions.
 
 ## API Client Contract
 
 `web/dashboard/src/api.ts` centralizes:
 
 - Auth token storage and Authorization header.
+- Active tenant/session refresh.
 - Aggregated `dashboard()` loader with parallel requests.
 - CRUD helpers for services, rules, lists, feeds, snapshots, users, tenants.
 - Query string encoding for whitelist/blacklist/UDP filters.
@@ -78,9 +104,11 @@ Admin Dashboard là management UI cho vận hành anti-DDoS. UI dùng React 18, 
 
 ## Rebuild Notes
 
-- Preserve type definitions in `web/dashboard/src/types.ts` aligned to `internal/control/types.go`.
-- Preserve grouped navigation IDs because tests and shell route rendering depend on them.
-- Keep viewer read-only behavior covered by UI tests.
+- Preserve type definitions in `web/dashboard/src/types.ts` aligned to target API DTOs.
+- Preserve grouped navigation IDs where tests and shell route rendering depend on them, but map action visibility to target roles.
+- Cover read-only behavior for `viewer` and `auditor`.
+- Cover permission split for `security_operator` and `network_operator`.
+- Cover platform tenant console and support session banner.
 - Keep refresh polling interval behavior if cloning operational feel.
 
 ## Source Alignment

@@ -3,7 +3,8 @@ flowchart LR
     network["Internet / WAN traffic"]
     backend["Protected backend services"]
     sre["Network / SRE"]
-    operator["Admin / Operator / Viewer"]
+    tenantUser["Tenant users<br/>tenant_owner, tenant_admin<br/>security_operator, network_operator<br/>viewer, auditor"]
+    platformUser["Platform team<br/>platform_owner, platform_admin<br/>platform_support, platform_auditor"]
     feeds["Threat intelligence feeds"]
     telegram["Telegram channel"]
     prometheus["Prometheus"]
@@ -23,7 +24,8 @@ flowchart LR
     agent -->|"register, heartbeat, events, apply ack"| control
     control -->|"policy, RBAC, audit, events"| postgres
     dashboard -->|"HTTPS/JSON API"| control
-    operator -->|"operate tenant scope"| dashboard
+    tenantUser -->|"operate active Customer Account"| dashboard
+    platformUser -->|"tenant lifecycle + support/audit"| dashboard
     feeds -->|"sync reputation entries"| control
     control -->|"alerts"| telegram
     control -->|"metrics proxy / status"| prometheus
