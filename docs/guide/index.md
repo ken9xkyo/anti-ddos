@@ -9,8 +9,8 @@ Admin Dashboard là giao diện vận hành của Control Plane. Dashboard khôn
 | Vai trò | Mục tiêu chính | Quyền trên dashboard |
 |---|---|---|
 | `viewer` | Theo dõi hệ thống, xem service, alert, event, feed, snapshot | Chỉ đọc; không thấy hoặc không dùng được nút tạo/sửa/disable/sync/rollback |
-| `operator` | Trực vận hành, thay đổi policy runtime | Được thao tác service, rule, whitelist, feed, snapshot rollback, test alert và ISP runbook |
-| `admin` | Quản trị truy cập và secret reference | Bao gồm quyền operator; thêm user management, password reset, session revoke, Telegram token và feed credential reference |
+| `operator` | Trực vận hành, thay đổi policy runtime trong một tenant | Được thao tác service, rule, whitelist, feed non-secret, snapshot rollback, Telegram config/test, ISP runbook và quản lý viewer |
+| `admin` | Quản trị truy cập và secret reference | Bao gồm quyền operator; thêm full member management và feed credential reference |
 
 Backend vẫn là lớp enforce RBAC chính. UI ẩn control nguy hiểm với role thấp hơn để giảm nhầm lẫn, nhưng mọi mutation vẫn phải được API kiểm tra lại.
 

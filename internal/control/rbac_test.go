@@ -177,6 +177,12 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 	decodeTestBody(t, resp, &tenant)
 	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/tenants/"+tenant.ID, platformToken, TenantInput{Name: "Customer A Production", Status: StatusActive})
 	requireHTTPStatus(t, resp, http.StatusOK)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", operatorToken, TenantSwitchInput{TenantID: tenant.ID})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/tenants?include_revoked=true", operatorToken, nil)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", operatorToken, TenantInput{Slug: "operator-tenant", Name: "Operator Tenant"})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
 	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/tenants?include_revoked=true", platformToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, "Customer A Production")
@@ -190,6 +196,33 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"role":"operator"`)
+	var customerOperator User
+	decodeTestBody(t, resp, &customerOperator)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", platformToken, map[string]string{
+		"reason":   "operator identity must stay in one tenant",
+		"username": "operator",
+		"password": "unused viewer password phrase",
+		"role":     RoleViewer,
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", platformToken, TenantSwitchInput{TenantID: admin.ActiveTenant.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", platformToken, map[string]string{
+		"reason":   "operator identity must not be reused as viewer elsewhere",
+		"username": "customer-a-operator",
+		"password": "unused viewer password phrase",
+		"role":     RoleViewer,
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	membershipID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
+VALUES ($1, $2, $3, 'viewer', 'active')`, membershipID, admin.ActiveTenant.ID, customerOperator.ID)
+	if err == nil || !strings.Contains(err.Error(), "operator identity cannot have active memberships in multiple tenants") {
+		t.Fatalf("operator single-tenant trigger error=%v", err)
+	}
 
 	audits, err := store.ListAuditEvents(ctx, 100)
 	if err != nil {

@@ -71,15 +71,20 @@ describe('DashboardShell', () => {
     expect(screen.getByRole('button', { name: 'Tenants' })).toBeInTheDocument();
   });
 
+  it('hides tenant switcher when operator has one tenant', () => {
+    renderShell(operatorUser);
+    expect(screen.queryByLabelText('tenant')).not.toBeInTheDocument();
+  });
+
   it('switches active tenant from the topbar', async () => {
     const onTenantSwitch = vi.fn();
     render(
       <DashboardShell
         user={{
-          ...operatorUser,
+          ...platformAdminUser,
           active_tenant: defaultTenant,
           tenants: [
-            { tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'operator', status: 'active' },
+            { tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'admin', status: 'active' },
             { tenant_id: 'tenant-b', slug: 'tenant-b', name: 'Tenant B', role: 'admin', status: 'active' }
           ]
         }}

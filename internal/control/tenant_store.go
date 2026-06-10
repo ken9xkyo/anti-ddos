@@ -74,6 +74,9 @@ func (s *Store) resolveUserTenantAccess(ctx context.Context, userID, platformRol
 	if len(accesses) == 0 {
 		return nil, TenantAccess{}, errors.New("user has no active tenant")
 	}
+	if platformRole != PlatformRoleAdmin && tenantAccessesContainOperator(accesses) && len(accesses) > 1 {
+		return nil, TenantAccess{}, authorizationError("operator identity cannot have active memberships in multiple tenants")
+	}
 	var fallback TenantAccess
 	for i, access := range accesses {
 		if i == 0 || access.Slug == "default" {
@@ -84,7 +87,7 @@ func (s *Store) resolveUserTenantAccess(ctx context.Context, userID, platformRol
 		}
 	}
 	if selector != "" {
-		return nil, TenantAccess{}, errors.New("tenant is not available for user")
+		return nil, TenantAccess{}, authorizationError("tenant is not available for user")
 	}
 	return accesses, fallback, nil
 }
@@ -136,7 +139,7 @@ func (s *Store) ListTenants(ctx context.Context, actor *Actor, includeRevoked bo
 	}
 	if includeRevoked {
 		if actor.PlatformRole != PlatformRoleAdmin {
-			return nil, errors.New("platform_admin role required")
+			return nil, authorizationError("platform_admin role required")
 		}
 		rows, err := s.pool.Query(ctx, `SELECT id::text, slug, name, 'admin', status, created_at, updated_at
 FROM tenants
@@ -155,12 +158,19 @@ ORDER BY slug`)
 		}
 		return out, rows.Err()
 	}
-	return s.userTenantAccesses(ctx, actor.ID, actor.PlatformRole)
+	accesses, err := s.userTenantAccesses(ctx, actor.ID, actor.PlatformRole)
+	if err != nil {
+		return nil, err
+	}
+	if actor.PlatformRole != PlatformRoleAdmin && tenantAccessesContainOperator(accesses) && len(accesses) > 1 {
+		return nil, authorizationError("operator identity cannot have active memberships in multiple tenants")
+	}
+	return accesses, nil
 }
 
 func (s *Store) CreateTenant(ctx context.Context, actor *Actor, input TenantInput) (Tenant, error) {
 	if actor == nil || actor.PlatformRole != PlatformRoleAdmin {
-		return Tenant{}, errors.New("platform_admin role required")
+		return Tenant{}, authorizationError("platform_admin role required")
 	}
 	slug := normalizeTenantSlug(input.Slug)
 	if slug == "" {
@@ -202,7 +212,7 @@ RETURNING id::text, slug, name, status, created_at, updated_at`,
 
 func (s *Store) UpdateTenant(ctx context.Context, actor *Actor, id string, input TenantInput) (Tenant, error) {
 	if actor == nil || actor.PlatformRole != PlatformRoleAdmin {
-		return Tenant{}, errors.New("platform_admin role required")
+		return Tenant{}, authorizationError("platform_admin role required")
 	}
 	status := strings.TrimSpace(input.Status)
 	if status == "" {

@@ -715,7 +715,71 @@ BEGIN
         );
     END LOOP;
 END $$;
-`,
+	`,
+	},
+	{
+		Version: 8,
+		Name:    "operator_single_tenant",
+		SQL: `
+	DO $$
+	DECLARE
+	    violation_count integer;
+	BEGIN
+	    SELECT count(*) INTO violation_count
+	    FROM (
+	        SELECT m.user_id
+	        FROM tenant_memberships m
+	        JOIN app_users u ON u.id = m.user_id
+	        WHERE m.status='active'
+	          AND COALESCE(u.platform_role, '') <> 'platform_admin'
+	        GROUP BY m.user_id
+	        HAVING BOOL_OR(m.role='operator') AND COUNT(*) > 1
+	    ) violations;
+	    IF violation_count > 0 THEN
+	        RAISE EXCEPTION 'operator_single_tenant migration blocked: % non-platform operator users have multiple active tenant memberships', violation_count;
+	    END IF;
+	END $$;
+
+	CREATE OR REPLACE FUNCTION enforce_operator_single_tenant_membership()
+	RETURNS trigger AS $$
+	DECLARE
+	    is_platform_admin boolean;
+	    active_count bigint;
+	    has_operator boolean;
+	BEGIN
+	    IF NEW.status <> 'active' THEN
+	        RETURN NEW;
+	    END IF;
+
+	    SELECT COALESCE(platform_role, '') = 'platform_admin'
+	    INTO is_platform_admin
+	    FROM app_users
+	    WHERE id = NEW.user_id;
+
+	    IF COALESCE(is_platform_admin, false) THEN
+	        RETURN NEW;
+	    END IF;
+
+	    SELECT COUNT(*), COALESCE(BOOL_OR(role='operator'), false)
+	    INTO active_count, has_operator
+	    FROM tenant_memberships
+	    WHERE user_id = NEW.user_id
+	      AND status = 'active';
+
+	    IF has_operator AND active_count > 1 THEN
+	        RAISE EXCEPTION 'operator identity cannot have active memberships in multiple tenants';
+	    END IF;
+
+	    RETURN NEW;
+	END;
+	$$ LANGUAGE plpgsql;
+
+	DROP TRIGGER IF EXISTS tenant_memberships_operator_single_tenant ON tenant_memberships;
+	CREATE TRIGGER tenant_memberships_operator_single_tenant
+	AFTER INSERT OR UPDATE OF tenant_id, user_id, role, status ON tenant_memberships
+	FOR EACH ROW
+	EXECUTE FUNCTION enforce_operator_single_tenant_membership();
+	`,
 	},
 }
 

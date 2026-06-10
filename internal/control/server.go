@@ -1002,7 +1002,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 func writeResult(w http.ResponseWriter, value any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
+		if errors.Is(err, errForbidden) || strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
 			status = http.StatusForbidden
 		}
 		writeError(w, status, err)

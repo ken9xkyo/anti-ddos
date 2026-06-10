@@ -62,7 +62,7 @@ Sau migration, các endpoint control-plane chạy trong active tenant của sess
 
 - `POST /v1/auth/login` nhận optional `tenant_slug`; response trả `active_tenant`, danh sách `tenants[]` và role effective trong tenant.
 - `platform_admin` có thể list/create/update tenants, switch tenant qua `/v1/tenants`, rồi tạo operator/viewer trong tenant đang chọn.
-- `viewer`, `operator`, `admin` là role theo tenant membership; `operator` được quản lý lifecycle của viewer trong tenant, `admin` quản lý toàn bộ membership trong tenant, và `app_users.role` chỉ còn là legacy migration source.
+- `viewer`, `operator`, `admin` là role theo tenant membership; non-platform `operator` chỉ có một active tenant membership, không switch sang tenant khác, được quản lý lifecycle của viewer trong tenant đó; `admin` quản lý toàn bộ membership trong tenant, và `app_users.role` chỉ còn là legacy migration source.
 - Telegram config là tenant-scoped; Operator/Admin cấu hình được Telegram của tenant, còn feed credential chỉ Admin được thấy/sửa.
 - Dữ liệu policy, services, feeds, events, snapshots, agents, alerts và audit đều có `tenant_id`; PostgreSQL RLS yêu cầu app transaction set `anti_ddos.tenant_id`.
 - Tenant dashboard ưu tiên dữ liệu control-plane tenant-scoped. Global Prometheus traffic không được trộn vào dashboard tenant nếu metric chưa có tenant label.

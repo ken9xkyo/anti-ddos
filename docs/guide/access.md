@@ -7,7 +7,7 @@
 ## Ai dùng
 
 - `viewer`: xem danh sách tenant members nếu API cho phép đọc authenticated.
-- `operator`: tạo viewer, sửa trạng thái/force password change của viewer, reset password viewer và revoke session/viewer membership trong tenant hiện tại.
+- `operator`: chỉ thuộc một active tenant; tạo viewer, sửa trạng thái/force password change của viewer, reset password viewer và revoke session/viewer membership trong tenant đó.
 - `admin`: tạo/grant member, sửa mọi membership, reset password và revoke session.
 - `platform_admin`: có thể quản lý tenants, switch tenant ở topbar hoặc trang Tenants; khi vào tenant có effective `admin`.
 
@@ -41,6 +41,7 @@
 - Nếu chưa có member nào, grid hiển thị `No tenant members`.
 - Viewer luôn thấy cột action read-only và không có nút tạo user.
 - Operator thấy action chỉ trên các row viewer; operator/admin row vẫn read-only.
+- Operator không có tenant switcher khi chỉ có một tenant và backend từ chối mọi attempt switch/grant sang tenant khác.
 - Backend chặn thao tác làm mất admin active cuối cùng trong tenant; lỗi sẽ hiển thị inline.
 
 ## Lưu ý vận hành

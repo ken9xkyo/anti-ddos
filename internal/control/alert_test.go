@@ -143,13 +143,16 @@ func TestAlertingIntegration(t *testing.T) {
 	operatorToken := login(t, server.URL, "operator", "operator password phrase")
 
 	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", operatorToken, TelegramConfigInput{
-		Reason:      "operator should not set token",
+		Reason:      "operator configures tenant Telegram",
 		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
-	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {
-		t.Fatalf("operator token config should fail status=%d body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("operator Telegram config status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) || strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("operator Telegram config masking failed: %s", resp.Body.String())
 	}
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
 		Reason:      "configure Telegram",

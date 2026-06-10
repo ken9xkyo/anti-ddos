@@ -47,7 +47,7 @@ Ngoai pham vi increment nay:
 | Persona | Muc tieu | Quyen UI/API |
 |---|---|---|
 | Viewer | Theo doi tinh trang trong active tenant | Chi doc; khong hien nut create/edit/disable/sync/test/rollback |
-| Operator | Truc van hanh va thay doi policy runtime trong active tenant | Service, rule, whitelist, feed operational actions, snapshot rollback, Telegram config/test/runbook; tao/sua/reset/revoke viewer; khong quan ly operator/admin va khong doi feed credentials |
+| Operator | Truc van hanh va thay doi policy runtime trong active tenant | Non-platform operator chi thuoc mot tenant; Service, rule, whitelist, feed non-secret operational actions, snapshot rollback, Telegram config/test/runbook; tao/sua/reset/revoke viewer; khong quan ly operator/admin va khong doi feed credentials |
 | Admin | Quan tri tenant access va secrets trong active tenant | Bao gom Operator; them full member management, password reset, session revoke va feed `credential_ref` |
 | Platform Admin | Quan tri tenants | Thay duoc tenants, switch tenant, create/update tenants qua API/UI; effective admin khi vao tenant |
 
@@ -56,6 +56,7 @@ Nguyen tac:
 - Moi mutation phai co `reason` trong body hoac `X-Audit-Reason`.
 - UI khong render mutation control cho Viewer.
 - Backend van enforce RBAC; UI chi la lop bao ve dau tien.
+- Non-platform operator identity khong duoc co active membership o hon mot tenant; neu du lieu cu vi pham, migration RBAC se fail-fast de admin don sach thu cong.
 - Admin khong duoc vo tinh revoke/ha cap admin active cuoi cung trong tenant; platform khong duoc mat platform admin active cuoi cung.
 - Password va credential value khong duoc ghi raw vao audit/log/response.
 
@@ -133,7 +134,7 @@ Actions:
 
 - Operator/Admin duoc gui test alert.
 - Operator/Admin duoc evaluate ISP escalation.
-- Admin duoc update Telegram config bang write-only bot token; dashboard/API chi hien `*****`.
+- Operator/Admin duoc update Telegram config bang write-only bot token; dashboard/API chi hien `*****`.
 - Khong tu dong BGP/RTBH/FlowSpec trong dashboard.
 
 ### 6.3 Services

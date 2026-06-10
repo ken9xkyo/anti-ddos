@@ -284,6 +284,9 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 			}
 		}
 	}
+	if err := validateOperatorSingleTenantMembership(ctx, tx, user.ID, actor.TenantID, role, StatusActive); err != nil {
+		return User{}, err
+	}
 	membershipID, err := newUUID()
 	if err != nil {
 		return User{}, err

@@ -10,6 +10,24 @@ import (
 
 type tenantContextKey struct{}
 
+var errForbidden = errors.New("forbidden")
+
+type forbiddenError struct {
+	msg string
+}
+
+func (e forbiddenError) Error() string {
+	return e.msg
+}
+
+func (e forbiddenError) Is(target error) bool {
+	return target == errForbidden
+}
+
+func authorizationError(message string) error {
+	return forbiddenError{msg: message}
+}
+
 func contextWithTenant(ctx context.Context, tenantID string) context.Context {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
@@ -217,6 +235,47 @@ func requireTenantUserTargetPermission(actor *Actor, target User, requestedRole 
 		return errors.New("admin role required for non-viewer member changes")
 	}
 	return nil
+}
+
+func validateOperatorSingleTenantMembership(ctx context.Context, q dbQuerier, userID, tenantID, role, status string) error {
+	userID = strings.TrimSpace(userID)
+	tenantID = strings.TrimSpace(tenantID)
+	role = strings.TrimSpace(strings.ToLower(role))
+	status = strings.TrimSpace(strings.ToLower(status))
+	if userID == "" || tenantID == "" {
+		return nil
+	}
+	var platformRole string
+	var activeCount int64
+	var hasOperator bool
+	if err := q.QueryRow(ctx, `WITH projected AS (
+	SELECT tenant_id, role
+	FROM tenant_memberships
+	WHERE user_id=$1 AND status='active' AND tenant_id <> $2::uuid
+	UNION ALL
+	SELECT $2::uuid, $3
+	WHERE $4='active'
+)
+SELECT COALESCE((SELECT platform_role FROM app_users WHERE id=$1), ''), COUNT(*), COALESCE(BOOL_OR(role='operator'), false)
+FROM projected`, userID, tenantID, role, status).Scan(&platformRole, &activeCount, &hasOperator); err != nil {
+		return err
+	}
+	if platformRole == PlatformRoleAdmin {
+		return nil
+	}
+	if hasOperator && activeCount > 1 {
+		return authorizationError("operator identity cannot have active memberships in multiple tenants")
+	}
+	return nil
+}
+
+func tenantAccessesContainOperator(accesses []TenantAccess) bool {
+	for _, access := range accesses {
+		if access.Role == RoleOperator {
+			return true
+		}
+	}
+	return false
 }
 
 func actorTenantID(actor *Actor) string {

@@ -28,13 +28,14 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 | Role | Mo ta |
 |---|---|
 | `viewer` | Tenant-scoped read cho dashboard, policy, events, alerts, feeds, snapshots |
-| `operator` | Bao gom viewer; duoc thao tac operational mutations, snapshot build/rollback, Telegram config va lifecycle cua viewer trong active tenant |
+| `operator` | Bao gom viewer; non-platform operator chi co mot active tenant membership; duoc thao tac operational mutations, snapshot build/rollback, Telegram config va full lifecycle cua viewer trong active tenant |
 | `admin` | Bao gom operator; duoc quan tri tat ca tenant members va feed/secret credentials trong active tenant |
 | `platform_admin` | Global platform role tren `app_users.platform_role`; duoc list/create/update tenants va switch vao tenant voi effective `admin` |
 
 Mutation policy:
 
 - User/member mutations: Tenant Admin full; Operator chi duoc tao/reactivate/update/reset/revoke viewer trong active tenant. `GET /v1/users` list memberships trong active tenant.
+- Operator identity invariant: mot non-platform user co active role `operator` khong duoc co active membership nao khac o tenant khac; migration fail-fast neu du lieu cu vi pham.
 - Tenant create/update: Platform Admin only.
 - Service, forwarding policy, whitelist, rules, blacklist, UDP source-port block, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
 - Telegram config: Operator/Admin, bao gom write-only `bot_token_ref`; response luon masked as `*****`.
@@ -189,6 +190,7 @@ Safety:
 - Backend prevents revoking/downgrading the last active admin.
 - Backend prevents revoking/downgrading the last active platform admin.
 - Operator requests that target or create non-viewer memberships return `403`.
+- Operator tenant switch, tenant CRUD and active membership reuse across tenants return `403`.
 - Raw password is never included in returned user or audit before/after payload.
 
 ## 8. Services

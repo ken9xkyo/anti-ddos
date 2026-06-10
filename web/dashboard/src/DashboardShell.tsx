@@ -115,7 +115,7 @@ export function DashboardShell({
             <h1>{tabLabel(activeTab)}</h1>
           </div>
           <div className="topbar-actions">
-            {tenants.length > 0 ? (
+            {tenants.length > 1 ? (
               <label className="tenant-select">
                 <Building2 size={14} />
                 <select

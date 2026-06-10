@@ -45,6 +45,9 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, role, status); err != nil {
 		return User{}, err
 	}
+	if err := validateOperatorSingleTenantMembership(ctx, tx, id, actor.TenantID, role, status); err != nil {
+		return User{}, err
+	}
 	var after User
 	if _, err := tx.Exec(ctx, `UPDATE tenant_memberships
 SET role=$3, status=$4, updated_at=now()
