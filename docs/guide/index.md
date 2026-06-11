@@ -57,6 +57,7 @@ Các trang CRUD như `Rules`, `Whitelist`, `Blacklist`, `Snapshots`, `Accounts` 
 
 ## Tài liệu liên quan
 
+- [RBAC hiện tại](../RBAC.md)
 - [Admin Dashboard v2](../Admin-Dashboard-v2.md)
 - [Control API](../Control-Api.md)
 - [Docker Compose Deployment](../deployment/docker-compose.md)

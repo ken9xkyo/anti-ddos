@@ -1,0 +1,38 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000'}}}%%
+flowchart LR
+    dashboard["Admin Dashboard"]
+    login["Login or tenant switch"]
+    session["user_sessions<br/>active_tenant_id"]
+    actor["Actor<br/>effective tenant role"]
+    membership[("tenant_memberships")]
+    platform[("app_users<br/>platform_role")]
+    requireActor["requireActor<br/>contextWithTenant"]
+    guard["Store guards<br/>requireOperator / admin helpers"]
+    tenantTx["Tenant transaction<br/>anti_ddos.tenant_id"]
+    platformTx["Platform transaction<br/>anti_ddos.platform=true"]
+    rls["PostgreSQL RLS<br/>tenant_isolation"]
+    tenantData[("tenant_id scoped tables")]
+    audit[("audit_events")]
+
+    dashboard --> login
+    login --> session
+    membership --> actor
+    platform --> actor
+    session --> actor
+    actor --> requireActor
+    requireActor --> guard
+    guard --> tenantTx
+    actor -. "platform_admin tenant management" .-> platformTx
+    tenantTx --> rls
+    platformTx --> rls
+    rls --> tenantData
+    guard --> audit
+
+    classDef ui fill:#e0f2fe,stroke:#0284c7,color:#000000;
+    classDef auth fill:#f8fafc,stroke:#64748b,color:#000000;
+    classDef db fill:#dcfce7,stroke:#16a34a,color:#000000;
+    classDef guard fill:#fef3c7,stroke:#d97706,color:#000000;
+    class dashboard ui;
+    class login,session,actor,requireActor auth;
+    class membership,platform,tenantData,audit db;
+    class guard,tenantTx,platformTx,rls guard;
