@@ -1,171 +1,50 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#172033','primaryBorderColor':'#94a3b8','lineColor':'#94a3b8','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#172033','edgeLabelBackground':'#ffffff','textColor':'#172033','entityTextColor':'#172033','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#172033','relationshipLabelColor':'#334155'}}}%%
 erDiagram
-    TENANTS ||--o{ TENANT_MEMBERSHIPS : grants
-    APP_USERS ||--o{ TENANT_MEMBERSHIPS : joins
     APP_USERS ||--o{ USER_SESSIONS : owns
-    TENANTS ||--o{ USER_SESSIONS : active
-    TENANTS ||--o{ AGENTS : isolates
-    TENANTS ||--o{ BACKEND_SERVICES : isolates
-    TENANTS ||--o{ FEED_SOURCES : isolates
-    TENANTS ||--o{ POLICY_SNAPSHOTS : versions
-    TENANTS ||--o{ SECURITY_EVENTS : samples
-    TENANTS ||--o{ ALERTS : raises
-    TENANTS ||--o{ AUDIT_EVENTS : records
-    AGENTS ||--o{ AGENT_INTERFACES : reports
-    AGENTS ||--o{ POLICY_APPLY_STATUS : reports
-    AGENTS ||--o{ SECURITY_EVENTS : sends
-    BACKEND_SERVICES ||--o{ FORWARDING_POLICIES : routes
-    BACKEND_SERVICES ||--o{ RULES : scopes
-    BACKEND_SERVICES ||--o{ WHITELIST_ENTRIES : scopes
-    BACKEND_SERVICES ||--o{ BASELINE_PROFILES : calibrates
-    RULES ||--o{ MANUAL_BLACKLIST_ENTRIES : explains
-    FEED_SOURCES ||--o{ REPUTATION_ENTRIES : imports
-    REPUTATION_ENTRIES ||--o{ FEED_CONFLICTS : conflicts
-    WHITELIST_ENTRIES ||--o{ FEED_CONFLICTS : suppresses
-    APP_USERS ||--o{ POLICY_SNAPSHOTS : creates
-    APP_USERS ||--o{ AUDIT_EVENTS : acts
+    APP_USERS ||--o{ AGENTS : owns
+    APP_USERS ||--o{ BACKEND_SERVICES : owns
+    APP_USERS ||--o{ RULES : owns
+    APP_USERS ||--o{ WHITELIST_ENTRIES : owns
+    APP_USERS ||--o{ MANUAL_BLACKLIST_ENTRIES : owns
+    APP_USERS ||--o{ UDP_SOURCE_PORT_BLOCKS : owns
+    APP_USERS ||--o{ POLICY_SNAPSHOTS : owns
+    APP_USERS ||--o{ SECURITY_EVENTS : owns
+    APP_USERS ||--o{ TELEGRAM_CONFIGS : owns
+    APP_USERS ||--o{ ALERTS : owns
+    APP_USERS ||--o{ AUDIT_EVENTS : owns
 
-    TENANTS {
-        uuid id PK
-        text slug UK
-        text name
-        text status
-        timestamptz created_at
-    }
     APP_USERS {
         uuid id PK
         text username UK
-        text role "legacy source"
-        text platform_role
+        text role "admin|user"
         text status
-    }
-    TENANT_MEMBERSHIPS {
-        uuid id PK
-        uuid tenant_id FK
-        uuid user_id FK
-        text role
-        text status
+        boolean force_password_change
     }
     USER_SESSIONS {
         uuid id PK
         uuid user_id FK
-        uuid active_tenant_id FK
-        text token_hash UK
+        uuid view_owner_user_id FK
+        text token_hash
         timestamptz expires_at
-    }
-    AGENTS {
-        uuid id PK
-        uuid tenant_id FK
-        text hostname "UK per tenant"
-        text status
-        bigint active_policy_version
-    }
-    AGENT_INTERFACES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid agent_id FK
-        text name
-        integer ifindex
     }
     BACKEND_SERVICES {
         uuid id PK
-        uuid tenant_id FK
-        bigint ebpf_id UK
-        text name "UK per tenant"
+        uuid owner_user_id FK
+        text name
         inet backend_cidr
-        boolean enabled
-    }
-    FORWARDING_POLICIES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid service_id FK
-        inet backend_target
-        text output_interface
     }
     RULES {
         uuid id PK
-        uuid tenant_id FK
+        uuid owner_user_id FK
         uuid service_id FK
-        bigint ebpf_id UK
         text action
-        text mode
-    }
-    WHITELIST_ENTRIES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid service_id FK
-        inet ip_or_cidr
-        text scope
-    }
-    MANUAL_BLACKLIST_ENTRIES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid rule_id FK
-        inet ip_or_cidr
-        boolean enabled
-    }
-    FEED_SOURCES {
-        uuid id PK
-        uuid tenant_id FK
-        text name "UK per tenant"
-        text status
-        boolean enabled
-    }
-    REPUTATION_ENTRIES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid source_id FK
-        inet ip_or_cidr
-        text status
-    }
-    FEED_CONFLICTS {
-        uuid id PK
-        uuid tenant_id FK
-        uuid source_id FK
-        uuid reputation_id FK
-        uuid whitelist_id FK
     }
     POLICY_SNAPSHOTS {
-        uuid tenant_id PK
-        bigint version PK
-        text checksum
-        text object_checksum
-        uuid created_by FK
+        uuid owner_user_id PK
+        int version PK
+        jsonb snapshot
     }
-    POLICY_APPLY_STATUS {
+    AGENTS {
         uuid id PK
-        uuid tenant_id FK
-        uuid agent_id FK
-        bigint policy_version
-        text status
-    }
-    SECURITY_EVENTS {
-        uuid id PK
-        uuid tenant_id FK
-        uuid agent_id FK
-        bigint policy_version
-        inet src_ip
-        integer action
-    }
-    BASELINE_PROFILES {
-        uuid id PK
-        uuid tenant_id FK
-        uuid service_id FK
-        text time_window
-        boolean approved
-    }
-    ALERTS {
-        uuid id PK
-        uuid tenant_id FK
-        uuid service_id FK
-        uuid created_by FK
-        text severity
-        text status
-    }
-    AUDIT_EVENTS {
-        uuid id PK
-        uuid tenant_id FK
-        uuid actor_id FK
-        text action
-        text entity_type
+        uuid owner_user_id FK
+        text hostname
     }

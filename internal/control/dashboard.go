@@ -41,7 +41,7 @@ func (s *Store) BuildDashboardOverview(ctx context.Context, prom *PrometheusClie
 
 	status := PrometheusStatus{Configured: false, Healthy: false, Error: "prometheus is not configured"}
 	if prom != nil && prom.Configured() {
-		status = PrometheusStatus{Configured: true, Healthy: true, Error: "tenant-scoped prometheus labels unavailable; using sampled events"}
+		status = PrometheusStatus{Configured: true, Healthy: true, Error: "owner-scoped prometheus labels unavailable; using sampled events"}
 	}
 	if summary.WindowSeconds > 0 {
 		overview.Traffic.PPS = float64(summary.Total) / float64(summary.WindowSeconds)

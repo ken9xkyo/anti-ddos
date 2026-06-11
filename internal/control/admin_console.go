@@ -59,6 +59,11 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 			return User{}, err
 		}
 	}
+	if role == RoleUser {
+		if err := seedDefaultUDPSourcePortBlocks(ctx, tx, id); err != nil {
+			return User{}, err
+		}
+	}
 	if role != RoleAdmin {
 		if _, err := tx.Exec(ctx, `UPDATE user_sessions SET view_owner_user_id=NULL WHERE view_owner_user_id=$1`, id); err != nil {
 			return User{}, err
@@ -197,7 +202,7 @@ WHERE user_id=$1 AND token_hash <> $2 AND revoked_at IS NULL`, actor.ID, tokenHa
 }
 
 func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input RuleInput, reason string) (Rule, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Rule{}, err
 	}
 	if err := validateRuleInput(input); err != nil {
@@ -271,7 +276,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 }
 
 func (s *Store) DisableRule(ctx context.Context, actor *Actor, id, reason string) (Rule, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Rule{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -304,7 +309,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 }
 
 func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id string, input WhitelistInput, reason string) (WhitelistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return WhitelistEntry{}, err
 	}
 	if err := validateWhitelistInput(input); err != nil {
@@ -362,7 +367,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 }
 
 func (s *Store) DisableWhitelistEntry(ctx context.Context, actor *Actor, id, reason string) (WhitelistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return WhitelistEntry{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -394,7 +399,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 }
 
 func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id string, input BlacklistInput, reason string) (BlacklistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BlacklistEntry{}, err
 	}
 	if err := validateBlacklistInput(input); err != nil {
@@ -450,7 +455,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 }
 
 func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, reason string) (BlacklistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BlacklistEntry{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -481,7 +486,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 }
 
 func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id string, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	if err := validateUDPSourcePortBlockInput(input); err != nil {
@@ -530,7 +535,7 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 }
 
 func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id, reason string) (UDPSourcePortBlock, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -561,7 +566,7 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 }
 
 func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason string) (FeedSource, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return FeedSource{}, err
 	}
 	if strings.TrimSpace(reason) == "" {

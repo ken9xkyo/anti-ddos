@@ -125,10 +125,11 @@ sudo env \
   ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091 \
   ANTI_DDOS_CONTROL_URL=http://127.0.0.1:8080 \
   ANTI_DDOS_AGENT_TOKEN=<same-value-as-ANTI_DDOS_AGENT_SHARED_TOKEN> \
+  ANTI_DDOS_OWNER_USERNAME=<config-owner-username> \
   build/agent/anti-ddos-agent
 ```
 
-`ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync.
+`ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync. Agent register cung can `ANTI_DDOS_OWNER_USERNAME` hoac `ANTI_DDOS_OWNER_USER_ID` de gan node vao config cua user so huu.
 
 ### Native DEVMAP Output Interface
 
@@ -204,7 +205,7 @@ make compose-build
 
 E2E nay tao mot protected service tam thoi dang disabled, sua, roi xoa qua dashboard. Test khong enable service va khong attach XDP vao NIC that. Neu can xac thuc mot host interface cu the trong dropdown, dat `ANTI_DDOS_E2E_OUTPUT_INTERFACE=<iface>` va `ANTI_DDOS_E2E_REQUIRE_OUTPUT_INTERFACE=1`.
 
-Dashboard mac dinh tao service disabled. Khi enable service live, form chi yeu cau `resolved_ifindex` va `resolved_src_mac` tu Agent-reported interface; `resolved_next_hop_mac` khong con la truong nhap tay. Neu next-hop chua co san, Control API se publish unresolved forwarding intent trong snapshot va host Agent se resolve output ifindex/source MAC/next-hop MAC truoc khi apply XDP maps. Neu Agent khong thay host NIC/route/neighbor thi apply fail-closed voi loi `resolve_forwarding` de operator sua route/ARP/interface thay vi nhap MAC thu cong.
+Dashboard mac dinh tao service disabled. Khi enable service live, form chi yeu cau `resolved_ifindex` va `resolved_src_mac` tu Agent-reported interface; `resolved_next_hop_mac` khong con la truong nhap tay. Neu next-hop chua co san, Control API se publish unresolved forwarding intent trong snapshot va host Agent se resolve output ifindex/source MAC/next-hop MAC truoc khi apply XDP maps. Neu Agent khong thay host NIC/route/neighbor thi apply fail-closed voi loi `resolve_forwarding` de user sua route/ARP/interface thay vi nhap MAC thu cong.
 
 ```bash
 python3 -m venv .venv-e2e

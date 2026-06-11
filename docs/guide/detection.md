@@ -22,7 +22,7 @@ Tất cả role đều dùng được trang này. Trang không có nút mutation
 
 ## Thao tác chính
 
-1. Xem `Anomalies / Alerts` để xác định service nào đang có score cao, confidence cao hoặc cần operator xử lý.
+1. Xem `Anomalies / Alerts` để xác định service nào đang có score cao, confidence cao hoặc cần user xử lý.
 2. Kiểm tra `Signals` để biết nguyên nhân như spike PPS/BPS/CPS hoặc drop ratio.
 3. Xem `Recommended action` trước khi tự tạo rule ở `Rules`.
 4. Đối chiếu `Baselines` để biết baseline có đủ history và đã approved hay chưa.

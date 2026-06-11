@@ -1,13 +1,6 @@
 import type { DashboardData, User } from '../types';
 
-export const viewerUser: User = {
-  id: 'u1',
-  username: 'user',
-  role: 'user',
-  status: 'active'
-};
-
-export const operatorUser: User = {
+export const normalUser: User = {
   id: 'u2',
   username: 'user',
   role: 'user',

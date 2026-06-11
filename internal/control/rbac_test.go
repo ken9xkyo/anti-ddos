@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestMultiTenantRBACUpdate(t *testing.T) {
+func TestAdminUserRBACNoTenant(t *testing.T) {
 	ctx, pool, dsn := resetControlTestDB(t)
 	cfg := Config{Addr: "127.0.0.1:0", DBDSN: dsn, SessionTTL: time.Hour, XDPObject: "missing-ok.o", AgentSharedToken: "agent-secret"}
 	store := NewStore(pool, cfg, nil)
@@ -17,93 +17,29 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleUser, "create operator"); err != nil {
+	user, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "peer-operator", "peer operator password phrase", RoleUser, "create peer operator"); err != nil {
-		t.Fatal(err)
-	}
+	ownerCtx := contextWithOwner(ctx, user.ID)
 
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
-	operatorToken := login(t, server.URL, "operator", "operator password phrase")
+	userToken := login(t, server.URL, "user", "user password phrase")
 
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/users", operatorToken, map[string]string{
-		"reason":   "operator creates viewer",
-		"username": "analyst",
-		"password": "viewer temporary phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	var analyst User
-	decodeTestBody(t, resp, &analyst)
-	if analyst.Role != RoleUser {
-		t.Fatalf("operator-created user role=%q", analyst.Role)
-	}
-
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", operatorToken, map[string]string{
-		"reason":   "operator should not create operator",
-		"username": "blocked-operator",
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/users", userToken, map[string]string{
+		"reason":   "user should not create accounts",
+		"username": "blocked",
 		"password": "blocked password phrase",
 		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 
-	var members []User
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/users", adminToken, nil)
-	requireHTTPStatus(t, resp, http.StatusOK)
-	decodeTestBody(t, resp, &members)
-	var peerOperator User
-	for _, user := range members {
-		if user.Username == "peer-operator" {
-			peerOperator = user
-			break
-		}
-	}
-	if peerOperator.ID == "" {
-		t.Fatal("peer operator not found")
-	}
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/users/"+peerOperator.ID, operatorToken, UserUpdateInput{
-		Reason: "operator should not demote peer operator",
-		Role:   RoleUser,
-		Status: StatusActive,
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users/"+analyst.ID+"/password-reset", operatorToken, PasswordResetInput{
-		Reason:   "operator resets viewer",
-		Password: "viewer replacement phrase",
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	analystToken := login(t, server.URL, "analyst", "viewer replacement phrase")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users/"+analyst.ID+"/sessions/revoke", operatorToken, map[string]string{"reason": "operator revokes viewer sessions"})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/me", analystToken, nil)
-	requireHTTPStatus(t, resp, http.StatusUnauthorized)
-
-	deleteReq, err := http.NewRequest(http.MethodDelete, server.URL+"/v1/users/"+analyst.ID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
-	deleteReq.Header.Set("X-Audit-Reason", "operator revokes viewer membership")
-	resp = doTestHTTP(t, deleteReq)
-	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, `"status":"revoked"`)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", operatorToken, map[string]string{
-		"reason":   "operator reactivates viewer",
-		"username": "analyst",
-		"password": "unused reactivation phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, `"status":"active"`)
-
 	rawTelegramToken := "123456:abcdefghijklmnopqrstuvwxyzABCDEF"
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", operatorToken, TelegramConfigInput{
-		Reason:      "operator configures tenant telegram",
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
+		Reason:      "user configures own telegram",
 		BotTokenRef: rawTelegramToken,
 		ChatID:      "1234",
 		ParseMode:   "HTML",
@@ -114,123 +50,36 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		t.Fatalf("telegram response masking failed: %s", resp.Body.String())
 	}
 
-	rawFeedCredential := "raw-feed-key"
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, FeedSourceInput{
-		Reason:        "admin creates credentialed feed",
-		Name:          "credentialed-feed",
-		Type:          "internal_json",
-		URL:           "https://feeds.example.test/drop.json",
-		CredentialRef: stringPtr(rawFeedCredential),
-		Enabled:       boolPtr(false),
-	})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: user.ID})
 	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, feedCredentialMask)
-	var feed FeedSource
-	decodeTestBody(t, resp, &feed)
-
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/feed-sources/"+feed.ID, operatorToken, nil)
-	requireHTTPStatus(t, resp, http.StatusOK)
-	if strings.Contains(resp.Body.String(), "credential_ref") || strings.Contains(resp.Body.String(), rawFeedCredential) || strings.Contains(resp.Body.String(), feedCredentialMask) {
-		t.Fatalf("operator feed response exposed credential state: %s", resp.Body.String())
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
+	if !viewSession.User.ReadOnly || viewSession.User.ViewingUser == nil || viewSession.User.ViewingUser.Username != "user" {
+		t.Fatalf("unexpected view-user session: %#v", viewSession.User)
 	}
-	nextCredential := "new-feed-key"
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/feed-sources/"+feed.ID, operatorToken, FeedSourceInput{
-		Reason:        "operator should not change feed credential",
-		Name:          feed.Name,
-		Type:          feed.Type,
-		URL:           feed.URL,
-		CredentialRef: stringPtr(nextCredential),
-		Enabled:       boolPtr(false),
-		Status:        feed.Status,
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
 
-	viewerToken := login(t, server.URL, "analyst", "viewer replacement phrase")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", viewerToken, map[string]string{
-		"reason":   "viewer should not create user",
-		"username": "viewer-created",
-		"password": "viewer created password phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", viewerToken, TelegramConfigInput{
-		Reason:      "viewer should not configure telegram",
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/telegram/config", viewSession.Token, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	requireBodyContains(t, resp, telegramTokenMask)
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", viewSession.Token, TelegramConfigInput{
+		Reason:      "admin read-only should not mutate",
 		BotTokenRef: rawTelegramToken,
-		ChatID:      "1234",
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", viewerToken, FeedSourceInput{
-		Reason: "viewer should not create feed",
-		Name:   "viewer-feed",
-		Type:   "internal_json",
-		URL:    "https://feeds.example.test/viewer.json",
+		ChatID:      "9999",
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 
-	platformToken := login(t, server.URL, "admin", "correct horse battery staple")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", platformToken, TenantInput{
-		Slug: "customer-a",
-		Name: "Customer A",
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	var tenant Tenant
-	decodeTestBody(t, resp, &tenant)
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/tenants/"+tenant.ID, platformToken, TenantInput{Name: "Customer A Production", Status: StatusActive})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", operatorToken, TenantSwitchInput{TenantID: tenant.ID})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/tenants?include_revoked=true", operatorToken, nil)
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", operatorToken, TenantInput{Slug: "operator-tenant", Name: "Operator Tenant"})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/tenants?include_revoked=true", platformToken, nil)
-	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, "Customer A Production")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", platformToken, TenantSwitchInput{TenantID: tenant.ID})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", platformToken, map[string]string{
-		"reason":   "platform admin creates tenant operator",
-		"username": "customer-a-operator",
-		"password": "customer operator password phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, `"role":"operator"`)
-	var customerOperator User
-	decodeTestBody(t, resp, &customerOperator)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", platformToken, map[string]string{
-		"reason":   "operator identity must stay in one tenant",
-		"username": "operator",
-		"password": "unused viewer password phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", platformToken, TenantSwitchInput{TenantID: admin.ActiveTenant.ID})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/users", platformToken, map[string]string{
-		"reason":   "operator identity must not be reused as viewer elsewhere",
-		"username": "customer-a-operator",
-		"password": "unused viewer password phrase",
-		"role":     RoleUser,
-	})
-	requireHTTPStatus(t, resp, http.StatusForbidden)
-	membershipID, err := newUUID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = pool.Exec(ctx, `INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
-VALUES ($1, $2, $3, 'viewer', 'active')`, membershipID, admin.ActiveTenant.ID, customerOperator.ID)
-	if err == nil || !strings.Contains(err.Error(), "operator identity cannot have active memberships in multiple tenants") {
-		t.Fatalf("operator single-tenant trigger error=%v", err)
-	}
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", adminToken, map[string]string{"slug": "customer-a"})
+	requireHTTPStatus(t, resp, http.StatusNotFound)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, map[string]string{"name": "legacy-feed"})
+	requireHTTPStatus(t, resp, http.StatusNotFound)
 
-	audits, err := store.ListAuditEvents(ctx, 100)
+	audits, err := store.ListAuditEvents(ownerCtx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, audit := range audits {
-		if strings.Contains(string(audit.Before), rawTelegramToken) || strings.Contains(string(audit.After), rawTelegramToken) ||
-			strings.Contains(string(audit.Before), rawFeedCredential) || strings.Contains(string(audit.After), rawFeedCredential) {
+		if strings.Contains(string(audit.Before), rawTelegramToken) || strings.Contains(string(audit.After), rawTelegramToken) {
 			t.Fatalf("secret leaked in audit: %#v", audit)
 		}
 	}

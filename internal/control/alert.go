@@ -129,7 +129,7 @@ func safeJSONResponse(raw []byte) json.RawMessage {
 }
 
 func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input TelegramConfigInput, reason string) (TelegramConfig, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return TelegramConfig{}, err
 	}
 	tokenInput := strings.TrimSpace(input.BotTokenRef)
@@ -266,7 +266,7 @@ func normalizeTelegramParseMode(value string) string {
 }
 
 func (s *Store) CreateAlert(ctx context.Context, actor *Actor, input AlertInput) (Alert, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Alert{}, err
 	}
 	return s.createAlert(ctx, actor, input)
@@ -703,7 +703,7 @@ func errorClass(err error) string {
 }
 
 func (s *Store) EvaluateISPEscalation(ctx context.Context, actor *Actor, input ISPEscalationInput) (Alert, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Alert{}, err
 	}
 	payload, err := s.buildISPEscalationPayload(ctx, input)

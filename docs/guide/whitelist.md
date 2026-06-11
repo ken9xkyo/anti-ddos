@@ -6,9 +6,8 @@
 
 ## Ai dùng
 
-- `viewer`: xem whitelist và dùng bộ lọc.
-- `operator`: tạo, sửa và disable whitelist entry.
-- `admin`: có toàn bộ quyền operator.
+- `user`: tạo, sửa và disable whitelist entry của chính mình.
+- `admin`: chỉ xem read-only khi đang ở `View config` context.
 
 ## Thành phần UI
 

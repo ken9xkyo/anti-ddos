@@ -959,6 +959,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS feed_sources_owner_name_unique_idx ON feed_sou
 CREATE UNIQUE INDEX IF NOT EXISTS udp_source_port_blocks_owner_port_unique_idx ON udp_source_port_blocks(owner_user_id, port);
 CREATE UNIQUE INDEX IF NOT EXISTS alert_policies_owner_type_severity_channel_unique_idx ON alert_policies(owner_user_id, alert_type, severity, channel);
 
+WITH seed(port, label) AS (
+    VALUES
+    (0, 'reserved source port'),
+    (19, 'CHARGEN'),
+    (53, 'DNS'),
+    (69, 'TFTP'),
+    (111, 'SunRPC'),
+    (123, 'NTP'),
+    (137, 'NetBIOS'),
+    (161, 'SNMP'),
+    (162, 'SNMP trap'),
+    (389, 'CLDAP'),
+    (427, 'SLP'),
+    (520, 'RIP'),
+    (1194, 'OpenVPN'),
+    (1900, 'SSDP'),
+    (3702, 'WS-Discovery'),
+    (5353, 'mDNS'),
+    (10001, 'Ubiquiti discovery'),
+    (11211, 'Memcached'),
+    (20800, 'Call of Duty'),
+    (27005, 'SRCDS')
+)
+INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, enabled)
+SELECT (
+        substr(h.hash, 1, 8) || '-' ||
+        substr(h.hash, 9, 4) || '-' ||
+        substr(h.hash, 13, 4) || '-' ||
+        substr(h.hash, 17, 4) || '-' ||
+        substr(h.hash, 21, 12)
+    )::uuid,
+    u.id,
+    seed.port,
+    seed.label,
+    'seeded UDP reflection source-port candidate from CISA/Cloudflare guidance',
+    'system',
+    false
+FROM app_users u
+CROSS JOIN seed
+CROSS JOIN LATERAL (SELECT md5(u.id::text || ':' || seed.port::text) AS hash) h
+WHERE u.role='user' AND u.status='active'
+ON CONFLICT (owner_user_id, port) DO NOTHING;
+
 ALTER TABLE policy_snapshots ADD PRIMARY KEY (owner_user_id, version);
 ALTER TABLE telegram_configs ADD PRIMARY KEY (owner_user_id, id);
 

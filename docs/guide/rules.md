@@ -6,9 +6,8 @@
 
 ## Ai dùng
 
-- `viewer`: xem danh sách rule ở chế độ read-only.
-- `operator`: tạo, sửa và disable rule.
-- `admin`: có toàn bộ quyền operator.
+- `user`: tạo, sửa và disable rule của chính mình.
+- `admin`: chỉ xem read-only khi đang ở `View config` context.
 
 ## Thành phần UI
 

@@ -3,7 +3,7 @@ C4Container
     title Runtime containers - Anti-DDoS Scrubbing Gateway
 
     System_Boundary(system, "Anti-DDoS Scrubbing Gateway") {
-        Container(dashboard, "Admin Dashboard", "React / Vite / Nginx", "Console vận hành dày đặc cho Viewer, Operator và Admin")
+        Container(dashboard, "Admin Dashboard", "React / Vite / Nginx", "Console vận hành cho User và Admin")
         Container(api, "Control API", "Go HTTP JSON API", "RBAC, policy CRUD, snapshot, agent, event, alert và metrics")
         ContainerDb(db, "PostgreSQL", "PostgreSQL", "Users, policy, snapshot, event, alert, audit và agent state")
         Container(agent, "Node Agent", "Go host process", "Load XDP, đồng bộ snapshot, xuất metrics và gửi sampled events")

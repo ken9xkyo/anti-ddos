@@ -27,7 +27,7 @@ const (
 )
 
 func (s *Store) CreateBaselineProfile(ctx context.Context, actor *Actor, input BaselineProfileInput, reason string) (BaselineProfile, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BaselineProfile{}, err
 	}
 	if err := validateBaselineProfileInput(input); err != nil {
@@ -121,7 +121,7 @@ ORDER BY bs.name, bp.time_window, bp.protocol, bp.port`)
 }
 
 func (s *Store) ApproveBaselineProfile(ctx context.Context, actor *Actor, id, reason string) (BaselineProfile, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BaselineProfile{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -156,7 +156,7 @@ RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, tim
 }
 
 func (s *Store) RecalibrateBaselineProfile(ctx context.Context, actor *Actor, id string, input BaselineProfileInput, reason string) (BaselineProfile, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BaselineProfile{}, err
 	}
 	if err := validateBaselineProfileInput(input); err != nil {

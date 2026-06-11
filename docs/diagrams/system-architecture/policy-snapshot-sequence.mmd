@@ -1,14 +1,14 @@
 %%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
 sequenceDiagram
     autonumber
-    actor Operator
+    actor User
     participant Dashboard as Admin Dashboard
     participant API as Control API
     participant DB as PostgreSQL
     participant Agent as Node Agent
     participant XDP as eBPF maps
 
-    Operator->>Dashboard: Gửi thay đổi policy kèm reason
+    User->>Dashboard: Gửi thay đổi policy kèm reason
     Dashboard->>API: POST/PATCH/DELETE /v1 policy object
     API->>DB: Kiểm tra RBAC, ghi object và audit
     API->>API: Build effective snapshot

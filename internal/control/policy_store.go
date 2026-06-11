@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceInput, reason string) (Service, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Service{}, err
 	}
 	if err := validateServiceInput(input); err != nil {
@@ -79,7 +79,7 @@ RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, al
 }
 
 func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, input ServiceInput, reason string) (Service, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Service{}, err
 	}
 	if err := validateServiceInput(input); err != nil {
@@ -140,7 +140,7 @@ RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, al
 }
 
 func (s *Store) DeleteService(ctx context.Context, actor *Actor, id, reason string) (Service, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Service{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -252,7 +252,7 @@ func scanService(row rowScanner, service *Service) error {
 }
 
 func (s *Store) CreateForwardingPolicy(ctx context.Context, actor *Actor, input ForwardingPolicyInput, reason string) (ForwardingPolicy, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return ForwardingPolicy{}, err
 	}
 	if err := validateForwardingPolicyInput(input); err != nil {
@@ -362,7 +362,7 @@ func scanForwardingPolicy(row rowScanner, policy *ForwardingPolicy) error {
 }
 
 func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input WhitelistInput, reason string) (WhitelistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return WhitelistEntry{}, err
 	}
 	if err := validateWhitelistInput(input); err != nil {
@@ -556,7 +556,7 @@ func scanWhitelistEntry(row rowScanner, entry *WhitelistEntry) error {
 }
 
 func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, reason string) (Rule, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return Rule{}, err
 	}
 	if err := validateRuleInput(input); err != nil {
@@ -700,7 +700,7 @@ func scanRule(row rowScanner, rule *Rule) error {
 }
 
 func (s *Store) CreateBlacklistEntry(ctx context.Context, actor *Actor, input BlacklistInput, reason string) (BlacklistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return BlacklistEntry{}, err
 	}
 	if err := validateBlacklistInput(input); err != nil {
@@ -861,9 +861,9 @@ func parseBlacklistEntriesQuery(values map[string][]string) (BlacklistEntriesQue
 		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
 	}
 	switch query.Origin {
-	case "all", "manual", "feed":
+	case "all", "manual":
 	default:
-		return query, fmt.Errorf("origin must be all, manual, or feed")
+		return query, fmt.Errorf("origin must be all or manual")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -978,8 +978,6 @@ func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
 	switch blacklistQueryValue(query.Origin, "all") {
 	case "manual":
 		clauses = append(clauses, "c.origin = 'manual'")
-	case "feed":
-		clauses = append(clauses, "c.origin = 'feed'")
 	}
 	switch blacklistQueryValue(query.State, "all") {
 	case "enabled":
@@ -1023,35 +1021,6 @@ SELECT b.id::text AS id,
        COALESCE(r.name, '') AS rule_name
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
-UNION ALL
-SELECT re.id::text AS id,
-       re.ebpf_id AS ebpf_id,
-       re.ip_or_cidr::text AS cidr,
-       re.score AS score,
-       re.action AS action,
-       CASE
-           WHEN LOWER(fs.type) IN ('abuseipdb', 'abuseipdb_v2') THEN 'abuseipdb'
-           WHEN LOWER(fs.type) IN ('spamhaus', 'spamhaus_drop') THEN 'spamhaus_drop'
-           WHEN LOWER(fs.type) IN ('team_cymru', 'cymru', 'bogon', 'fullbogon') THEN 'team_cymru'
-           WHEN LOWER(fs.type) IN ('internal', 'internal_http_json', 'json') THEN 'internal_json'
-           ELSE LOWER(fs.type)
-       END AS source,
-       fs.name AS source_name,
-       ''::text AS rule_id,
-       re.reason AS reason,
-       re.expires_at AS expires_at,
-       (fs.enabled AND re.status = 'active') AS enabled,
-       re.status AS status,
-       'feed'::text AS origin,
-       false AS editable,
-       re.first_seen_at AS created_at,
-       re.last_seen_at AS updated_at,
-       re.owner_user_id AS owner_user_id,
-       ''::text AS rule_name
-FROM reputation_entries re
-JOIN feed_sources fs ON fs.id = re.source_id
-WHERE re.status <> 'inactive'
-  AND re.action = 'drop'
 )`
 }
 
@@ -1104,7 +1073,7 @@ func scanBlacklistEntryRow(row rowScanner, entry *BlacklistEntryRow) error {
 }
 
 func (s *Store) CreateUDPSourcePortBlock(ctx context.Context, actor *Actor, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	if err := validateUDPSourcePortBlockInput(input); err != nil {
@@ -1252,7 +1221,7 @@ func scanUDPSourcePortBlock(row rowScanner, entry *UDPSourcePortBlock) error {
 }
 
 func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSourceInput, reason string) (FeedSource, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return FeedSource{}, err
 	}
 	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, false) {
@@ -1362,10 +1331,6 @@ func feedSourceColumns() string {
 
 func feedSourceSelectSQL() string {
 	return `SELECT ` + feedSourceColumns() + ` FROM feed_sources`
-}
-
-func requireOperator(actor *Actor) error {
-	return requireConfigMutation(actor)
 }
 
 func mutationReason(headerReason, bodyReason string) string {

@@ -20,18 +20,25 @@ func TestControlCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleUser, "create viewer for RBAC test"); err != nil {
+	owner, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user for RBAC test")
+	if err != nil {
 		t.Fatal(err)
 	}
+	ownerActor := &Actor{User: owner}
+	ownerCtx := contextWithOwner(ctx, owner.ID)
 
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
-	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
+	userToken := login(t, server.URL, "user", "user password phrase")
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
 
-	viewerReq := ServiceInput{
-		Reason:                   "viewer should not mutate",
-		Name:                     "blocked-viewer",
+	readOnlyReq := ServiceInput{
+		Reason:                   "admin read-only should not mutate",
+		Name:                     "blocked-read-only",
 		BackendCIDR:              "203.0.113.10/32",
 		Protocol:                 "tcp",
 		AllowedPorts:             []uint16{443},
@@ -44,15 +51,15 @@ func TestControlCoreIntegration(t *testing.T) {
 		ResolvedSourceMAC:        "02:00:00:00:00:01",
 		NeighborResolutionStatus: "resolved",
 	}
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/services", viewerToken, viewerReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", viewSession.Token, readOnlyReq)
 	if resp.Code != http.StatusBadRequest && resp.Code != http.StatusForbidden {
-		t.Fatalf("viewer mutate status = %d body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("read-only mutate status = %d body=%s", resp.Code, resp.Body.String())
 	}
 
-	serviceReq := viewerReq
+	serviceReq := readOnlyReq
 	serviceReq.Reason = "publish HTTPS service"
 	serviceReq.Name = "api-https"
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", adminToken, serviceReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", userToken, serviceReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create service status = %d body=%s", resp.Code, resp.Body.String())
 	}
@@ -67,7 +74,7 @@ func TestControlCoreIntegration(t *testing.T) {
 	retiredReq.Reason = "publish temporary service"
 	retiredReq.Name = "retired-api"
 	retiredReq.BackendCIDR = "203.0.113.11/32"
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", adminToken, retiredReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/services", userToken, retiredReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create retired service status = %d body=%s", resp.Code, resp.Body.String())
 	}
@@ -79,30 +86,30 @@ func TestControlCoreIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
 	deleteReq.Header.Set("X-Audit-Reason", "retire temporary service")
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	resp = doTestHTTP(t, deleteReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("delete service status = %d body=%s", resp.Code, resp.Body.String())
 	}
 
 	whitelistReq := WhitelistInput{Reason: "allow trusted monitor", CIDR: "198.51.100.10/32", Scope: "global", Owner: "sre", Priority: 10}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, whitelistReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", userToken, whitelistReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create whitelist status = %d body=%s", resp.Code, resp.Body.String())
 	}
 	ruleReq := RuleInput{Reason: "manual emergency drop rule", Name: "drop-suspect", Action: "drop", Mode: "enforce", Owner: "soc", Priority: 20}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/rules", adminToken, ruleReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/rules", userToken, ruleReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create rule status = %d body=%s", resp.Code, resp.Body.String())
 	}
 	blacklistReq := BlacklistInput{Reason: "manual attack source", CIDR: "198.51.100.200/32", Source: "manual", Action: "drop", Score: 90}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", adminToken, blacklistReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", userToken, blacklistReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create blacklist status = %d body=%s", resp.Code, resp.Body.String())
 	}
 
-	snapshots, err := store.ListSnapshots(ctx, true)
+	snapshots, err := store.ListSnapshots(ownerCtx, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,19 +117,19 @@ func TestControlCoreIntegration(t *testing.T) {
 		t.Fatalf("expected snapshots from mutations, got %d", len(snapshots))
 	}
 	beforeCount := len(snapshots)
-	unchanged, err := store.RebuildSnapshot(ctx, adminActor, "confirm unchanged snapshot")
+	unchanged, err := store.RebuildSnapshot(ownerCtx, ownerActor, "confirm unchanged snapshot")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if unchanged != nil {
 		t.Fatalf("expected unchanged rebuild to skip new version, got %#v", unchanged)
 	}
-	afterUnchanged, _ := store.ListSnapshots(ctx, false)
+	afterUnchanged, _ := store.ListSnapshots(ownerCtx, false)
 	if len(afterUnchanged) != beforeCount {
 		t.Fatalf("unchanged rebuild created snapshot: before=%d after=%d", beforeCount, len(afterUnchanged))
 	}
 
-	rollback, err := store.RollbackSnapshot(ctx, adminActor, 1, "rollback to service-only snapshot")
+	rollback, err := store.RollbackSnapshot(ownerCtx, ownerActor, 1, "rollback to service-only snapshot")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +166,7 @@ func TestControlCoreIntegration(t *testing.T) {
 	if heartbeatResp.Code != http.StatusOK {
 		t.Fatalf("heartbeat status = %d body=%s", heartbeatResp.Code, heartbeatResp.Body.String())
 	}
-	dashboardAgents, err := store.ListDashboardAgents(ctx, time.Minute)
+	dashboardAgents, err := store.ListDashboardAgents(ownerCtx, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +194,7 @@ func TestControlCoreIntegration(t *testing.T) {
 		t.Fatalf("apply ack status = %d body=%s", ackResp.Code, ackResp.Body.String())
 	}
 
-	events, err := store.ListAuditEvents(ctx, 100)
+	events, err := store.ListAuditEvents(ownerCtx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

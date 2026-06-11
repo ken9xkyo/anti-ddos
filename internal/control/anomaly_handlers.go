@@ -83,7 +83,7 @@ func (s *Server) handleAnomalyEvaluate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}

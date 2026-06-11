@@ -77,6 +77,57 @@ func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+const defaultUDPSourcePortSeedReason = "seeded UDP reflection source-port candidate from CISA/Cloudflare guidance"
+
+type udpSourcePortSeed struct {
+	port  int
+	label string
+}
+
+var defaultUDPSourcePortSeeds = []udpSourcePortSeed{
+	{0, "reserved source port"},
+	{19, "CHARGEN"},
+	{53, "DNS"},
+	{69, "TFTP"},
+	{111, "SunRPC"},
+	{123, "NTP"},
+	{137, "NetBIOS"},
+	{161, "SNMP"},
+	{162, "SNMP trap"},
+	{389, "CLDAP"},
+	{427, "SLP"},
+	{520, "RIP"},
+	{1194, "OpenVPN"},
+	{1900, "SSDP"},
+	{3702, "WS-Discovery"},
+	{5353, "mDNS"},
+	{10001, "Ubiquiti discovery"},
+	{11211, "Memcached"},
+	{20800, "Call of Duty"},
+	{27005, "SRCDS"},
+}
+
+func seedDefaultUDPSourcePortBlocks(ctx context.Context, q dbQuerier, ownerUserID string) error {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return errors.New("owner user id is required")
+	}
+	for _, seed := range defaultUDPSourcePortSeeds {
+		id, err := newUUID()
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, enabled)
+VALUES ($1, $2, $3, $4, $5, 'system', false)
+ON CONFLICT (owner_user_id, port) DO NOTHING`,
+			id, ownerUserID, seed.port, seed.label, defaultUDPSourcePortSeedReason,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -125,10 +176,6 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 }
 
 func (s *Store) Authenticate(ctx context.Context, username, password string, ttl time.Duration) (Session, error) {
-	return s.AuthenticateForTenant(ctx, username, password, "", ttl)
-}
-
-func (s *Store) AuthenticateForTenant(ctx context.Context, username, password, _ string, ttl time.Duration) (Session, error) {
 	var user User
 	var passwordHash string
 	err := s.pool.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at, password_hash
@@ -253,6 +300,11 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	user, err = s.getUser(ctx, tx, user.ID)
 	if err != nil {
 		return User{}, err
+	}
+	if user.Role == RoleUser {
+		if err := seedDefaultUDPSourcePortBlocks(ctx, tx, user.ID); err != nil {
+			return User{}, err
+		}
 	}
 	action := "reactivate_user"
 	if created {

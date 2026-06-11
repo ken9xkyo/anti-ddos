@@ -250,14 +250,13 @@ export interface BlacklistEntry {
 export interface BlacklistEntryRow extends BlacklistEntry {
   source_name?: string;
   status?: string;
-  origin: 'manual' | 'feed';
+  origin: 'manual';
   editable: boolean;
 }
 
 export interface BlacklistFilters {
   q?: string;
   source?: string;
-  origin?: 'all' | 'manual' | 'feed';
   state?: 'all' | 'enabled' | 'disabled';
   expiry?: 'all' | 'valid' | 'expired' | 'none';
 }
@@ -371,69 +370,6 @@ export interface SecurityEvent {
   rule_id?: number;
   pkt_len?: number;
   sample_rate?: number;
-}
-
-export interface FeedSource {
-  id: string;
-  name: string;
-  type: string;
-  url?: string;
-  credential_ref?: string;
-  required_for_production: boolean;
-  enabled: boolean;
-  interval_seconds: number;
-  license_note?: string;
-  quota_metadata?: Record<string, unknown>;
-  status: string;
-  last_success_at?: string;
-  last_error_at?: string;
-  last_error?: string;
-  next_run_at?: string;
-  active_entries: number;
-  conflict_count: number;
-  parse_error_count: number;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface FeedSourceInput {
-  reason: string;
-  name: string;
-  type: string;
-  url?: string;
-  credential_ref?: string;
-  required_for_production?: boolean;
-  enabled?: boolean;
-  interval_seconds?: number;
-  license_note?: string;
-  quota_metadata?: Record<string, unknown>;
-  status?: string;
-}
-
-export interface FeedRun {
-  id: string;
-  source_id: string;
-  source_name?: string;
-  started_at: string;
-  finished_at?: string;
-  status: string;
-  items_fetched: number;
-  items_valid: number;
-  parse_errors: number;
-  error?: string;
-  snapshot_version?: number;
-}
-
-export interface FeedConflict {
-  id: string;
-  source_id: string;
-  source_name?: string;
-  reputation_id: string;
-  whitelist_id: string;
-  reputation_cidr: string;
-  whitelist_cidr: string;
-  status: string;
-  detected_at: string;
 }
 
 export interface TelegramConfig {

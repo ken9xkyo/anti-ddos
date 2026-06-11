@@ -6,9 +6,8 @@
 
 ## Ai dùng
 
-- `viewer`: xem service registry, bộ lọc và apply failure.
-- `operator`: tạo, sửa và disable service.
-- `admin`: có toàn bộ quyền operator.
+- `user`: tạo, sửa và disable service của chính mình.
+- `admin`: chỉ xem read-only khi đang ở `View config` context.
 
 ## Thành phần UI
 

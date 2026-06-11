@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Store) RebuildSnapshot(ctx context.Context, actor *Actor, reason string) (*SnapshotMetadata, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -110,7 +110,7 @@ VALUES (NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $1, 
 }
 
 func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersion uint32, reason string) (SnapshotMetadata, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return SnapshotMetadata{}, err
 	}
 	if targetVersion == 0 {

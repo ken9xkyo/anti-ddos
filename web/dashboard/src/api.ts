@@ -11,9 +11,6 @@ import type {
   BlacklistInput,
   DashboardData,
   DashboardOverview,
-  FeedRun,
-  FeedSource,
-  FeedSourceInput,
   OwnPasswordInput,
   PasswordResetInput,
   Rule,
@@ -265,38 +262,6 @@ export class ApiClient {
     });
   }
 
-  async feedSources(): Promise<FeedSource[]> {
-    return asArray(await this.request<FeedSource[] | null>('/v1/feed-sources'));
-  }
-
-  async createFeedSource(input: FeedSourceInput): Promise<FeedSource> {
-    return this.request<FeedSource>('/v1/feed-sources', {
-      method: 'POST',
-      body: JSON.stringify(input)
-    });
-  }
-
-  async updateFeedSource(id: string, input: FeedSourceInput): Promise<FeedSource> {
-    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(input)
-    });
-  }
-
-  async disableFeedSource(id: string, reason: string): Promise<FeedSource> {
-    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: { 'X-Audit-Reason': reason }
-    });
-  }
-
-  async syncFeedSource(id: string, reason: string): Promise<FeedRun> {
-    return this.request<FeedRun>(`/v1/feed-sources/${encodeURIComponent(id)}/sync`, {
-      method: 'POST',
-      body: JSON.stringify({ reason })
-    });
-  }
-
   async snapshots(includeSnapshot = false): Promise<SnapshotMetadata[]> {
     return asArray(await this.request<SnapshotMetadata[] | null>(`/v1/snapshots?include_snapshot=${includeSnapshot ? 'true' : 'false'}`));
   }
@@ -393,7 +358,6 @@ function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
-  if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   params.set('page', String(page));

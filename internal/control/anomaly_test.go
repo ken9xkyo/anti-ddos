@@ -63,9 +63,15 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
+	owner, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerActor := &Actor{User: owner}
+	ownerCtx := contextWithOwner(ctx, owner.ID)
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
-	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
+	userToken := login(t, server.URL, "user", "user password phrase")
 
 	serviceReq := ServiceInput{
 		Reason:                   "publish service",
@@ -82,7 +88,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		ResolvedSourceMAC:        "02:00:00:00:00:01",
 		NeighborResolutionStatus: "resolved",
 	}
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/services", adminToken, serviceReq)
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/services", userToken, serviceReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create service status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -92,7 +98,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	}
 
 	resetQueries()
-	overview, err := store.BuildDashboardOverview(ctx, NewPrometheusClient(prom.URL, nil), time.Minute)
+	overview, err := store.BuildDashboardOverview(ownerCtx, NewPrometheusClient(prom.URL, nil), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,13 +106,13 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	overviewQueries := append([]string(nil), queries...)
 	queryMu.Unlock()
 	if len(overviewQueries) != 0 {
-		t.Fatalf("tenant dashboard should not query global prometheus traffic, got %#v", overviewQueries)
+		t.Fatalf("owner dashboard should not query global prometheus traffic, got %#v", overviewQueries)
 	}
-	if !strings.Contains(overview.Prometheus.Error, "tenant-scoped prometheus labels unavailable") {
-		t.Fatalf("dashboard overview did not report tenant-scoped prometheus fallback: %#v", overview.Prometheus)
+	if !strings.Contains(overview.Prometheus.Error, "owner-scoped prometheus labels unavailable") {
+		t.Fatalf("dashboard overview did not report owner-scoped prometheus fallback: %#v", overview.Prometheus)
 	}
 
-	evals, err := store.EvaluateAnomalies(ctx, NewPrometheusClient("", nil), "unconfigured prometheus")
+	evals, err := store.EvaluateAnomalies(ownerCtx, NewPrometheusClient("", nil), "unconfigured prometheus")
 	if err != nil || len(evals) != 0 {
 		t.Fatalf("unconfigured prometheus should skip cleanly evals=%#v err=%v", evals, err)
 	}
@@ -114,11 +120,11 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		http.Error(w, "prometheus unavailable", http.StatusInternalServerError)
 	}))
 	defer badProm.Close()
-	if _, err := store.EvaluateAnomalies(ctx, NewPrometheusClient(badProm.URL, nil), "unhealthy prometheus"); err == nil {
+	if _, err := store.EvaluateAnomalies(ownerCtx, NewPrometheusClient(badProm.URL, nil), "unhealthy prometheus"); err == nil {
 		t.Fatal("configured unhealthy prometheus should return an evaluator error")
 	}
 
-	manualRule, err := store.CreateRule(ctx, adminActor, RuleInput{
+	manualRule, err := store.CreateRule(ownerCtx, ownerActor, RuleInput{
 		Reason:       "manual ttl regression rule",
 		ServiceID:    service.ID,
 		Name:         "manual-ttl-regression",
@@ -150,7 +156,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		HistoryHours: 1,
 		Confidence:   0.25,
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines", adminToken, baselineReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines", userToken, baselineReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create baseline status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -160,7 +166,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	}
 
 	ingestSecurityEvent(t, server.URL, service.EBPFID, "198.51.100.10")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "low confidence evaluation"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", userToken, map[string]string{"reason": "low confidence evaluation"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("low confidence evaluate status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -178,16 +184,16 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	baselineReq.HistoryHours = 24
 	baselineReq.Confidence = 0.95
 	baselineReq.Reason = "recalibrate with approved 24h history"
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines/"+baseline.ID+"/recalibrate", adminToken, baselineReq)
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines/"+baseline.ID+"/recalibrate", userToken, baselineReq)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("recalibrate baseline status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines/"+baseline.ID+"/approve", adminToken, map[string]string{"reason": "approve baseline"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/baselines/"+baseline.ID+"/approve", userToken, map[string]string{"reason": "approve baseline"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("approve baseline status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", userToken, WhitelistInput{
 		Reason:    "expired trusted source should not suppress alert",
 		CIDR:      "198.51.100.10/32",
 		Scope:     "global",
@@ -206,7 +212,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			evals, err := store.EvaluateAnomalies(ctx, concurrentProm, "concurrent alert-only evaluation")
+			evals, err := store.EvaluateAnomalies(ownerCtx, concurrentProm, "concurrent alert-only evaluation")
 			if err != nil {
 				errs <- err
 				return
@@ -233,7 +239,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&snapshotBeforeEvaluate); err != nil {
 		t.Fatal(err)
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "alert-only evaluation"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", userToken, map[string]string{"reason": "alert-only evaluation"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("alert-only evaluate status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -254,7 +260,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if snapshotAfterEvaluate != snapshotBeforeEvaluate {
 		t.Fatalf("alert-only anomaly evaluation should not rebuild snapshots: before=%d after=%d", snapshotBeforeEvaluate, snapshotAfterEvaluate)
 	}
-	rules, err := store.ListRules(ctx)
+	rules, err := store.ListRules(ownerCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +269,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 			t.Fatalf("anomaly evaluation created legacy auto-enforce rule: %#v", rules)
 		}
 	}
-	alerts, err := store.ListAlerts(ctx, 20)
+	alerts, err := store.ListAlerts(ownerCtx, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +284,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 		t.Fatalf("alert-only anomaly did not create anomaly alert: %#v", alerts)
 	}
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", userToken, WhitelistInput{
 		Reason: "trusted source conflict",
 		CIDR:   "198.51.100.10/32",
 		Scope:  "global",
@@ -287,12 +293,12 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create whitelist status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", adminToken, map[string]string{"reason": "whitelist conflict evaluation"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/anomalies/evaluate", userToken, map[string]string{"reason": "whitelist conflict evaluation"})
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"status":"alert_only"`) || !strings.Contains(resp.Body.String(), `"whitelist_conflict":true`) {
 		t.Fatalf("whitelist conflict should be alert evidence only status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
-	legacyOwnerRule, err := store.CreateSystemRule(ctx, RuleInput{
+	legacyOwnerRule, err := store.CreateSystemRule(ownerCtx, RuleInput{
 		ServiceID:    service.ID,
 		Name:         "legacy-owner-auto-rate-limit",
 		Action:       "rate_limit",
@@ -305,7 +311,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyEvidenceRule, err := store.CreateSystemRule(ctx, RuleInput{
+	legacyEvidenceRule, err := store.CreateSystemRule(ownerCtx, RuleInput{
 		ServiceID:    service.ID,
 		Name:         "legacy-evidence-auto-rate-limit",
 		Action:       "rate_limit",
@@ -344,7 +350,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if cleanupAudits < 2 {
 		t.Fatalf("legacy cleanup audit missing: got %d", cleanupAudits)
 	}
-	rules, err = store.ListRules(ctx)
+	rules, err = store.ListRules(ownerCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +395,7 @@ func TestAnomalyAlertOnlyIntegration(t *testing.T) {
 	if auditAfterExpiry < auditBeforeExpiry+1 {
 		t.Fatalf("ttl expiry audit missing: before=%d after=%d", auditBeforeExpiry, auditAfterExpiry)
 	}
-	rules, err = store.ListRules(ctx)
+	rules, err = store.ListRules(ownerCtx)
 	if err != nil {
 		t.Fatal(err)
 	}

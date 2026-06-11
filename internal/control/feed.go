@@ -81,7 +81,7 @@ ORDER BY COALESCE(next_run_at, now()), name`)
 	}
 	defer rows.Close()
 	type dueFeed struct {
-		id       string
+		id          string
 		ownerUserID string
 	}
 	var feeds []dueFeed
@@ -618,7 +618,7 @@ func (s *Store) GetFeedSource(ctx context.Context, id string) (FeedSource, error
 }
 
 func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, input FeedSourceInput, reason string) (FeedSource, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return FeedSource{}, err
 	}
 	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, true) {

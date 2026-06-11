@@ -2,13 +2,12 @@
 
 ## Mục đích
 
-`Blacklist` hiển thị danh sách block CIDR hiệu lực từ manual entries và threat feed như AbuseIPDB. Trang này dùng để thêm, sửa, lọc và soft-disable nguồn tấn công cần chặn thủ công; feed rows chỉ để xem.
+`Blacklist` hiển thị manual blacklist entries của user. Threat feed/reputation không còn hiển thị trong dashboard scope hiện tại.
 
 ## Ai dùng
 
-- `viewer`: xem manual/feed blacklist và dùng bộ lọc.
-- `operator`: tạo, sửa và disable manual blacklist entry.
-- `admin`: có toàn bộ quyền operator.
+- `user`: tạo, sửa và disable manual blacklist entry của chính mình.
+- `admin`: chỉ xem read-only khi đang ở `View config` context.
 
 ## Thành phần UI
 
@@ -42,14 +41,12 @@
 
 ## Trạng thái rỗng và lỗi
 
-- Nếu chưa có blacklist entry manual/feed, bảng hiển thị `No blacklist entries configured`.
+- Nếu chưa có blacklist entry manual, bảng hiển thị `No blacklist entries configured`.
 - Nếu filter không khớp, bảng hiển thị `No blacklist entries match the current filters`.
 - Trường `Score` phải là số nguyên không âm nếu được nhập.
 
 ## Lưu ý vận hành
 
 - Disable là soft-disable: entry vẫn còn để audit nhưng không đi vào snapshot active tiếp theo.
-- Feed rows đến từ threat feed reputation và hiển thị `feed read only`; không thể edit hoặc disable từ trang Blacklist.
-- Trang `Reputation` vẫn là nơi cấu hình feed source, sync feed và xem conflict/run history.
-- Nếu manual blacklist trùng chính xác CIDR với feed reputation, manual entry enabled được ưu tiên trong effective snapshot. CIDR chồng lấn nhưng không trùng chính xác vẫn dựa vào LPM precedence ở dataplane.
+- Trang `Reputation` da retired; feed/reputation neu can se duoc thiet ke lai trong feature rieng.
 - Whitelist vẫn có precedence trước blacklist khi packet đã match protected service.

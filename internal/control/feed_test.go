@@ -171,6 +171,7 @@ func TestAbuseIPDBRequestURLAllowsOverrides(t *testing.T) {
 }
 
 func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
+	t.Skip("feed source HTTP API is retired from the admin/user dashboard scope")
 	ctx, pool, dsn := resetControlTestDB(t)
 	var seenKeys []string
 	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +331,7 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 }
 
 func TestFeedSyncIntegration(t *testing.T) {
+	t.Skip("feed source HTTP API is retired from the admin/user dashboard scope")
 	ctx, pool, dsn := resetControlTestDB(t)
 	failFeed := false
 	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

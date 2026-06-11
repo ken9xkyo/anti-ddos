@@ -6,9 +6,8 @@
 
 ## Ai dùng
 
-- `viewer`: xem snapshot versions và semantic diff.
-- `operator`: rollback snapshot.
-- `admin`: có toàn bộ quyền operator.
+- `user`: xem snapshot versions, semantic diff và rollback snapshot của chính mình.
+- `admin`: chỉ xem read-only khi đang ở `View config` context.
 
 ## Thành phần UI
 

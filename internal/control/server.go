@@ -184,18 +184,6 @@ func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, user, err)
 }
 
-func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
-}
-
-func (s *Server) handleTenantByID(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
-}
-
-func (s *Server) handleTenantSwitch(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
-}
-
 func (s *Server) handleAdminViewUser(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
@@ -593,121 +581,6 @@ func (s *Server) handleUDPSourcePortBlockByID(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requireActor(w, r)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		sources, err := s.store.ListFeedSources(r.Context())
-		if err == nil {
-			sources = maskFeedSourceCredentialsForActor(sources, actor)
-		}
-		writeResult(w, sources, err)
-	case http.MethodPost:
-		var req FeedSourceInput
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		source, err := s.store.CreateFeedSource(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredentialForActor(source, actor)
-		}
-		writeResult(w, source, err)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requireActor(w, r)
-	if !ok {
-		return
-	}
-	rest := strings.TrimPrefix(r.URL.Path, "/v1/feed-sources/")
-	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
-		writeError(w, http.StatusNotFound, errors.New("feed source not found"))
-		return
-	}
-	id := parts[0]
-	if len(parts) == 2 && parts[1] == "sync" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
-			return
-		}
-		if err := requireOperator(actor); err != nil {
-			writeError(w, http.StatusForbidden, err)
-			return
-		}
-		var req struct {
-			Reason string `json:"reason"`
-		}
-		if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, &req) {
-			return
-		}
-		run, err := s.store.SyncFeedSource(r.Context(), id, actor, mutationReason(r.Header.Get("X-Audit-Reason"), req.Reason))
-		writeResult(w, run, err)
-		return
-	}
-	if len(parts) != 1 {
-		writeError(w, http.StatusNotFound, errors.New("feed source route not found"))
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		source, err := s.store.GetFeedSource(r.Context(), id)
-		if err == nil {
-			source = maskFeedSourceCredentialForActor(source, actor)
-		}
-		writeResult(w, source, err)
-	case http.MethodPatch:
-		var req FeedSourceInput
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredentialForActor(source, actor)
-		}
-		writeResult(w, source, err)
-	case http.MethodDelete:
-		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredentialForActor(source, actor)
-		}
-		writeResult(w, source, err)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (s *Server) handleFeedRuns(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-		return
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	runs, err := s.store.ListFeedRuns(r.Context(), limit)
-	writeResult(w, runs, err)
-}
-
-func (s *Server) handleFeedConflicts(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-		return
-	}
-	conflicts, err := s.store.ListFeedConflicts(r.Context())
-	writeResult(w, conflicts, err)
-}
-
 func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireActor(w, r); !ok {
 		return
@@ -1055,17 +928,6 @@ func routeName(r *http.Request) string {
 		return "/v1/udp-source-port-blocks"
 	case strings.HasPrefix(path, "/v1/udp-source-port-blocks/"):
 		return "/v1/udp-source-port-blocks/{id}"
-	case path == "/v1/feed-sources":
-		return "/v1/feed-sources"
-	case strings.HasPrefix(path, "/v1/feed-sources/"):
-		if strings.HasSuffix(path, "/sync") {
-			return "/v1/feed-sources/{id}/sync"
-		}
-		return "/v1/feed-sources/{id}"
-	case path == "/v1/feed-runs":
-		return "/v1/feed-runs"
-	case path == "/v1/feed-conflicts":
-		return "/v1/feed-conflicts"
 	case path == "/v1/telegram/config":
 		return "/v1/telegram/config"
 	case path == "/v1/telegram/test":

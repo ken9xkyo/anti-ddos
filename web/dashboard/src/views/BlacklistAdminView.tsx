@@ -33,7 +33,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
-  const [filters, setFilters] = useState<BlacklistFilters>({ origin: 'all', state: 'all', expiry: 'all' });
+  const [filters, setFilters] = useState<BlacklistFilters>({ state: 'all', expiry: 'all' });
   const [mode, setMode] = useState<'create' | 'edit' | ''>('');
   const [target, setTarget] = useState<BlacklistEntryRow | null>(null);
   const [form, setForm] = useState<BlacklistForm>(emptyForm);
@@ -72,14 +72,12 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
   const hasActiveFilters = Boolean(
     filters.q?.trim() ||
     filters.source?.trim() ||
-    (filters.origin && filters.origin !== 'all') ||
     (filters.state && filters.state !== 'all') ||
     (filters.expiry && filters.expiry !== 'all')
   );
 
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'cidr', headerName: 'CIDR', flex: 1, minWidth: 155 },
-    { field: 'origin', headerName: 'Origin', width: 105 },
     {
       field: 'source',
       headerName: 'Source',
@@ -95,8 +93,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
       width: 120,
       renderCell: (params) => {
         const row = params.row as BlacklistEntryRow;
-        const text = row.origin === 'feed' ? row.status ?? (row.enabled ? 'active' : 'disabled') : row.enabled ? 'enabled' : 'disabled';
-        return <StatusPill state={row.enabled ? 'warn' : 'off'} text={text} />;
+        return <StatusPill state={row.enabled ? 'warn' : 'off'} text={row.enabled ? 'enabled' : 'disabled'} />;
       }
     },
     { field: 'reason', headerName: 'Reason', flex: 1, minWidth: 170 },
@@ -107,7 +104,6 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
       sortable: false,
       renderCell: (params) => {
         const row = params.row as BlacklistEntryRow;
-        if (!row.editable || row.origin !== 'manual') return <span className="muted">feed read only</span>;
         if (!canMutate) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
@@ -180,17 +176,9 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
           eyebrow={hasActiveFilters ? `${pageData.total} matching block entries` : `${pageData.total} block entries`}
           actions={canMutate ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add blacklist</button> : null}
         />
-        <DataToolbar className="whitelist-toolbar">
+        <DataToolbar>
           <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => updateFilters({ q: value })} placeholder="cidr, source, reason, rule" />
-          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => updateFilters({ source: value })} placeholder="manual, abuseipdb" />
-          <label>
-            Origin
-            <select value={filters.origin ?? 'all'} onChange={(event) => updateFilters({ origin: event.target.value as BlacklistFilters['origin'] })}>
-              <option value="all">All</option>
-              <option value="manual">Manual</option>
-              <option value="feed">Feed</option>
-            </select>
-          </label>
+          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => updateFilters({ source: value })} placeholder="manual" />
           <label>
             State
             <select value={filters.state ?? 'all'} onChange={(event) => updateFilters({ state: event.target.value as BlacklistFilters['state'] })}>
@@ -222,7 +210,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
         paginationMode="server"
         paginationModel={paginationModel}
         onPaginationModelChange={setPaginationModel}
-        getRowId={(row) => `${row.origin}:${row.id}`}
+        getRowId={(row) => row.id}
       />
 
       <AdminDrawer

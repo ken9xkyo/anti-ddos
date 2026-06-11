@@ -1,64 +1,28 @@
-# Hướng Dẫn Sử Dụng Anti-DDoS Admin Dashboard
+# Admin Dashboard Guide
 
-Tài liệu này dành cho người vận hành Anti-DDoS Scrubbing Gateway qua Admin Dashboard. Nội dung tập trung vào cách đọc trạng thái, thao tác chính và các lưu ý an toàn trên từng trang của dashboard hiện tại.
+Dashboard chi con hai role public: `admin` va `user`.
 
-Admin Dashboard là giao diện vận hành của Control Plane. Dashboard không phải landing page, không thay thế Grafana, và không tự động thực hiện BGP, RTBH, FlowSpec hay thao tác hạ tầng ngoài các API điều khiển đã có.
-
-## Đối tượng sử dụng
-
-| Vai trò | Mục tiêu chính | Quyền trên dashboard |
+| Role | Muc dich | Quyen UI |
 |---|---|---|
-| `viewer` | Theo dõi hệ thống, xem service, alert, event, feed, snapshot | Chỉ đọc; không thấy hoặc không dùng được nút tạo/sửa/disable/sync/rollback |
-| `operator` | Trực vận hành, thay đổi policy runtime trong một tenant | Được thao tác service, rule, whitelist, feed non-secret, snapshot rollback, Telegram config/test, ISP runbook và quản lý viewer |
-| `admin` | Quản trị truy cập và secret reference | Bao gồm quyền operator; thêm full member management và feed credential reference |
+| `user` | Van hanh config Anti-DDoS cua chinh minh | Co controls mutation cho services, rules, whitelist, manual blacklist, UDP ports, snapshots, Telegram va baseline/anomaly workflow |
+| `admin` | Quan ly tai khoan va ho tro user | Thay Accounts; co the mo `View config` read-only cua user; khong mutation config user |
 
-Backend vẫn là lớp enforce RBAC chính. UI ẩn control nguy hiểm với role thấp hơn để giảm nhầm lẫn, nhưng mọi mutation vẫn phải được API kiểm tra lại.
+## Navigation
 
-## Nhóm menu
+| Group | Trang |
+|---|---|
+| Operation | Dashboard, Incidents, Detections, Events |
+| Configuration | Services, Rules, Whitelist, Blacklist, UDP Ports |
+| Setting | Snapshots, Accounts, Nodes |
 
-| Nhóm | Trang | Hướng dẫn |
-|---|---|---|
-| Operation | `Dashboard` | [overview.md](overview.md) |
-| Operation | `Incidents` | [incidents.md](incidents.md) |
-| Operation | `Detections` | [detection.md](detection.md) |
-| Operation | `Events` | [investigation.md](investigation.md) |
-| Configuration | `Services` | [services.md](services.md) |
-| Configuration | `Rules` | [rules.md](rules.md) |
-| Configuration | `Whitelist` | [whitelist.md](whitelist.md) |
-| Configuration | `Blacklist` | [blacklist.md](blacklist.md) |
-| Threat Intelligence | `Reputation` | [reputation.md](reputation.md) |
-| Setting | `Snapshots` | [snapshots.md](snapshots.md) |
-| Setting | `Accounts` | [access.md](access.md) |
-| Setting | `Nodes` | [fleet.md](fleet.md) |
+`Accounts` chi hien voi admin. `Tenants` va `Reputation` da retired.
 
-Luồng đăng nhập, thanh điều hướng, topbar, refresh và logout được mô tả trong [login-and-shell.md](login-and-shell.md).
+## Data loading
 
-## Quy ước thao tác an toàn
+Sau khi dang nhap, dashboard goi cac endpoint owner-scoped de lay overview, agents, services, rules, security events, baselines, anomalies, Telegram config va alerts. Dashboard khong goi `/v1/tenants*` hoac `/v1/feed-*`.
 
-- Mọi thay đổi quan trọng cần có `Reason`. Lý do này được gửi trong body hoặc header `X-Audit-Reason` để phục vụ audit.
-- Disable rule, whitelist, blacklist và feed là soft-disable. Bản ghi vẫn còn để xem lại lịch sử và không bị xóa vật lý ngay khỏi hệ thống.
-- Snapshot rollback không ghi đè snapshot cũ. Dashboard yêu cầu xác nhận và tạo snapshot mới từ version được chọn.
-- Service mới mặc định disabled. Khi enable service, dashboard yêu cầu metadata forwarding hợp lệ như `resolved_ifindex` và `resolved_src_mac`.
-- Dashboard không nhập thủ công next-hop MAC cho service. Agent chịu trách nhiệm resolve/cấu hình next-hop MAC trên host khi áp policy snapshot.
-- Không attach XDP vào NIC thật nếu chưa xác nhận role interface, service inventory và rollback plan ở cấp vận hành.
+## Safety
 
-## Luồng dữ liệu tổng quát
-
-Sau khi đăng nhập, dashboard gọi các endpoint `/v1` của Control API để lấy overview, agents, services, rules, events, baselines, anomalies, feed sources, feed runs, feed conflicts, Telegram config và alerts. Dữ liệu chính được refresh định kỳ khoảng 3 giây và cũng có thể refresh thủ công từ topbar.
-
-Các trang CRUD như `Rules`, `Whitelist`, `Blacklist`, `Snapshots`, `Accounts` và một số phần của `Reputation` có luồng tải riêng khi mở trang hoặc sau khi thao tác. Điều này giúp overview không phải kéo dữ liệu nặng như raw snapshot trong vòng polling mặc định.
-
-## Trạng thái chung
-
-- `Loading dashboard data`: dashboard chưa có dữ liệu đầu tiên hoặc đang đợi Control API phản hồi.
-- Banner lỗi ở đầu màn hình: request dashboard thất bại hoặc Control API trả lỗi.
-- `Freshness` trên topbar: thời điểm refresh gần nhất; trạng thái stale xuất hiện khi dữ liệu không được cập nhật trong vài giây.
-- Dòng rỗng trong bảng: không có dữ liệu trong cửa sổ hiện tại, hoặc bộ lọc không khớp bản ghi nào.
-
-## Tài liệu liên quan
-
-- [RBAC hiện tại](../RBAC.md)
-- [Admin Dashboard v2](../Admin-Dashboard-v2.md)
-- [Control API](../Control-Api.md)
-- [Docker Compose Deployment](../deployment/docker-compose.md)
-- [Metric Catalog](../observability/metric-catalog.md)
+- Moi mutation quan trong can `reason` trong body hoac `X-Audit-Reason`.
+- Delete/disable policy object la soft-disable de giu audit/history.
+- UI an mutation controls theo role, nhung backend van la enforcement chinh.
