@@ -6,11 +6,8 @@ import (
 )
 
 const (
-	RoleAdmin    = "admin"
-	RoleOperator = "operator"
-	RoleViewer   = "viewer"
-
-	PlatformRoleAdmin = "platform_admin"
+	RoleAdmin = "admin"
+	RoleUser  = "user"
 
 	StatusActive  = "active"
 	StatusRevoked = "revoked"
@@ -38,7 +35,7 @@ type Tenant struct {
 }
 
 type TenantAccess struct {
-	TenantID  string    `json:"tenant_id"`
+	TenantID  string    `json:"owner_user_id"`
 	Slug      string    `json:"slug"`
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
@@ -54,21 +51,27 @@ type TenantInput struct {
 }
 
 type TenantSwitchInput struct {
-	TenantID   string `json:"tenant_id,omitempty"`
+	TenantID   string `json:"owner_user_id,omitempty"`
 	TenantSlug string `json:"tenant_slug,omitempty"`
+}
+
+type ViewingUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
 }
 
 type User struct {
 	ID                  string         `json:"id"`
 	Username            string         `json:"username"`
 	Role                string         `json:"role"`
-	PlatformRole        string         `json:"platform_role,omitempty"`
 	Status              string         `json:"status"`
 	ForcePasswordChange bool           `json:"force_password_change"`
 	CreatedAt           time.Time      `json:"created_at"`
 	LastLoginAt         *time.Time     `json:"last_login_at,omitempty"`
-	ActiveTenant        *Tenant        `json:"active_tenant,omitempty"`
-	Tenants             []TenantAccess `json:"tenants,omitempty"`
+	ViewingUser         *ViewingUser   `json:"viewing_user,omitempty"`
+	ReadOnly            bool           `json:"read_only,omitempty"`
+	ActiveTenant        *Tenant        `json:"-"`
+	Tenants             []TenantAccess `json:"-"`
 }
 
 type UserUpdateInput struct {

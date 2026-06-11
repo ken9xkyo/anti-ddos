@@ -11,7 +11,6 @@ import type {
   BlacklistInput,
   DashboardData,
   DashboardOverview,
-  FeedConflict,
   FeedRun,
   FeedSource,
   FeedSourceInput,
@@ -27,9 +26,6 @@ import type {
   SnapshotMetadata,
   TelegramConfig,
   TelegramConfigInput,
-  Tenant,
-  TenantAccess,
-  TenantInput,
   UDPSourcePortBlock,
   UDPSourcePortBlockFilters,
   UDPSourcePortBlockInput,
@@ -53,11 +49,8 @@ export class ApiClient {
     localStorage.removeItem('anti_ddos_token');
   }
 
-  async login(username: string, password: string, tenantSlug?: string): Promise<Session> {
-    const body: { username: string; password: string; tenant_slug?: string } = { username, password };
-    if (tenantSlug?.trim()) {
-      body.tenant_slug = tenantSlug.trim();
-    }
+  async login(username: string, password: string): Promise<Session> {
+    const body = { username, password };
     const session = await this.request<Session>('/v1/auth/login', {
       method: 'POST',
       body: JSON.stringify(body)
@@ -78,7 +71,7 @@ export class ApiClient {
   }
 
   async dashboard(): Promise<DashboardData> {
-    const [overview, agents, services, rules, events, baselines, anomalies, feedSources, feedRuns, feedConflicts, telegramConfig, alerts] = await Promise.all([
+    const [overview, agents, services, rules, events, baselines, anomalies, telegramConfig, alerts] = await Promise.all([
       this.request<DashboardOverview>('/v1/dashboard/overview'),
       this.request<Agent[] | null>('/v1/dashboard/agents'),
       this.request<Service[] | null>('/v1/dashboard/services'),
@@ -86,9 +79,6 @@ export class ApiClient {
       this.request<SecurityEvent[] | null>('/v1/security-events?limit=50'),
       this.request<BaselineProfile[] | null>('/v1/baselines'),
       this.request<AnomalyEvaluation[] | null>('/v1/anomalies?limit=30'),
-      this.request<FeedSource[] | null>('/v1/feed-sources'),
-      this.request<FeedRun[] | null>('/v1/feed-runs?limit=20'),
-      this.request<FeedConflict[] | null>('/v1/feed-conflicts'),
       this.request<TelegramConfig>('/v1/telegram/config'),
       this.request<Alert[] | null>('/v1/alerts?limit=30')
     ]);
@@ -100,9 +90,6 @@ export class ApiClient {
       events: asArray(events),
       baselines: asArray(baselines),
       anomalies: asArray(anomalies),
-      feedSources: asArray(feedSources),
-      feedRuns: asArray(feedRuns),
-      feedConflicts: asArray(feedConflicts),
       telegramConfig,
       alerts: asArray(alerts)
     };
@@ -116,28 +103,10 @@ export class ApiClient {
     return asArray(await this.request<User[] | null>('/v1/users'));
   }
 
-  async tenants(includeRevoked = false): Promise<TenantAccess[]> {
-    return asArray(await this.request<TenantAccess[] | null>(includeRevoked ? '/v1/tenants?include_revoked=true' : '/v1/tenants'));
-  }
-
-  async createTenant(input: TenantInput): Promise<Tenant> {
-    return this.request<Tenant>('/v1/tenants', {
+  async viewUserConfig(userID: string): Promise<Session> {
+    const session = await this.request<Session>('/v1/admin/view-user', {
       method: 'POST',
-      body: JSON.stringify(input)
-    });
-  }
-
-  async updateTenant(id: string, input: TenantInput): Promise<Tenant> {
-    return this.request<Tenant>(`/v1/tenants/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(input)
-    });
-  }
-
-  async switchTenant(input: { tenant_id?: string; tenant_slug?: string }): Promise<Session> {
-    const session = await this.request<Session>('/v1/tenants/switch', {
-      method: 'POST',
-      body: JSON.stringify(input)
+      body: JSON.stringify({ user_id: userID })
     });
     this.setToken(session.token);
     return session;

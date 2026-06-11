@@ -167,7 +167,7 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 	}
 	metrics.dbUp.Set(1)
 
-	tx, err := s.beginPlatformTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleUser, "create viewer"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateService(ctx, adminActor, ServiceInput{

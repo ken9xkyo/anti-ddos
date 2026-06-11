@@ -11,11 +11,14 @@ import (
 )
 
 func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input UserUpdateInput, reason string) (User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
+	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -39,29 +42,27 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if err := validateUserRoleStatus(role, status); err != nil {
 		return User{}, err
 	}
-	if err := requireTenantUserTargetPermission(actor, before, role); err != nil {
-		return User{}, err
-	}
-	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, role, status); err != nil {
-		return User{}, err
-	}
-	if err := validateOperatorSingleTenantMembership(ctx, tx, id, actor.TenantID, role, status); err != nil {
-		return User{}, err
-	}
 	var after User
-	if _, err := tx.Exec(ctx, `UPDATE tenant_memberships
-SET role=$3, status=$4, updated_at=now()
-WHERE tenant_id=$1 AND user_id=$2`, actor.TenantID, id, role, status); err != nil {
+	if err := ensureActiveAdminRemains(ctx, tx, before, role, status); err != nil {
 		return User{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE app_users
-SET force_password_change=$2, updated_at=now()
-WHERE id=$1`, id, forcePasswordChange); err != nil {
+	if err := tx.QueryRow(ctx, `UPDATE app_users
+SET role=$2, status=$3, force_password_change=$4, updated_at=now()
+WHERE id=$1
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
+		id, role, status, forcePasswordChange,
+	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
-	after, err = s.getUser(ctx, tx, id)
-	if err != nil {
-		return User{}, err
+	if status != StatusActive {
+		if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+			return User{}, err
+		}
+	}
+	if role != RoleAdmin {
+		if _, err := tx.Exec(ctx, `UPDATE user_sessions SET view_owner_user_id=NULL WHERE view_owner_user_id=$1`, id); err != nil {
+			return User{}, err
+		}
 	}
 	if err := insertAudit(ctx, tx, actor, "update_user", "user", id, before, after, reason, ""); err != nil {
 		return User{}, err
@@ -70,6 +71,9 @@ WHERE id=$1`, id, forcePasswordChange); err != nil {
 }
 
 func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, input PasswordResetInput, reason string) (User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
+	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
@@ -85,7 +89,7 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -94,19 +98,16 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	if err != nil {
 		return User{}, err
 	}
-	if err := requireTenantUserTargetPermission(actor, before, ""); err != nil {
-		return User{}, err
-	}
 	var after User
 	if err := tx.QueryRow(ctx, `UPDATE app_users
 SET password_hash=$2, force_password_change=$3, updated_at=now()
 WHERE id=$1
-RETURNING id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at`,
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
 		id, string(hash), forcePasswordChange,
-	).Scan(&after.ID, &after.Username, &after.Role, &after.PlatformRole, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
 		return User{}, err
 	}
 	after, err = s.getUser(ctx, tx, id)
@@ -120,10 +121,13 @@ RETURNING id::text, username, role, platform_role, status, force_password_change
 }
 
 func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason string) (User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
+	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -132,10 +136,7 @@ func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason
 	if err != nil {
 		return User{}, err
 	}
-	if err := requireTenantUserTargetPermission(actor, user, ""); err != nil {
-		return User{}, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
 		return User{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "revoke_user_sessions", "user", id, user, user, strings.TrimSpace(reason), ""); err != nil {
@@ -166,7 +167,7 @@ func (s *Store) ChangeOwnPassword(ctx context.Context, actor *Actor, input OwnPa
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -179,9 +180,9 @@ func (s *Store) ChangeOwnPassword(ctx context.Context, actor *Actor, input OwnPa
 	if err := tx.QueryRow(ctx, `UPDATE app_users
 SET password_hash=$2, force_password_change=false, updated_at=now()
 WHERE id=$1
-RETURNING id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at`,
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
 		actor.ID, string(hash),
-	).Scan(&after.ID, &after.Username, &after.Role, &after.PlatformRole, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
 	tokenHash := hashToken(currentToken)
@@ -209,7 +210,7 @@ func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input R
 	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
 		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -232,7 +233,7 @@ func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input R
     threshold_pps=$8, threshold_bps=$9, threshold_cps=$10, dimension=$11,
     burst_packets=$12, burst_bytes=$13, sample_denom=$14, ttl_seconds=$15,
     expires_at=$16, evidence=$17, confidence=$18, enabled=$19, owner=$20, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`,
@@ -276,7 +277,7 @@ func (s *Store) DisableRule(ctx context.Context, actor *Actor, id, reason string
 	if strings.TrimSpace(reason) == "" {
 		return Rule{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -287,7 +288,7 @@ func (s *Store) DisableRule(ctx context.Context, actor *Actor, id, reason string
 	}
 	var rule Rule
 	if err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`, id), &rule); err != nil {
@@ -313,7 +314,7 @@ func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -334,7 +335,7 @@ func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id strin
 	err = scanWhitelistEntry(tx.QueryRow(ctx, `UPDATE whitelist_entries SET
     ip_or_cidr=$2, scope=$3, service_id=$4, label=$5, reason=$6, owner=$7,
     priority=$8, expires_at=$9, enabled=$10, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
           expires_at, enabled, created_at, updated_at`,
 		id,
@@ -367,7 +368,7 @@ func (s *Store) DisableWhitelistEntry(ctx context.Context, actor *Actor, id, rea
 	if strings.TrimSpace(reason) == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -378,7 +379,7 @@ func (s *Store) DisableWhitelistEntry(ctx context.Context, actor *Actor, id, rea
 	}
 	var entry WhitelistEntry
 	if err := scanWhitelistEntry(tx.QueryRow(ctx, `UPDATE whitelist_entries SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
           expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return WhitelistEntry{}, err
@@ -403,7 +404,7 @@ func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -424,7 +425,7 @@ func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id strin
 	err = scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET
     ip_or_cidr=$2, score=$3, action=$4, source=$5, rule_id=$6, reason=$7,
     expires_at=$8, enabled=$9, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`,
 		id,
 		input.CIDR,
@@ -455,7 +456,7 @@ func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, rea
 	if strings.TrimSpace(reason) == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -466,7 +467,7 @@ func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, rea
 	}
 	var entry BlacklistEntry
 	if err := scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -490,7 +491,7 @@ func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id s
 	if reason == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
@@ -506,7 +507,7 @@ func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id s
 	var entry UDPSourcePortBlock
 	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET
     port=$2, label=$3, reason=$4, owner=$5, expires_at=$6, enabled=$7, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
 		id,
 		input.Port,
@@ -535,7 +536,7 @@ func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id,
 	if strings.TrimSpace(reason) == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
@@ -546,7 +547,7 @@ func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id,
 	}
 	var entry UDPSourcePortBlock
 	if err := scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
@@ -566,7 +567,7 @@ func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason 
 	if strings.TrimSpace(reason) == "" {
 		return FeedSource{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -578,7 +579,7 @@ func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason 
 	var source FeedSource
 	if err := scanFeedSource(tx.QueryRow(ctx, `UPDATE feed_sources
 SET enabled=false, status='disabled', next_run_at=NULL, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING `+feedSourceColumns(), id), &source); err != nil {
 		return FeedSource{}, err
 	}
@@ -593,9 +594,9 @@ RETURNING `+feedSourceColumns(), id), &source); err != nil {
 
 func validateUserRoleStatus(role, status string) error {
 	switch role {
-	case RoleAdmin, RoleOperator, RoleViewer:
+	case RoleAdmin, RoleUser:
 	default:
-		return errors.New("role must be admin, operator or viewer")
+		return errors.New("role must be admin or user")
 	}
 	switch status {
 	case StatusActive, StatusRevoked:
@@ -605,14 +606,13 @@ func validateUserRoleStatus(role, status string) error {
 	return nil
 }
 
-func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, _ string, before User, role, status string) error {
+func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, before User, role, status string) error {
 	if before.Role != RoleAdmin || (role == RoleAdmin && status == StatusActive) {
 		return nil
 	}
 	var remaining int
-	if err := q.QueryRow(ctx, `SELECT count(*) FROM tenant_memberships
-WHERE tenant_id = NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid
-  AND user_id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM app_users
+WHERE id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
 		return err
 	}
 	if remaining == 0 {
@@ -626,7 +626,7 @@ func getRule(ctx context.Context, q dbQuerier, id string) (Rule, error) {
 	err := scanRule(q.QueryRow(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at
-FROM rules WHERE id=$1`, id), &rule)
+FROM rules WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &rule)
 	return rule, err
 }
 
@@ -634,21 +634,21 @@ func getWhitelistEntry(ctx context.Context, q dbQuerier, id string) (WhitelistEn
 	var entry WhitelistEntry
 	err := scanWhitelistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
 	          expires_at, enabled, created_at, updated_at
-FROM whitelist_entries WHERE id=$1`, id), &entry)
+FROM whitelist_entries WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &entry)
 	return entry, err
 }
 
 func getBlacklistEntry(ctx context.Context, q dbQuerier, id string) (BlacklistEntry, error) {
 	var entry BlacklistEntry
 	err := scanBlacklistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at
-FROM manual_blacklist_entries WHERE id=$1`, id), &entry)
+FROM manual_blacklist_entries WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &entry)
 	return entry, err
 }
 
 func getUDPSourcePortBlock(ctx context.Context, q dbQuerier, id string) (UDPSourcePortBlock, error) {
 	var entry UDPSourcePortBlock
 	err := scanUDPSourcePortBlock(q.QueryRow(ctx, `SELECT id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at
-FROM udp_source_port_blocks WHERE id=$1`, id), &entry)
+FROM udp_source_port_blocks WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &entry)
 	return entry, err
 }
 

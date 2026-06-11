@@ -10,29 +10,25 @@ import (
 )
 
 func (s *Store) RegisterAgent(ctx context.Context, req AgentRegisterRequest) (AgentRegisterResponse, error) {
-	tenantID := tenantIDFromContext(ctx)
-	if tenantID == "" {
-		tenant, err := defaultTenant(ctx, s.pool)
-		if err != nil {
-			return AgentRegisterResponse{}, err
-		}
-		tenantID = tenant.ID
+	ownerUserID := ownerUserIDFromContext(ctx)
+	if ownerUserID == "" {
+		return AgentRegisterResponse{}, errors.New("owner user context required")
 	}
-	return s.RegisterAgentForTenant(ctx, tenantID, req)
+	return s.RegisterAgentForOwner(ctx, ownerUserID, req)
 }
 
-func (s *Store) RegisterAgentForTenant(ctx context.Context, tenantID string, req AgentRegisterRequest) (AgentRegisterResponse, error) {
+func (s *Store) RegisterAgentForOwner(ctx context.Context, ownerUserID string, req AgentRegisterRequest) (AgentRegisterResponse, error) {
 	if strings.TrimSpace(req.Hostname) == "" {
 		return AgentRegisterResponse{}, errors.New("hostname is required")
 	}
-	tx, err := s.beginTenantTx(ctx, tenantID)
+	tx, err := s.beginOwnerTx(ctx, ownerUserID)
 	if err != nil {
 		return AgentRegisterResponse{}, err
 	}
 	defer tx.Rollback(ctx)
 
 	var id string
-	err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE hostname=$1`, req.Hostname).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE owner_user_id=$1 AND hostname=$2`, ownerUserID, req.Hostname).Scan(&id)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return AgentRegisterResponse{}, err
@@ -41,9 +37,9 @@ func (s *Store) RegisterAgentForTenant(ctx context.Context, tenantID string, req
 		if err != nil {
 			return AgentRegisterResponse{}, err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO agents(id, tenant_id, hostname, kernel_version, ubuntu_version, xdp_mode, devmap_support, agent_version, status, last_seen_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO agents(id, owner_user_id, hostname, kernel_version, ubuntu_version, xdp_mode, devmap_support, agent_version, status, last_seen_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'registered',now())`,
-			id, tenantID, req.Hostname, req.KernelVersion, req.UbuntuVersion, req.XDPMode, req.DevmapSupport, req.AgentVersion); err != nil {
+			id, ownerUserID, req.Hostname, req.KernelVersion, req.UbuntuVersion, req.XDPMode, req.DevmapSupport, req.AgentVersion); err != nil {
 			return AgentRegisterResponse{}, err
 		}
 	} else {
@@ -67,7 +63,7 @@ WHERE id=$1`, id, req.KernelVersion, req.UbuntuVersion, req.XDPMode, req.DevmapS
 }
 
 func (s *Store) HeartbeatAgent(ctx context.Context, id string, req AgentHeartbeatRequest) (AgentHeartbeatResponse, error) {
-	ctx, tenantID, err := s.contextForAgent(ctx, id)
+	ctx, ownerUserID, err := s.contextForAgent(ctx, id)
 	if err != nil {
 		return AgentHeartbeatResponse{}, err
 	}
@@ -75,7 +71,7 @@ func (s *Store) HeartbeatAgent(ctx context.Context, id string, req AgentHeartbea
 	if status == "" {
 		status = "online"
 	}
-	tx, err := s.beginTenantTx(ctx, tenantID)
+	tx, err := s.beginOwnerTx(ctx, ownerUserID)
 	if err != nil {
 		return AgentHeartbeatResponse{}, err
 	}
@@ -112,8 +108,8 @@ func replaceAgentInterfaces(ctx context.Context, tx pgx.Tx, agentID string, inte
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO agent_interfaces(id, tenant_id, agent_id, name, ifindex, mac, role, link_speed_bps)
-VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7)`,
+		if _, err := tx.Exec(ctx, `INSERT INTO agent_interfaces(id, owner_user_id, agent_id, name, ifindex, mac, role, link_speed_bps)
+VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7)`,
 			ifaceID, agentID, iface.Name, iface.Ifindex, iface.MAC, iface.Role, iface.LinkSpeedBPS); err != nil {
 			return err
 		}
@@ -122,7 +118,7 @@ VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$
 }
 
 func (s *Store) RecordAgentApply(ctx context.Context, agentID string, req AgentApplyRequest) error {
-	ctx, tenantID, err := s.contextForAgent(ctx, agentID)
+	ctx, ownerUserID, err := s.contextForAgent(ctx, agentID)
 	if err != nil {
 		return err
 	}
@@ -142,13 +138,13 @@ func (s *Store) RecordAgentApply(ctx context.Context, agentID string, req AgentA
 	}
 	mapStats := defaultJSON(req.MapStats)
 	devmapStats := defaultJSON(req.DevmapStats)
-	tx, err := s.beginTenantTx(ctx, tenantID)
+	tx, err := s.beginOwnerTx(ctx, ownerUserID)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO policy_apply_status(id, tenant_id, agent_id, policy_version, status, error_stage, error_reason, map_stats, devmap_stats, reported_at)
-VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,now())
+	_, err = tx.Exec(ctx, `INSERT INTO policy_apply_status(id, owner_user_id, agent_id, policy_version, status, error_stage, error_reason, map_stats, devmap_stats, reported_at)
+VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,now())
 ON CONFLICT (agent_id, policy_version) DO UPDATE SET
     status=EXCLUDED.status,
     error_stage=EXCLUDED.error_stage,
@@ -184,30 +180,30 @@ ON CONFLICT (agent_id, policy_version) DO UPDATE SET
 
 func latestPolicyVersion(ctx context.Context, q dbQuerier) (uint32, error) {
 	var version uint32
-	err := q.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&version)
+	err := q.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`).Scan(&version)
 	return version, err
 }
 
-func (s *Store) AgentTenantID(ctx context.Context, agentID string) (string, error) {
-	tx, err := s.beginPlatformTx(ctx)
+func (s *Store) AgentOwnerUserID(ctx context.Context, agentID string) (string, error) {
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	var tenantID string
-	if err := tx.QueryRow(ctx, `SELECT tenant_id::text FROM agents WHERE id=$1`, agentID).Scan(&tenantID); err != nil {
+	var ownerUserID string
+	if err := tx.QueryRow(ctx, `SELECT owner_user_id::text FROM agents WHERE id=$1`, agentID).Scan(&ownerUserID); err != nil {
 		return "", err
 	}
-	return tenantID, tx.Commit(ctx)
+	return ownerUserID, tx.Commit(ctx)
 }
 
 func (s *Store) contextForAgent(ctx context.Context, agentID string) (context.Context, string, error) {
-	if tenantID := tenantIDFromContext(ctx); tenantID != "" {
-		return ctx, tenantID, nil
+	if ownerUserID := ownerUserIDFromContext(ctx); ownerUserID != "" {
+		return ctx, ownerUserID, nil
 	}
-	tenantID, err := s.AgentTenantID(ctx, agentID)
+	ownerUserID, err := s.AgentOwnerUserID(ctx, agentID)
 	if err != nil {
 		return ctx, "", err
 	}
-	return contextWithTenant(ctx, tenantID), tenantID, nil
+	return contextWithOwner(ctx, ownerUserID), ownerUserID, nil
 }

@@ -17,10 +17,10 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleOperator, "create operator"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleUser, "create operator"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "peer-operator", "peer operator password phrase", RoleOperator, "create peer operator"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "peer-operator", "peer operator password phrase", RoleUser, "create peer operator"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,12 +34,12 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "operator creates viewer",
 		"username": "analyst",
 		"password": "viewer temporary phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var analyst User
 	decodeTestBody(t, resp, &analyst)
-	if analyst.Role != RoleViewer {
+	if analyst.Role != RoleUser {
 		t.Fatalf("operator-created user role=%q", analyst.Role)
 	}
 
@@ -47,7 +47,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "operator should not create operator",
 		"username": "blocked-operator",
 		"password": "blocked password phrase",
-		"role":     RoleOperator,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 
@@ -67,7 +67,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 	}
 	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/users/"+peerOperator.ID, operatorToken, UserUpdateInput{
 		Reason: "operator should not demote peer operator",
-		Role:   RoleViewer,
+		Role:   RoleUser,
 		Status: StatusActive,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
@@ -96,7 +96,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "operator reactivates viewer",
 		"username": "analyst",
 		"password": "unused reactivation phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"status":"active"`)
@@ -150,7 +150,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "viewer should not create user",
 		"username": "viewer-created",
 		"password": "viewer created password phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", viewerToken, TelegramConfigInput{
@@ -192,7 +192,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "platform admin creates tenant operator",
 		"username": "customer-a-operator",
 		"password": "customer operator password phrase",
-		"role":     RoleOperator,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"role":"operator"`)
@@ -202,7 +202,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "operator identity must stay in one tenant",
 		"username": "operator",
 		"password": "unused viewer password phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants/switch", platformToken, TenantSwitchInput{TenantID: admin.ActiveTenant.ID})
@@ -211,7 +211,7 @@ func TestMultiTenantRBACUpdate(t *testing.T) {
 		"reason":   "operator identity must not be reused as viewer elsewhere",
 		"username": "customer-a-operator",
 		"password": "unused viewer password phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
 	membershipID, err := newUUID()

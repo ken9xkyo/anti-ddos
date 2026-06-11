@@ -1,41 +1,20 @@
-export type Role = 'admin' | 'operator' | 'viewer';
+export type Role = 'admin' | 'user';
 
-export interface Tenant {
+export interface ViewingUser {
   id: string;
-  slug: string;
-  name: string;
-  status: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface TenantAccess {
-  tenant_id: string;
-  slug: string;
-  name: string;
-  role: Role;
-  status: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface TenantInput {
-  slug?: string;
-  name: string;
-  status?: string;
+  username: string;
 }
 
 export interface User {
   id: string;
   username: string;
   role: Role;
-  platform_role?: string;
   status?: string;
   force_password_change?: boolean;
   created_at?: string;
   last_login_at?: string;
-  active_tenant?: Tenant;
-  tenants?: TenantAccess[];
+  viewing_user?: ViewingUser;
+  read_only?: boolean;
 }
 
 export interface UserUpdateInput {
@@ -570,9 +549,6 @@ export interface DashboardData {
   events: SecurityEvent[];
   baselines: BaselineProfile[];
   anomalies: AnomalyEvaluation[];
-  feedSources: FeedSource[];
-  feedRuns: FeedRun[];
-  feedConflicts: FeedConflict[];
   telegramConfig: TelegramConfig;
   alerts: Alert[];
 }

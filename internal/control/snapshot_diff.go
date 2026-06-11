@@ -15,13 +15,14 @@ func (s *Store) GetSnapshotMetadata(ctx context.Context, version uint32, include
 	if version == 0 {
 		return SnapshotMetadata{}, errors.New("snapshot version is required")
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return SnapshotMetadata{}, err
 	}
 	defer tx.Rollback(ctx)
 	row := tx.QueryRow(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
-FROM policy_snapshots WHERE version=$1`, version)
+FROM policy_snapshots
+WHERE version=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, version)
 	meta, err := scanSnapshot(row, includeSnapshot)
 	if err != nil {
 		return SnapshotMetadata{}, err
@@ -33,7 +34,7 @@ func (s *Store) DiffSnapshots(ctx context.Context, fromVersion, toVersion uint32
 	if fromVersion == 0 || toVersion == 0 {
 		return SnapshotDiff{}, errors.New("from and to snapshot versions are required")
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return SnapshotDiff{}, err
 	}

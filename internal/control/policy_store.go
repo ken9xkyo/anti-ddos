@@ -33,7 +33,7 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 	ports := int32Ports(input.AllowedPorts)
 	tags := textArray(input.Tags)
 
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Service{}, err
 	}
@@ -41,14 +41,14 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 
 	var service Service
 	err = scanService(tx.QueryRow(ctx, `INSERT INTO backend_services(
-    id, tenant_id, name, description, backend_cidr, protocol, allowed_ports, output_interface, owner, criticality,
+    id, owner_user_id, name, description, backend_cidr, protocol, allowed_ports, output_interface, owner, criticality,
     protection_mode, enabled, priority, tags, resolved_ifindex, resolved_next_hop_mac, resolved_src_mac, neighbor_resolution_status
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, allowed_ports, output_interface, owner,
           criticality, protection_mode, enabled, priority, tags, sync_status, resolved_ifindex, resolved_next_hop_mac,
           resolved_src_mac, neighbor_resolution_status, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.Name,
 		input.Description,
 		input.BackendCIDR,
@@ -89,7 +89,7 @@ func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, inpu
 	if reason == "" {
 		return Service{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Service{}, err
 	}
@@ -105,7 +105,7 @@ func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, inpu
     name=$2, description=$3, backend_cidr=$4, protocol=$5, allowed_ports=$6, output_interface=$7, owner=$8,
     criticality=$9, protection_mode=$10, enabled=$11, priority=$12, tags=$13, resolved_ifindex=$14,
     resolved_next_hop_mac=$15, resolved_src_mac=$16, neighbor_resolution_status=$17, sync_status='pending', updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, allowed_ports, output_interface, owner,
           criticality, protection_mode, enabled, priority, tags, sync_status, resolved_ifindex, resolved_next_hop_mac,
           resolved_src_mac, neighbor_resolution_status, created_at, updated_at`,
@@ -146,7 +146,7 @@ func (s *Store) DeleteService(ctx context.Context, actor *Actor, id, reason stri
 	if strings.TrimSpace(reason) == "" {
 		return Service{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Service{}, err
 	}
@@ -156,7 +156,8 @@ func (s *Store) DeleteService(ctx context.Context, actor *Actor, id, reason stri
 		return Service{}, err
 	}
 	var after Service
-	err = scanService(tx.QueryRow(ctx, `UPDATE backend_services SET enabled=false, deleted_at=now(), sync_status='pending', updated_at=now() WHERE id=$1
+	err = scanService(tx.QueryRow(ctx, `UPDATE backend_services SET enabled=false, deleted_at=now(), sync_status='pending', updated_at=now()
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, allowed_ports, output_interface, owner,
           criticality, protection_mode, enabled, priority, tags, sync_status, resolved_ifindex, resolved_next_hop_mac,
           resolved_src_mac, neighbor_resolution_status, created_at, updated_at`, id), &after)
@@ -173,7 +174,7 @@ RETURNING id::text, ebpf_id, name, description, backend_cidr::text, protocol, al
 }
 
 func (s *Store) ListServices(ctx context.Context) ([]Service, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +182,10 @@ func (s *Store) ListServices(ctx context.Context) ([]Service, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, name, description, backend_cidr::text, protocol, allowed_ports, output_interface, owner,
           criticality, protection_mode, enabled, priority, tags, sync_status, resolved_ifindex, resolved_next_hop_mac,
           resolved_src_mac, neighbor_resolution_status, created_at, updated_at
-FROM backend_services WHERE deleted_at IS NULL ORDER BY name`)
+FROM backend_services
+WHERE deleted_at IS NULL
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +209,8 @@ func (s *Store) getService(ctx context.Context, q dbQuerier, id string) (Service
 	err := scanService(q.QueryRow(ctx, `SELECT id::text, ebpf_id, name, description, backend_cidr::text, protocol, allowed_ports, output_interface, owner,
           criticality, protection_mode, enabled, priority, tags, sync_status, resolved_ifindex, resolved_next_hop_mac,
           resolved_src_mac, neighbor_resolution_status, created_at, updated_at
-FROM backend_services WHERE id=$1`, id), &service)
+FROM backend_services
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &service)
 	return service, err
 }
 
@@ -262,7 +267,7 @@ func (s *Store) CreateForwardingPolicy(ctx context.Context, actor *Actor, input 
 		return ForwardingPolicy{}, err
 	}
 	enabled := boolDefault(input.Enabled, true)
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return ForwardingPolicy{}, err
 	}
@@ -272,13 +277,13 @@ func (s *Store) CreateForwardingPolicy(ctx context.Context, actor *Actor, input 
 	}
 	var policy ForwardingPolicy
 	err = scanForwardingPolicy(tx.QueryRow(ctx, `INSERT INTO forwarding_policies(
-    id, tenant_id, service_id, match_protocol, match_dst_port, backend_target, output_interface, resolved_ifindex,
+    id, owner_user_id, service_id, match_protocol, match_dst_port, backend_target, output_interface, resolved_ifindex,
     resolved_dst_mac, resolved_src_mac, devmap_key, action, priority, enabled, owner
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 RETURNING id::text, ebpf_id, service_id::text, match_protocol, match_dst_port, backend_target::text, output_interface,
           resolved_ifindex, resolved_dst_mac, resolved_src_mac, devmap_key, action, priority, enabled, owner, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.ServiceID,
 		normalizeProtocol(input.MatchProtocol),
 		input.MatchDstPort,
@@ -306,14 +311,16 @@ RETURNING id::text, ebpf_id, service_id::text, match_protocol, match_dst_port, b
 }
 
 func (s *Store) ListForwardingPolicies(ctx context.Context) ([]ForwardingPolicy, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, service_id::text, match_protocol, match_dst_port, backend_target::text, output_interface,
           resolved_ifindex, resolved_dst_mac, resolved_src_mac, devmap_key, action, priority, enabled, owner, created_at, updated_at
-FROM forwarding_policies ORDER BY created_at DESC`)
+FROM forwarding_policies
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +377,7 @@ func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input Wh
 		return WhitelistEntry{}, err
 	}
 	enabled := boolDefault(input.Enabled, true)
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -387,12 +394,12 @@ func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input Wh
 		expires = input.ExpiresAt
 	}
 	var entry WhitelistEntry
-	err = scanWhitelistEntry(tx.QueryRow(ctx, `INSERT INTO whitelist_entries(id, tenant_id, ip_or_cidr, scope, service_id, label, reason, owner, priority, expires_at, enabled)
+	err = scanWhitelistEntry(tx.QueryRow(ctx, `INSERT INTO whitelist_entries(id, owner_user_id, ip_or_cidr, scope, service_id, label, reason, owner, priority, expires_at, enabled)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
           expires_at, enabled, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.CIDR,
 		normalizeScope(input.Scope),
 		serviceID,
@@ -417,7 +424,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 
 func (s *Store) ListWhitelistEntries(ctx context.Context, query WhitelistEntryQuery) ([]WhitelistEntry, error) {
 	where, args := whitelistEntryWhere(query)
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +487,7 @@ func whitelistQueryValue(value, fallback string) string {
 }
 
 func whitelistEntryWhere(query WhitelistEntryQuery) (string, []any) {
-	clauses := make([]string, 0)
+	clauses := []string{"w.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
 	args := make([]any, 0)
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -577,7 +584,7 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -589,14 +596,14 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	}
 	var rule Rule
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
-    id, tenant_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
+    id, owner_user_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
     dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		serviceID,
 		input.Name,
 		defaultPriority(input.Priority),
@@ -630,7 +637,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 }
 
 func (s *Store) ListRules(ctx context.Context) ([]Rule, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +645,9 @@ func (s *Store) ListRules(ctx context.Context) ([]Rule, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at
-FROM rules ORDER BY priority, created_at DESC`)
+FROM rules
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY priority, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +723,7 @@ func (s *Store) CreateBlacklistEntry(ctx context.Context, actor *Actor, input Bl
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
@@ -725,11 +734,11 @@ func (s *Store) CreateBlacklistEntry(ctx context.Context, actor *Actor, input Bl
 		}
 	}
 	var entry BlacklistEntry
-	err = scanBlacklistEntry(tx.QueryRow(ctx, `INSERT INTO manual_blacklist_entries(id, tenant_id, ip_or_cidr, score, action, source, rule_id, reason, expires_at, enabled)
+	err = scanBlacklistEntry(tx.QueryRow(ctx, `INSERT INTO manual_blacklist_entries(id, owner_user_id, ip_or_cidr, score, action, source, rule_id, reason, expires_at, enabled)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.CIDR,
 		input.Score,
 		normalizeBlacklistAction(input.Action),
@@ -753,7 +762,7 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 
 func (s *Store) ListBlacklistEntries(ctx context.Context, query BlacklistEntryQuery) ([]BlacklistEntry, error) {
 	where, args := blacklistEntryWhere(query)
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -784,7 +793,7 @@ func (s *Store) ListBlacklistEntryRows(ctx context.Context, query BlacklistEntri
 	query = normalizeBlacklistEntriesQuery(query)
 	where, args := blacklistEntriesWhere(query)
 	page := BlacklistEntriesPage{Page: query.Page, PageSize: query.PageSize}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return page, err
 	}
@@ -919,7 +928,7 @@ func parseOptionalUintQuery(values map[string][]string, key string) (uint32, err
 }
 
 func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
-	clauses := make([]string, 0)
+	clauses := []string{"b.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
@@ -953,7 +962,7 @@ func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
 }
 
 func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
-	clauses := make([]string, 0)
+	clauses := []string{"c.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
@@ -1010,6 +1019,7 @@ SELECT b.id::text AS id,
        true AS editable,
        b.created_at AS created_at,
        b.updated_at AS updated_at,
+       b.owner_user_id AS owner_user_id,
        COALESCE(r.name, '') AS rule_name
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
@@ -1036,6 +1046,7 @@ SELECT re.id::text AS id,
        false AS editable,
        re.first_seen_at AS created_at,
        re.last_seen_at AS updated_at,
+       re.owner_user_id AS owner_user_id,
        ''::text AS rule_name
 FROM reputation_entries re
 JOIN feed_sources fs ON fs.id = re.source_id
@@ -1112,17 +1123,17 @@ func (s *Store) CreateUDPSourcePortBlock(ctx context.Context, actor *Actor, inpu
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	defer tx.Rollback(ctx)
 	var entry UDPSourcePortBlock
-	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `INSERT INTO udp_source_port_blocks(id, tenant_id, port, label, reason, owner, expires_at, enabled)
+	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, expires_at, enabled)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.Port,
 		strings.TrimSpace(input.Label),
 		reason,
@@ -1144,7 +1155,7 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 
 func (s *Store) ListUDPSourcePortBlocks(ctx context.Context, query UDPSourcePortBlockQuery) ([]UDPSourcePortBlock, error) {
 	where, args := udpSourcePortBlockWhere(query)
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1190,7 +1201,7 @@ func parseUDPSourcePortBlockQuery(values map[string][]string) (UDPSourcePortBloc
 }
 
 func udpSourcePortBlockWhere(query UDPSourcePortBlockQuery) (string, []any) {
-	clauses := make([]string, 0)
+	clauses := []string{"owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
@@ -1261,18 +1272,18 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	enabled := boolDefault(input.Enabled, false)
 	quota := defaultJSON(input.QuotaMetadata)
 	credentialRef := feedCredentialForCreate(input.CredentialRef)
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return FeedSource{}, err
 	}
 	defer tx.Rollback(ctx)
 	var source FeedSource
 	err = scanFeedSource(tx.QueryRow(ctx, `INSERT INTO feed_sources(
-    id, tenant_id, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status
+    id, owner_user_id, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 RETURNING `+feedSourceColumns(),
 		id,
-		actor.TenantID,
+		actorOwnerUserID(actor),
 		input.Name,
 		normalizeFeedType(input.Type),
 		input.URL,
@@ -1294,7 +1305,7 @@ RETURNING `+feedSourceColumns(),
 }
 
 func (s *Store) ListFeedSources(ctx context.Context) ([]FeedSource, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1354,15 +1365,7 @@ func feedSourceSelectSQL() string {
 }
 
 func requireOperator(actor *Actor) error {
-	if actor == nil {
-		return errors.New("authentication required")
-	}
-	switch actor.Role {
-	case RoleAdmin, RoleOperator:
-		return nil
-	default:
-		return errors.New("operator role required")
-	}
+	return requireConfigMutation(actor)
 }
 
 func mutationReason(headerReason, bodyReason string) string {

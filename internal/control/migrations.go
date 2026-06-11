@@ -781,6 +781,208 @@ END $$;
 	EXECUTE FUNCTION enforce_operator_single_tenant_membership();
 	`,
 	},
+	{
+		Version: 9,
+		Name:    "owner_user_rbac_no_tenant",
+		SQL: `
+DO $$
+DECLARE
+    table_name text;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'agents',
+        'agent_interfaces',
+        'backend_services',
+        'forwarding_policies',
+        'rules',
+        'whitelist_entries',
+        'manual_blacklist_entries',
+        'feed_sources',
+        'feed_runs',
+        'reputation_entries',
+        'feed_conflicts',
+        'policy_snapshots',
+        'policy_apply_status',
+        'security_events',
+        'baseline_profiles',
+        'anomaly_evaluations',
+        'telegram_configs',
+        'alert_policies',
+        'alerts',
+        'alert_deliveries',
+        'udp_source_port_blocks',
+        'audit_events'
+    ]
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', table_name);
+        EXECUTE format('ALTER TABLE %I DISABLE ROW LEVEL SECURITY', table_name);
+    END LOOP;
+END $$;
+
+TRUNCATE TABLE
+    alert_deliveries,
+    alerts,
+    alert_policies,
+    telegram_configs,
+    anomaly_evaluations,
+    baseline_profiles,
+    security_events,
+    policy_apply_status,
+    policy_snapshots,
+    feed_conflicts,
+    reputation_entries,
+    feed_runs,
+    feed_sources,
+    manual_blacklist_entries,
+    whitelist_entries,
+    rules,
+    forwarding_policies,
+    backend_services,
+    agent_interfaces,
+    agents,
+    udp_source_port_blocks,
+    audit_events
+RESTART IDENTITY CASCADE;
+
+ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
+UPDATE app_users SET role = CASE WHEN role = 'admin' THEN 'admin' ELSE 'user' END;
+ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK (role IN ('admin', 'user'));
+ALTER TABLE app_users DROP COLUMN IF EXISTS platform_role;
+
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS view_owner_user_id uuid REFERENCES app_users(id) ON DELETE SET NULL;
+UPDATE user_sessions SET revoked_at=now() WHERE revoked_at IS NULL;
+ALTER TABLE user_sessions DROP COLUMN IF EXISTS active_tenant_id;
+
+DROP TRIGGER IF EXISTS tenant_memberships_operator_single_tenant ON tenant_memberships;
+DROP FUNCTION IF EXISTS enforce_operator_single_tenant_membership();
+DROP TABLE IF EXISTS tenant_memberships;
+DROP TABLE IF EXISTS tenants;
+
+DROP INDEX IF EXISTS agents_tenant_hostname_unique_idx;
+DROP INDEX IF EXISTS backend_services_tenant_name_unique_idx;
+DROP INDEX IF EXISTS feed_sources_tenant_name_unique_idx;
+DROP INDEX IF EXISTS udp_source_port_blocks_tenant_port_unique_idx;
+DROP INDEX IF EXISTS alert_policies_tenant_type_severity_channel_unique_idx;
+DROP INDEX IF EXISTS agents_tenant_idx;
+DROP INDEX IF EXISTS agent_interfaces_tenant_idx;
+DROP INDEX IF EXISTS backend_services_tenant_idx;
+DROP INDEX IF EXISTS forwarding_policies_tenant_idx;
+DROP INDEX IF EXISTS rules_tenant_idx;
+DROP INDEX IF EXISTS whitelist_entries_tenant_idx;
+DROP INDEX IF EXISTS manual_blacklist_entries_tenant_idx;
+DROP INDEX IF EXISTS feed_sources_tenant_idx;
+DROP INDEX IF EXISTS feed_runs_tenant_idx;
+DROP INDEX IF EXISTS reputation_entries_tenant_idx;
+DROP INDEX IF EXISTS policy_snapshots_tenant_created_idx;
+DROP INDEX IF EXISTS policy_apply_status_tenant_idx;
+DROP INDEX IF EXISTS security_events_tenant_time_idx;
+DROP INDEX IF EXISTS baseline_profiles_tenant_idx;
+DROP INDEX IF EXISTS anomaly_evaluations_tenant_idx;
+DROP INDEX IF EXISTS alerts_tenant_idx;
+DROP INDEX IF EXISTS alert_deliveries_tenant_idx;
+DROP INDEX IF EXISTS audit_events_tenant_idx;
+
+ALTER TABLE policy_snapshots DROP CONSTRAINT IF EXISTS policy_snapshots_pkey;
+ALTER TABLE telegram_configs DROP CONSTRAINT IF EXISTS telegram_configs_pkey;
+
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE agent_interfaces ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE backend_services ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE forwarding_policies ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE whitelist_entries ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE manual_blacklist_entries ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE feed_sources ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE feed_runs ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE reputation_entries ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE feed_conflicts ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE policy_snapshots ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE policy_apply_status ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE security_events ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE baseline_profiles ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE anomaly_evaluations ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE telegram_configs ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE alert_policies ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE alert_deliveries ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE udp_source_port_blocks ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE CASCADE;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES app_users(id) ON DELETE SET NULL;
+
+ALTER TABLE agents ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE agent_interfaces ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE backend_services ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE forwarding_policies ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE rules ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE whitelist_entries ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE manual_blacklist_entries ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE feed_sources ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE feed_runs ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE reputation_entries ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE feed_conflicts ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE policy_snapshots ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE policy_apply_status ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE security_events ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE baseline_profiles ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE anomaly_evaluations ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE telegram_configs ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE alert_policies ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE alerts ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE alert_deliveries ALTER COLUMN owner_user_id SET NOT NULL;
+ALTER TABLE udp_source_port_blocks ALTER COLUMN owner_user_id SET NOT NULL;
+
+ALTER TABLE agents DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_interfaces DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE backend_services DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE forwarding_policies DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE rules DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE whitelist_entries DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE manual_blacklist_entries DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE feed_sources DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE feed_runs DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE reputation_entries DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE feed_conflicts DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE policy_snapshots DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE policy_apply_status DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE security_events DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE baseline_profiles DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE anomaly_evaluations DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE telegram_configs DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE alert_policies DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE alerts DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE alert_deliveries DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE udp_source_port_blocks DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE audit_events DROP COLUMN IF EXISTS tenant_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS agents_owner_hostname_unique_idx ON agents(owner_user_id, hostname);
+CREATE UNIQUE INDEX IF NOT EXISTS backend_services_owner_name_unique_idx ON backend_services(owner_user_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS feed_sources_owner_name_unique_idx ON feed_sources(owner_user_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS udp_source_port_blocks_owner_port_unique_idx ON udp_source_port_blocks(owner_user_id, port);
+CREATE UNIQUE INDEX IF NOT EXISTS alert_policies_owner_type_severity_channel_unique_idx ON alert_policies(owner_user_id, alert_type, severity, channel);
+
+ALTER TABLE policy_snapshots ADD PRIMARY KEY (owner_user_id, version);
+ALTER TABLE telegram_configs ADD PRIMARY KEY (owner_user_id, id);
+
+CREATE INDEX IF NOT EXISTS user_sessions_view_owner_user_idx ON user_sessions(view_owner_user_id);
+CREATE INDEX IF NOT EXISTS agents_owner_idx ON agents(owner_user_id, status);
+CREATE INDEX IF NOT EXISTS agent_interfaces_owner_idx ON agent_interfaces(owner_user_id, agent_id);
+CREATE INDEX IF NOT EXISTS backend_services_owner_idx ON backend_services(owner_user_id, enabled);
+CREATE INDEX IF NOT EXISTS forwarding_policies_owner_idx ON forwarding_policies(owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS rules_owner_idx ON rules(owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS whitelist_entries_owner_idx ON whitelist_entries(owner_user_id, scope, service_id);
+CREATE INDEX IF NOT EXISTS manual_blacklist_entries_owner_idx ON manual_blacklist_entries(owner_user_id, rule_id);
+CREATE INDEX IF NOT EXISTS feed_sources_owner_idx ON feed_sources(owner_user_id, enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS feed_runs_owner_idx ON feed_runs(owner_user_id, source_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS reputation_entries_owner_idx ON reputation_entries(owner_user_id, source_id, status);
+CREATE INDEX IF NOT EXISTS policy_snapshots_owner_created_idx ON policy_snapshots(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS policy_apply_status_owner_idx ON policy_apply_status(owner_user_id, agent_id, reported_at DESC);
+CREATE INDEX IF NOT EXISTS security_events_owner_time_idx ON security_events(owner_user_id, event_time DESC);
+CREATE INDEX IF NOT EXISTS baseline_profiles_owner_idx ON baseline_profiles(owner_user_id, service_id, approved, time_window);
+CREATE INDEX IF NOT EXISTS anomaly_evaluations_owner_idx ON anomaly_evaluations(owner_user_id, evaluated_at DESC);
+CREATE INDEX IF NOT EXISTS alerts_owner_idx ON alerts(owner_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS alert_deliveries_owner_idx ON alert_deliveries(owner_user_id, alert_id, created_at);
+CREATE INDEX IF NOT EXISTS audit_events_owner_idx ON audit_events(owner_user_id, created_at DESC);
+	`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

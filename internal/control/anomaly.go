@@ -42,10 +42,10 @@ func (s *Store) CreateBaselineProfile(ctx context.Context, actor *Actor, input B
 		return BaselineProfile{}, err
 	}
 	evidence := defaultJSON(input.Evidence)
-	if tenantID := actorTenantID(actor); tenantID != "" {
-		ctx = contextWithTenant(ctx, tenantID)
+	if ownerUserID := actorOwnerUserID(actor); ownerUserID != "" {
+		ctx = contextWithOwner(ctx, ownerUserID)
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
@@ -56,9 +56,9 @@ func (s *Store) CreateBaselineProfile(ctx context.Context, actor *Actor, input B
 
 	var profile BaselineProfile
 	err = scanBaselineProfile(tx.QueryRow(ctx, `INSERT INTO baseline_profiles(
-    id, tenant_id, service_id, interface_name, protocol, port, time_window, expected_pps, expected_bps, expected_cps,
+    id, owner_user_id, service_id, interface_name, protocol, port, time_window, expected_pps, expected_bps, expected_cps,
     history_hours, confidence, evidence
-) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, time_window, expected_pps,
           expected_bps, expected_cps, history_hours, confidence::float8, approved, status, evidence,
           created_at, updated_at, approved_at`,
@@ -88,7 +88,7 @@ RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, tim
 }
 
 func (s *Store) ListBaselineProfiles(ctx context.Context) ([]BaselineProfile, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +99,8 @@ func (s *Store) ListBaselineProfiles(ctx context.Context) ([]BaselineProfile, er
        bp.created_at, bp.updated_at, bp.approved_at
 FROM baseline_profiles bp
 JOIN backend_services bs ON bs.id = bp.service_id
+WHERE bp.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND bs.owner_user_id = bp.owner_user_id
 ORDER BY bs.name, bp.time_window, bp.protocol, bp.port`)
 	if err != nil {
 		return nil, err
@@ -125,10 +127,10 @@ func (s *Store) ApproveBaselineProfile(ctx context.Context, actor *Actor, id, re
 	if strings.TrimSpace(reason) == "" {
 		return BaselineProfile{}, errors.New("reason is required")
 	}
-	if tenantID := actorTenantID(actor); tenantID != "" {
-		ctx = contextWithTenant(ctx, tenantID)
+	if ownerUserID := actorOwnerUserID(actor); ownerUserID != "" {
+		ctx = contextWithOwner(ctx, ownerUserID)
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
@@ -140,7 +142,7 @@ func (s *Store) ApproveBaselineProfile(ctx context.Context, actor *Actor, id, re
 	var after BaselineProfile
 	err = scanBaselineProfile(tx.QueryRow(ctx, `UPDATE baseline_profiles
 SET approved=true, status='approved', approved_by=$2, approved_at=now(), updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, time_window, expected_pps,
           expected_bps, expected_cps, history_hours, confidence::float8, approved, status, evidence,
           created_at, updated_at, approved_at`, id, actor.ID), &after)
@@ -164,10 +166,10 @@ func (s *Store) RecalibrateBaselineProfile(ctx context.Context, actor *Actor, id
 	if reason == "" {
 		return BaselineProfile{}, errors.New("reason is required")
 	}
-	if tenantID := actorTenantID(actor); tenantID != "" {
-		ctx = contextWithTenant(ctx, tenantID)
+	if ownerUserID := actorOwnerUserID(actor); ownerUserID != "" {
+		ctx = contextWithOwner(ctx, ownerUserID)
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return BaselineProfile{}, err
 	}
@@ -181,7 +183,7 @@ func (s *Store) RecalibrateBaselineProfile(ctx context.Context, actor *Actor, id
     interface_name=$2, protocol=$3, port=$4, time_window=$5, expected_pps=$6, expected_bps=$7, expected_cps=$8,
     history_hours=$9, confidence=$10, approved=false, status='draft', evidence=$11, approved_by=NULL,
     approved_at=NULL, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, service_id::text, 0, '', interface_name, protocol, port, time_window, expected_pps,
           expected_bps, expected_cps, history_hours, confidence::float8, approved, status, evidence,
           created_at, updated_at, approved_at`,
@@ -210,15 +212,15 @@ func (s *Store) EvaluateAnomalies(ctx context.Context, prom *PrometheusClient, r
 	if prom == nil || !prom.Configured() {
 		return nil, nil
 	}
-	if tenantIDFromContext(ctx) == "" {
-		tenantIDs, err := s.activeTenantIDs(ctx)
+	if ownerUserIDFromContext(ctx) == "" {
+		ownerUserIDs, err := s.activeOwnerUserIDs(ctx)
 		if err != nil {
 			return nil, err
 		}
 		out := make([]AnomalyEvaluation, 0)
 		var joined error
-		for _, tenantID := range tenantIDs {
-			evaluations, err := s.EvaluateAnomalies(contextWithTenant(ctx, tenantID), prom, reason)
+		for _, ownerUserID := range ownerUserIDs {
+			evaluations, err := s.EvaluateAnomalies(contextWithOwner(ctx, ownerUserID), prom, reason)
 			if err != nil {
 				joined = errors.Join(joined, err)
 				continue
@@ -265,7 +267,7 @@ func (s *Store) ListAnomalies(ctx context.Context, limit int) ([]AnomalyEvaluati
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +279,7 @@ func (s *Store) ListAnomalies(ctx context.Context, limit int) ([]AnomalyEvaluati
        ae.source, ae.evidence
 FROM anomaly_evaluations ae
 LEFT JOIN backend_services bs ON bs.id = ae.service_id
+WHERE ae.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY ae.evaluated_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -298,15 +301,15 @@ LIMIT $1`, limit)
 }
 
 func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
-	if tenantIDFromContext(ctx) == "" {
-		tenantIDs, err := s.activeTenantIDs(ctx)
+	if ownerUserIDFromContext(ctx) == "" {
+		ownerUserIDs, err := s.activeOwnerUserIDs(ctx)
 		if err != nil {
 			return 0, err
 		}
 		total := 0
 		var joined error
-		for _, tenantID := range tenantIDs {
-			count, err := s.ExpireTTLRules(contextWithTenant(ctx, tenantID))
+		for _, ownerUserID := range ownerUserIDs {
+			count, err := s.ExpireTTLRules(contextWithOwner(ctx, ownerUserID))
 			total += count
 			if err != nil {
 				joined = errors.Join(joined, err)
@@ -314,7 +317,7 @@ func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
 		}
 		return total, joined
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -325,6 +328,7 @@ func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
        ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
 FROM rules
 WHERE enabled AND expires_at IS NOT NULL AND expires_at <= now()
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY expires_at`)
 	if err != nil {
 		return 0, err
@@ -350,7 +354,7 @@ ORDER BY expires_at`)
 	for _, before := range expired {
 		var after Rule
 		err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
           threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
           ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at`, before.ID), &after)
@@ -529,20 +533,20 @@ func (s *Store) CreateSystemRule(ctx context.Context, input RuleInput, reason st
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	ctx, err = s.tenantContextForService(ctx, strings.TrimSpace(input.ServiceID))
+	ctx, err = s.ownerContextForService(ctx, strings.TrimSpace(input.ServiceID))
 	if err != nil {
 		return Rule{}, err
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
 	var rule Rule
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
-    id, tenant_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
+    id, owner_user_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
     dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
-) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
           confidence::float8, enabled, owner, created_at, updated_at`,
@@ -564,7 +568,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 }
 
 func (s *Store) approvedBaselineForService(ctx context.Context, serviceID string) (*BaselineProfile, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -576,6 +580,8 @@ func (s *Store) approvedBaselineForService(ctx context.Context, serviceID string
 FROM baseline_profiles bp
 JOIN backend_services bs ON bs.id = bp.service_id
 WHERE bp.service_id=$1 AND bp.approved
+  AND bp.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND bs.owner_user_id = bp.owner_user_id
 ORDER BY bp.updated_at DESC
 LIMIT 1`, serviceID)
 	var profile BaselineProfile
@@ -599,7 +605,7 @@ func (s *Store) getBaselineProfile(ctx context.Context, q dbQuerier, id string) 
        bp.created_at, bp.updated_at, bp.approved_at
 FROM baseline_profiles bp
 LEFT JOIN backend_services bs ON bs.id = bp.service_id
-WHERE bp.id=$1`, id), &profile)
+WHERE bp.id=$1 AND bp.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, id), &profile)
 	return profile, err
 }
 
@@ -653,16 +659,16 @@ func (s *Store) insertAnomalyEvaluation(ctx context.Context, input AnomalyEvalua
 	if strings.TrimSpace(input.ProposedRuleID) != "" {
 		ruleID = input.ProposedRuleID
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return AnomalyEvaluation{}, err
 	}
 	defer tx.Rollback(ctx)
 	row := tx.QueryRow(ctx, `INSERT INTO anomaly_evaluations(
-    id, tenant_id, service_id, baseline_id, time_window, pps, bps, cps, drop_ratio, score, confidence, signals,
+    id, owner_user_id, service_id, baseline_id, time_window, pps, bps, cps, drop_ratio, score, confidence, signals,
     recommendation, recommended_action, proposed_ttl_seconds, proposed_rule_id, auto_enforced,
     status, reason, source, evidence
-) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+) VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 RETURNING id::text, COALESCE(service_id::text, ''), $21::bigint, $22::text, COALESCE(baseline_id::text, ''),
           evaluated_at, time_window, pps, bps, cps, drop_ratio, score::float8, confidence::float8, signals,
           recommendation, recommended_action, proposed_ttl_seconds, COALESCE(proposed_rule_id::text, ''),
@@ -717,7 +723,7 @@ func scanAnomalyEvaluation(row rowScanner) (AnomalyEvaluation, error) {
 }
 
 func (s *Store) topEventSourceForService(ctx context.Context, serviceEBPFID uint32) (string, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -726,6 +732,7 @@ func (s *Store) topEventSourceForService(ctx context.Context, serviceEBPFID uint
 	err = tx.QueryRow(ctx, `SELECT src_ip::text
 FROM security_events
 WHERE service_id=$1 AND event_time > now() - interval '5 minutes'
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 GROUP BY src_ip
 ORDER BY COALESCE(sum(sample_rate), 0) DESC
 LIMIT 1`, serviceEBPFID).Scan(&source)
@@ -742,7 +749,7 @@ LIMIT 1`, serviceEBPFID).Scan(&source)
 }
 
 func (s *Store) sourceWhitelistConflict(ctx context.Context, source, serviceID string) (bool, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -750,6 +757,7 @@ func (s *Store) sourceWhitelistConflict(ctx context.Context, source, serviceID s
 	rows, err := tx.Query(ctx, `SELECT ip_or_cidr::text, scope, COALESCE(service_id::text, '')
 FROM whitelist_entries
 WHERE enabled AND (expires_at IS NULL OR expires_at > now())
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
   AND (scope = 'global' OR service_id = $1)`, serviceID)
 	if err != nil {
 		return false, err

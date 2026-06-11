@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
-  Building2,
   Clock,
   LogOut,
   RefreshCw,
@@ -13,7 +12,6 @@ import { OverviewView } from './views/OverviewView';
 import { IncidentsView } from './views/IncidentsView';
 import { ServicesView } from './views/ServicesView';
 import { DetectionView } from './views/DetectionView';
-import { ReputationView } from './views/ReputationView';
 import { FleetView } from './views/FleetView';
 import { InvestigationView } from './views/InvestigationView';
 import { RulesAdminView } from './views/RulesAdminView';
@@ -21,7 +19,6 @@ import { WhitelistAdminView } from './views/WhitelistAdminView';
 import { BlacklistAdminView } from './views/BlacklistAdminView';
 import { UDPPortsAdminView } from './views/UDPPortsAdminView';
 import { SnapshotsView } from './views/SnapshotsView';
-import { TenantsView } from './views/TenantsView';
 import { AccessView } from './views/AccessView';
 import type { DashboardData, User } from './types';
 
@@ -34,7 +31,7 @@ export function DashboardShell({
   error,
   lastRefresh,
   onRefresh,
-  onTenantSwitch,
+  onViewUserConfig,
   onLogout
 }: {
   user: User;
@@ -45,32 +42,19 @@ export function DashboardShell({
   error: string;
   lastRefresh: string;
   onRefresh: () => void | Promise<void>;
-  onTenantSwitch?: (tenantID: string) => void | Promise<void>;
+  onViewUserConfig?: (userID: string) => void | Promise<void>;
   onLogout: () => void;
 }) {
-  const [switchingTenant, setSwitchingTenant] = useState(false);
-  const canMutate = user.role === 'admin' || user.role === 'operator';
-  const isPlatformAdmin = user.platform_role === 'platform_admin';
-  const tenants = user.tenants ?? [];
-  const activeTenantID = user.active_tenant?.id ?? tenants[0]?.tenant_id ?? '';
+  const canMutate = user.role === 'user' && !user.read_only;
+  const isAdmin = user.role === 'admin';
   const visibleNavGroups = useMemo(() => navGroups.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !('platformOnly' in item) || !item.platformOnly || isPlatformAdmin)
-  })).filter((group) => group.items.length > 0), [isPlatformAdmin]);
+    items: group.items.filter((item) => item.id !== 'access' || isAdmin)
+  })).filter((group) => group.items.length > 0), [isAdmin]);
   const stale = useMemo(() => {
     if (!lastRefresh) return true;
     return Date.now() - new Date(lastRefresh).getTime() > 6000;
   }, [lastRefresh]);
-
-  const switchTenant = async (tenantID: string) => {
-    if (!tenantID || tenantID === activeTenantID || !onTenantSwitch) return;
-    try {
-      setSwitchingTenant(true);
-      await onTenantSwitch(tenantID);
-    } finally {
-      setSwitchingTenant(false);
-    }
-  };
 
   return (
     <main className="app-shell">
@@ -115,24 +99,7 @@ export function DashboardShell({
             <h1>{tabLabel(activeTab)}</h1>
           </div>
           <div className="topbar-actions">
-            {tenants.length > 1 ? (
-              <label className="tenant-select">
-                <Building2 size={14} />
-                <select
-                  aria-label="tenant"
-                  value={activeTenantID}
-                  onChange={(event) => switchTenant(event.target.value)}
-                  disabled={switchingTenant || loading || !onTenantSwitch}
-                >
-                  {tenants.map((tenant) => (
-                    <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                      {tenant.name || tenant.slug} · {tenant.role}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <span className="user-chip">{user.username} · {user.role}{user.platform_role ? ` · ${user.platform_role}` : ''}</span>
+            <span className="user-chip">{user.username} · {user.role}{user.viewing_user ? ` · viewing ${user.viewing_user.username}` : ''}{user.read_only ? ' · read only' : ''}</span>
             <FreshnessPill stale={stale} text={lastRefresh ? formatTime(lastRefresh) : 'pending'} />
             <button type="button" className="icon-action" aria-label="refresh" onClick={onRefresh} disabled={loading}>
               <RefreshCw size={16} className={loading ? 'spin' : ''} />
@@ -159,10 +126,8 @@ export function DashboardShell({
         {data && activeTab === 'blacklist' ? <BlacklistAdminView canMutate={canMutate} /> : null}
         {data && activeTab === 'udpPorts' ? <UDPPortsAdminView canMutate={canMutate} /> : null}
         {data && activeTab === 'detection' ? <DetectionView anomalies={data.anomalies} baselines={data.baselines} rules={data.rules} /> : null}
-        {data && activeTab === 'reputation' ? <ReputationView sources={data.feedSources} runs={data.feedRuns} conflicts={data.feedConflicts} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
         {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}
-        {data && activeTab === 'tenants' && isPlatformAdmin ? <TenantsView currentUser={user} onTenantSwitch={onTenantSwitch} onOpenAccounts={() => setActiveTab('access')} /> : null}
-        {data && activeTab === 'access' ? <AccessView currentUser={user} /> : null}
+        {data && activeTab === 'access' && isAdmin ? <AccessView currentUser={user} onViewUserConfig={onViewUserConfig} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}
         {data && activeTab === 'investigation' ? <InvestigationView events={data.events} /> : null}
       </section>

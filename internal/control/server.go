@@ -57,9 +57,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/v1/me", s.handleMe)
 	s.mux.HandleFunc("/v1/me/password", s.handleMePassword)
-	s.mux.HandleFunc("/v1/tenants/switch", s.handleTenantSwitch)
-	s.mux.HandleFunc("/v1/tenants", s.handleTenants)
-	s.mux.HandleFunc("/v1/tenants/", s.handleTenantByID)
+	s.mux.HandleFunc("/v1/admin/view-user", s.handleAdminViewUser)
 	s.mux.HandleFunc("/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/v1/users/", s.handleUserByID)
 	s.mux.HandleFunc("/v1/services", s.handleServices)
@@ -74,10 +72,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/blacklist/", s.handleBlacklistByID)
 	s.mux.HandleFunc("/v1/udp-source-port-blocks", s.handleUDPSourcePortBlocks)
 	s.mux.HandleFunc("/v1/udp-source-port-blocks/", s.handleUDPSourcePortBlockByID)
-	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
-	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
-	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
-	s.mux.HandleFunc("/v1/feed-conflicts", s.handleFeedConflicts)
 	s.mux.HandleFunc("/v1/telegram/config", s.handleTelegramConfig)
 	s.mux.HandleFunc("/v1/telegram/test", s.handleTelegramTest)
 	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
@@ -126,14 +120,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Username   string `json:"username"`
-		Password   string `json:"password"`
-		TenantSlug string `json:"tenant_slug,omitempty"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	session, err := s.store.AuthenticateForTenant(r.Context(), req.Username, req.Password, req.TenantSlug, s.cfg.SessionTTL)
+	session, err := s.store.Authenticate(r.Context(), req.Username, req.Password, s.cfg.SessionTTL)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err)
 		return
@@ -192,49 +185,18 @@ func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTenants(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requireActor(w, r)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		tenants, err := s.store.ListTenants(r.Context(), actor, r.URL.Query().Get("include_revoked") == "true")
-		writeResult(w, tenants, err)
-	case http.MethodPost:
-		var req TenantInput
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		tenant, err := s.store.CreateTenant(r.Context(), actor, req)
-		writeResult(w, tenant, err)
-	default:
-		methodNotAllowed(w)
-	}
+	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
 }
 
 func (s *Server) handleTenantByID(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requireActor(w, r)
-	if !ok {
-		return
-	}
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/tenants/"), "/")
-	if id == "" || strings.Contains(id, "/") {
-		writeError(w, http.StatusNotFound, errors.New("tenant not found"))
-		return
-	}
-	if r.Method != http.MethodPatch {
-		methodNotAllowed(w)
-		return
-	}
-	var req TenantInput
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	tenant, err := s.store.UpdateTenant(r.Context(), actor, id, req)
-	writeResult(w, tenant, err)
+	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
 }
 
 func (s *Server) handleTenantSwitch(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, errors.New("tenant routes have been retired"))
+}
+
+func (s *Server) handleAdminViewUser(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
 		return
@@ -243,11 +205,11 @@ func (s *Server) handleTenantSwitch(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	var req TenantSwitchInput
+	var req AdminViewUserInput
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	session, err := s.store.SwitchTenant(r.Context(), actor, bearerTokenOrCookie(r), req)
+	session, err := s.store.ViewUserConfig(r.Context(), actor, bearerTokenOrCookie(r), req)
 	writeResult(w, session, err)
 }
 
@@ -869,12 +831,12 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	tenantID, err := s.store.ResolveTenantID(r.Context(), r.Header.Get("X-Tenant-ID"), r.Header.Get("X-Tenant-Slug"))
+	ownerUserID, err := s.store.ResolveOwnerUserID(r.Context(), r.Header.Get("X-Owner-User-ID"), r.Header.Get("X-Owner-Username"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	resp, err := s.store.RegisterAgentForTenant(contextWithTenant(r.Context(), tenantID), tenantID, req)
+	resp, err := s.store.RegisterAgentForOwner(contextWithOwner(r.Context(), ownerUserID), ownerUserID, req)
 	writeResult(w, resp, err)
 }
 
@@ -889,12 +851,12 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, action := parts[0], parts[1]
-	tenantID, err := s.store.AgentTenantID(r.Context(), agentID)
+	ownerUserID, err := s.store.AgentOwnerUserID(r.Context(), agentID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	ctx := contextWithTenant(r.Context(), tenantID)
+	ctx := contextWithOwner(r.Context(), ownerUserID)
 	switch action {
 	case "heartbeat":
 		if r.Method != http.MethodPost {
@@ -965,7 +927,7 @@ func (s *Server) requireActor(w http.ResponseWriter, r *http.Request) (*Actor, b
 		writeError(w, http.StatusUnauthorized, err)
 		return nil, false
 	}
-	*r = *r.WithContext(contextWithTenant(r.Context(), actor.TenantID))
+	*r = *r.WithContext(contextWithOwner(r.Context(), actorOwnerUserID(actor)))
 	return actor, true
 }
 
@@ -1057,12 +1019,8 @@ func routeName(r *http.Request) string {
 		return "/v1/me"
 	case path == "/v1/me/password":
 		return "/v1/me/password"
-	case path == "/v1/tenants":
-		return "/v1/tenants"
-	case path == "/v1/tenants/switch":
-		return "/v1/tenants/switch"
-	case strings.HasPrefix(path, "/v1/tenants/"):
-		return "/v1/tenants/{id}"
+	case path == "/v1/admin/view-user":
+		return "/v1/admin/view-user"
 	case path == "/v1/users":
 		return "/v1/users"
 	case strings.HasPrefix(path, "/v1/users/"):

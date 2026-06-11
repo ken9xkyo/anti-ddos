@@ -20,7 +20,7 @@ func TestControlCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer for RBAC test"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleUser, "create viewer for RBAC test"); err != nil {
 		t.Fatal(err)
 	}
 

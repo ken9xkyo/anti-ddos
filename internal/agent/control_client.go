@@ -16,9 +16,11 @@ import (
 )
 
 type controlClient struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL       string
+	token         string
+	ownerUserID   string
+	ownerUsername string
+	client        *http.Client
 }
 
 type controlState struct {
@@ -68,9 +70,11 @@ func RunControlSync(ctx context.Context, cfg Config, runtime *Runtime, metrics *
 		logger = slog.Default()
 	}
 	client := controlClient{
-		baseURL: strings.TrimRight(cfg.ControlURL, "/"),
-		token:   cfg.AgentToken,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		baseURL:       strings.TrimRight(cfg.ControlURL, "/"),
+		token:         cfg.AgentToken,
+		ownerUserID:   cfg.OwnerUserID,
+		ownerUsername: cfg.OwnerUsername,
+		client:        &http.Client{Timeout: 10 * time.Second},
 	}
 	state, _ := loadControlState(cfg.AgentStatePath)
 	if state.AgentID == "" {
@@ -228,6 +232,12 @@ func (c controlClient) doJSON(ctx context.Context, method, path string, in, out 
 func (c controlClient) authorize(req *http.Request) {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.ownerUserID != "" {
+		req.Header.Set("X-Owner-User-ID", c.ownerUserID)
+	}
+	if c.ownerUsername != "" {
+		req.Header.Set("X-Owner-Username", c.ownerUsername)
 	}
 }
 

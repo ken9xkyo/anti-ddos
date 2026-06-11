@@ -1,26 +1,24 @@
 import type { DashboardData, User } from '../types';
 
-export const defaultTenant = {
-  id: '00000000-0000-4000-8000-000000001000',
-  slug: 'default',
-  name: 'Default Tenant',
-  status: 'active'
-};
-
 export const viewerUser: User = {
   id: 'u1',
-  username: 'viewer',
-  role: 'viewer',
-  active_tenant: defaultTenant,
-  tenants: [{ tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'viewer', status: 'active' }]
+  username: 'user',
+  role: 'user',
+  status: 'active'
 };
 
 export const operatorUser: User = {
   id: 'u2',
-  username: 'operator',
-  role: 'operator',
-  active_tenant: defaultTenant,
-  tenants: [{ tenant_id: defaultTenant.id, slug: defaultTenant.slug, name: defaultTenant.name, role: 'operator', status: 'active' }]
+  username: 'user',
+  role: 'user',
+  status: 'active'
+};
+
+export const adminUser: User = {
+  id: 'u0',
+  username: 'admin',
+  role: 'admin',
+  status: 'active'
 };
 
 export function dashboardFixture(): DashboardData {
@@ -137,42 +135,6 @@ export function dashboardFixture(): DashboardData {
       auto_enforced: false,
       status: 'alert_only',
       source: '198.51.100.10'
-    }],
-    feedSources: [{
-      id: 'f1',
-      name: 'spamhaus-drop',
-      type: 'spamhaus_drop',
-      required_for_production: true,
-      enabled: true,
-      interval_seconds: 3600,
-      status: 'healthy',
-      active_entries: 128,
-      conflict_count: 1,
-      parse_error_count: 0,
-      license_note: 'fair use',
-      next_run_at: now
-    }],
-    feedRuns: [{
-      id: 'fr1',
-      source_id: 'f1',
-      source_name: 'spamhaus-drop',
-      started_at: now,
-      status: 'success',
-      items_fetched: 130,
-      items_valid: 128,
-      parse_errors: 0,
-      snapshot_version: 8
-    }],
-    feedConflicts: [{
-      id: 'fc1',
-      source_id: 'f1',
-      source_name: 'spamhaus-drop',
-      reputation_id: 'rep1',
-      whitelist_id: 'w1',
-      reputation_cidr: '198.51.100.0/24',
-      whitelist_cidr: '198.51.100.10/32',
-      status: 'active',
-      detected_at: now
     }],
     telegramConfig: {
       bot_token_ref: '*****',

@@ -15,6 +15,9 @@ func TestControlClientRegisterHeartbeatFetchAck(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer shared" {
 			t.Fatalf("missing auth header on %s", r.URL.Path)
 		}
+		if r.Header.Get("X-Owner-Username") != "user" {
+			t.Fatalf("missing owner username header on %s", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/agents/register":
@@ -59,7 +62,7 @@ func TestControlClientRegisterHeartbeatFetchAck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := controlClient{baseURL: server.URL, token: "shared", client: server.Client()}
+	client := controlClient{baseURL: server.URL, token: "shared", ownerUsername: "user", client: server.Client()}
 	ifaces := []controlAgentInterface{{Name: "wan0", Ifindex: 7, MAC: "02:00:00:00:00:01", Role: "wan"}}
 	register, err := client.register(context.Background(), controlRegisterRequest{Hostname: "node", Interfaces: ifaces})
 	if err != nil {

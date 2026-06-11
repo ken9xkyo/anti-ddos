@@ -44,6 +44,7 @@ func TestLoadConfigFromEnvPolicyOptions(t *testing.T) {
 	t.Setenv("ANTI_DDOS_POLICY_MEMORY_BUDGET_BYTES", "4096")
 	t.Setenv("ANTI_DDOS_CONTROL_URL", "http://127.0.0.1:8080/")
 	t.Setenv("ANTI_DDOS_AGENT_TOKEN", "shared")
+	t.Setenv("ANTI_DDOS_OWNER_USERNAME", "user")
 	t.Setenv("ANTI_DDOS_AGENT_STATE_PATH", "/tmp/control-state.json")
 
 	cfg, err := LoadConfigFromEnv()
@@ -56,7 +57,7 @@ func TestLoadConfigFromEnvPolicyOptions(t *testing.T) {
 	if cfg.PolicyMemoryBudgetBytes != 4096 {
 		t.Fatalf("unexpected policy memory budget %d", cfg.PolicyMemoryBudgetBytes)
 	}
-	if cfg.ControlURL != "http://127.0.0.1:8080" || cfg.AgentToken != "shared" || cfg.AgentStatePath != "/tmp/control-state.json" {
+	if cfg.ControlURL != "http://127.0.0.1:8080" || cfg.AgentToken != "shared" || cfg.OwnerUsername != "user" || cfg.AgentStatePath != "/tmp/control-state.json" {
 		t.Fatalf("unexpected control sync config: %#v", cfg)
 	}
 }

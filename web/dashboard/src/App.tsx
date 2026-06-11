@@ -46,16 +46,16 @@ export default function App() {
     };
   }, [loadDashboard, user]);
 
-  const switchTenant = async (tenantID: string) => {
+  const viewUserConfig = async (userID: string) => {
     try {
       setLoading(true);
-      const session = await api.switchTenant({ tenant_id: tenantID });
+      const session = await api.viewUserConfig(userID);
       setUser(session.user);
       setData(null);
       setLastRefresh('');
       setError('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'tenant switch failed');
+      setError(err instanceof Error ? err.message : 'view user failed');
     } finally {
       setLoading(false);
     }
@@ -82,7 +82,7 @@ export default function App() {
         error={error}
         lastRefresh={lastRefresh}
         onRefresh={loadDashboard}
-        onTenantSwitch={switchTenant}
+        onViewUserConfig={viewUserConfig}
         onLogout={() => {
           api.clearToken();
           setUser(null);

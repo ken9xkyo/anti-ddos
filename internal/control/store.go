@@ -38,8 +38,7 @@ type Store struct {
 
 type Actor struct {
 	User
-	TenantID   string
-	TenantSlug string
+	ViewOwnerUserID string
 }
 
 func OpenPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
@@ -87,22 +86,18 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (
 		return User{}, errors.New("admin password must be at least 12 characters")
 	}
 
-	tx, err := s.beginPlatformTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
 	defer tx.Rollback(ctx)
 
 	var admins int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE platform_role = 'platform_admin'`).Scan(&admins); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE role='admin' AND status='active'`).Scan(&admins); err != nil {
 		return User{}, err
 	}
 	if admins > 0 {
 		return User{}, errors.New("admin user already exists")
-	}
-	tenant, err := defaultTenant(ctx, tx)
-	if err != nil {
-		return User{}, err
 	}
 
 	id, err := newUUID()
@@ -114,24 +109,12 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (
 		return User{}, err
 	}
 	var user User
-	if err := tx.QueryRow(ctx, `INSERT INTO app_users(id, username, password_hash, role, platform_role, status, force_password_change)
-VALUES ($1, $2, $3, 'admin', 'platform_admin', 'active', true)
-RETURNING id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at`,
-		id, username, string(hash)).Scan(&user.ID, &user.Username, &user.Role, &user.PlatformRole, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO app_users(id, username, password_hash, role, status, force_password_change)
+VALUES ($1, $2, $3, 'admin', 'active', true)
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
+		id, username, string(hash)).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
 		return User{}, err
 	}
-	membershipID, err := newUUID()
-	if err != nil {
-		return User{}, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
-VALUES ($1, $2, $3, 'admin', 'active')
-ON CONFLICT (tenant_id, user_id) DO UPDATE SET role='admin', status='active', updated_at=now()`,
-		membershipID, tenant.ID, user.ID); err != nil {
-		return User{}, err
-	}
-	user.ActiveTenant = &tenant
-	user.Tenants = []TenantAccess{{TenantID: tenant.ID, Slug: tenant.Slug, Name: tenant.Name, Role: RoleAdmin, Status: StatusActive, CreatedAt: tenant.CreatedAt, UpdatedAt: tenant.UpdatedAt}}
 	if err := insertAudit(ctx, tx, nil, "bootstrap_admin", "user", user.ID, nil, user, "one-time bootstrap admin", ""); err != nil {
 		return User{}, err
 	}
@@ -145,15 +128,14 @@ func (s *Store) Authenticate(ctx context.Context, username, password string, ttl
 	return s.AuthenticateForTenant(ctx, username, password, "", ttl)
 }
 
-func (s *Store) AuthenticateForTenant(ctx context.Context, username, password, tenantSlug string, ttl time.Duration) (Session, error) {
+func (s *Store) AuthenticateForTenant(ctx context.Context, username, password, _ string, ttl time.Duration) (Session, error) {
 	var user User
 	var passwordHash string
-	err := s.pool.QueryRow(ctx, `SELECT id::text, username, role, platform_role, status, force_password_change, created_at, last_login_at, password_hash
+	err := s.pool.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at, password_hash
 FROM app_users WHERE username = $1`, strings.TrimSpace(username)).Scan(
 		&user.ID,
 		&user.Username,
 		&user.Role,
-		&user.PlatformRole,
 		&user.Status,
 		&user.ForcePasswordChange,
 		&user.CreatedAt,
@@ -172,14 +154,6 @@ FROM app_users WHERE username = $1`, strings.TrimSpace(username)).Scan(
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
 		return Session{}, errors.New("invalid username or password")
 	}
-	accesses, activeAccess, err := s.resolveUserTenantAccess(ctx, user.ID, user.PlatformRole, tenantSlug)
-	if err != nil {
-		return Session{}, err
-	}
-	user.Role = activeAccess.Role
-	user.Status = activeAccess.Status
-	user.ActiveTenant = &Tenant{ID: activeAccess.TenantID, Slug: activeAccess.Slug, Name: activeAccess.Name, Status: activeAccess.Status, CreatedAt: activeAccess.CreatedAt, UpdatedAt: activeAccess.UpdatedAt}
-	user.Tenants = accesses
 
 	id, err := newUUID()
 	if err != nil {
@@ -196,7 +170,7 @@ FROM app_users WHERE username = $1`, strings.TrimSpace(username)).Scan(
 		return Session{}, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `INSERT INTO user_sessions(id, user_id, token_hash, expires_at, active_tenant_id) VALUES ($1, $2, $3, $4, $5)`, id, user.ID, tokenHash, expiresAt, activeAccess.TenantID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO user_sessions(id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)`, id, user.ID, tokenHash, expiresAt); err != nil {
 		return Session{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE app_users SET last_login_at = now(), updated_at = now() WHERE id = $1`, user.ID); err != nil {
@@ -214,8 +188,8 @@ func (s *Store) AuthenticateToken(ctx context.Context, token string) (*Actor, er
 		return nil, errors.New("missing bearer token")
 	}
 	var user User
-	var activeTenantID string
-	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.platform_role, u.status, u.force_password_change, u.created_at, u.last_login_at, s.active_tenant_id::text
+	var viewOwnerUserID string
+	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.status, u.force_password_change, u.created_at, u.last_login_at, COALESCE(s.view_owner_user_id::text, '')
 FROM user_sessions s
 JOIN app_users u ON u.id = s.user_id
 WHERE s.token_hash = $1
@@ -223,22 +197,25 @@ WHERE s.token_hash = $1
 	AND s.expires_at > now()
 	AND u.status = 'active'`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Username, &user.Role, &user.PlatformRole, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &activeTenantID)
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &viewOwnerUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("invalid or expired session")
 		}
 		return nil, err
 	}
-	accesses, activeAccess, err := s.resolveUserTenantAccess(ctx, user.ID, user.PlatformRole, activeTenantID)
-	if err != nil {
-		return nil, err
+	actor := &Actor{User: user, ViewOwnerUserID: user.ID}
+	if user.Role == RoleAdmin && strings.TrimSpace(viewOwnerUserID) != "" {
+		target, err := s.userSummary(ctx, viewOwnerUserID)
+		if err != nil {
+			return nil, err
+		}
+		user.ViewingUser = &target
+		user.ReadOnly = true
+		actor.User = user
+		actor.ViewOwnerUserID = target.ID
 	}
-	user.Role = activeAccess.Role
-	user.Status = activeAccess.Status
-	user.ActiveTenant = &Tenant{ID: activeAccess.TenantID, Slug: activeAccess.Slug, Name: activeAccess.Name, Status: activeAccess.Status, CreatedAt: activeAccess.CreatedAt, UpdatedAt: activeAccess.UpdatedAt}
-	user.Tenants = accesses
-	return &Actor{User: user, TenantID: activeAccess.TenantID, TenantSlug: activeAccess.Slug}, nil
+	return actor, nil
 }
 
 func (s *Store) RevokeToken(ctx context.Context, token string) error {
@@ -252,10 +229,10 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	if username == "" {
 		return User{}, errors.New("username is required")
 	}
-	if role != RoleAdmin && role != RoleOperator && role != RoleViewer {
+	if !validUserRole(role) {
 		return User{}, fmt.Errorf("unsupported role %q", role)
 	}
-	if err := requireTenantUserCreatePermission(actor, role); err != nil {
+	if err := requireAdmin(actor); err != nil {
 		return User{}, err
 	}
 	if len(password) < 12 {
@@ -264,7 +241,7 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -273,35 +250,11 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	if err != nil {
 		return User{}, err
 	}
-	if actor.Role == RoleOperator {
-		existing, err := s.getUser(ctx, tx, user.ID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return User{}, err
-		}
-		if err == nil {
-			if err := requireTenantUserTargetPermission(actor, existing, role); err != nil {
-				return User{}, err
-			}
-		}
-	}
-	if err := validateOperatorSingleTenantMembership(ctx, tx, user.ID, actor.TenantID, role, StatusActive); err != nil {
-		return User{}, err
-	}
-	membershipID, err := newUUID()
-	if err != nil {
-		return User{}, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO tenant_memberships(id, tenant_id, user_id, role, status)
-VALUES ($1, $2, $3, $4, 'active')
-ON CONFLICT (tenant_id, user_id) DO UPDATE SET role=EXCLUDED.role, status='active', updated_at=now()`,
-		membershipID, actor.TenantID, user.ID, role); err != nil {
-		return User{}, err
-	}
 	user, err = s.getUser(ctx, tx, user.ID)
 	if err != nil {
 		return User{}, err
 	}
-	action := "add_tenant_member"
+	action := "reactivate_user"
 	if created {
 		action = "create_user"
 	}
@@ -311,17 +264,43 @@ ON CONFLICT (tenant_id, user_id) DO UPDATE SET role=EXCLUDED.role, status='activ
 	return user, tx.Commit(ctx)
 }
 
+func (s *Store) ensureUserIdentity(ctx context.Context, q dbQuerier, username, password, role string) (User, bool, error) {
+	id, err := newUUID()
+	if err != nil {
+		return User{}, false, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return User{}, false, err
+	}
+	var user User
+	var created bool
+	err = q.QueryRow(ctx, `INSERT INTO app_users(id, username, password_hash, role, status, force_password_change)
+VALUES ($1,$2,$3,$4,'active',true)
+ON CONFLICT (username) DO UPDATE SET
+    password_hash=EXCLUDED.password_hash,
+    role=EXCLUDED.role,
+    status='active',
+    force_password_change=true,
+    updated_at=now()
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at, (xmax = 0)`,
+		id, username, string(hash), role,
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &created)
+	if err != nil {
+		return User{}, false, err
+	}
+	return user, created, nil
+}
+
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT u.id::text, u.username, m.role, u.platform_role, m.status, u.force_password_change, u.created_at, u.last_login_at
-FROM tenant_memberships m
-JOIN app_users u ON u.id = m.user_id
-WHERE m.tenant_id = NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid
-ORDER BY u.username`)
+	rows, err := tx.Query(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+FROM app_users
+ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +308,7 @@ ORDER BY u.username`)
 	users := make([]User, 0)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.PlatformRole, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -344,7 +323,10 @@ func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string)
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
+	}
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -353,19 +335,16 @@ func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string)
 	if err != nil {
 		return User{}, err
 	}
-	if err := requireTenantUserTargetPermission(actor, before, ""); err != nil {
-		return User{}, err
-	}
-	if err := ensureActiveAdminRemains(ctx, tx, actor.TenantID, before, before.Role, StatusRevoked); err != nil {
+	if err := ensureActiveAdminRemains(ctx, tx, before, before.Role, StatusRevoked); err != nil {
 		return User{}, err
 	}
 	var after User
-	if _, err := tx.Exec(ctx, `UPDATE tenant_memberships SET status='revoked', updated_at=now()
-WHERE tenant_id=$1 AND user_id=$2`, actor.TenantID, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE app_users SET status='revoked', updated_at=now()
+WHERE id=$1`, id); err != nil {
 		return User{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now()
-WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.TenantID); err != nil {
+WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
 		return User{}, err
 	}
 	after, err = s.getUser(ctx, tx, id)
@@ -380,20 +359,27 @@ WHERE user_id=$1 AND active_tenant_id=$2 AND revoked_at IS NULL`, id, actor.Tena
 
 func (s *Store) getUser(ctx context.Context, q dbQuerier, id string) (User, error) {
 	var user User
-	err := q.QueryRow(ctx, `SELECT u.id::text, u.username, m.role, u.platform_role, m.status, u.force_password_change, u.created_at, u.last_login_at
-FROM tenant_memberships m
-JOIN app_users u ON u.id = m.user_id
-WHERE m.tenant_id = NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid AND u.id = $1`, id).Scan(
-		&user.ID, &user.Username, &user.Role, &user.PlatformRole, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt,
+	err := q.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+FROM app_users
+WHERE id = $1`, id).Scan(
+		&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt,
 	)
 	return user, err
+}
+
+func (s *Store) userSummary(ctx context.Context, id string) (ViewingUser, error) {
+	var user ViewingUser
+	if err := s.pool.QueryRow(ctx, `SELECT id::text, username FROM app_users WHERE id=$1 AND status='active'`, strings.TrimSpace(id)).Scan(&user.ID, &user.Username); err != nil {
+		return ViewingUser{}, err
+	}
+	return user, nil
 }
 
 func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +387,7 @@ func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, e
 	rows, err := tx.Query(ctx, `SELECT id::text, created_at, COALESCE(actor_id::text, ''), actor_username, action, entity_type, entity_id,
        COALESCE(before, 'null'::jsonb), COALESCE(after, 'null'::jsonb), COALESCE(reason, ''), request_id
 FROM audit_events
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY created_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -440,13 +427,12 @@ func insertAudit(ctx context.Context, q dbQuerier, actor *Actor, action, entityT
 	}
 	var actorID any
 	var username string
-	tenantID := tenantIDFromContext(ctx)
+	ownerUserID := ownerUserIDFromContext(ctx)
 	if actor != nil {
 		actorID = actor.ID
 		username = actor.Username
-		if tenantID == "" {
-			tenantIDFromActor := actorTenantID(actor)
-			tenantID = tenantIDFromActor
+		if ownerUserID == "" {
+			ownerUserID = actorOwnerUserID(actor)
 		}
 	}
 	beforeJSON, err := marshalRedactedJSON(before)
@@ -457,9 +443,9 @@ func insertAudit(ctx context.Context, q dbQuerier, actor *Actor, action, entityT
 	if err != nil {
 		return err
 	}
-	_, err = q.Exec(ctx, `INSERT INTO audit_events(id, tenant_id, actor_id, actor_username, action, entity_type, entity_id, before, after, reason, request_id)
-VALUES ($1, COALESCE(NULLIF($2, '')::uuid, (SELECT id FROM tenants WHERE slug='default')), $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11)`,
-		id, tenantID, actorID, username, action, entityType, entityID, beforeJSON, afterJSON, strings.TrimSpace(reason), requestID,
+	_, err = q.Exec(ctx, `INSERT INTO audit_events(id, owner_user_id, actor_id, actor_username, action, entity_type, entity_id, before, after, reason, request_id)
+VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11)`,
+		id, ownerUserID, actorID, username, action, entityType, entityID, beforeJSON, afterJSON, strings.TrimSpace(reason), requestID,
 	)
 	return err
 }

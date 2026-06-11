@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField } from '@mui/material';
 import { GridColDef } from '@mui/x-data-grid';
-import { KeyRound, Plus, RotateCcw, ShieldCheck, Users } from 'lucide-react';
+import { Eye, KeyRound, Plus, RotateCcw, ShieldCheck, Users } from 'lucide-react';
 import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { PanelHeader, StatusPill } from '../components';
@@ -21,12 +21,12 @@ const emptyUserForm: UserForm = {
   reason: 'update user access',
   username: '',
   password: '',
-  role: 'viewer',
+  role: 'user',
   status: 'active',
   force_password_change: true
 };
 
-export function AccessView({ currentUser }: { currentUser: User }) {
+export function AccessView({ currentUser, onViewUserConfig }: { currentUser: User; onViewUserConfig?: (userID: string) => void | Promise<void> }) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
@@ -36,9 +36,6 @@ export function AccessView({ currentUser }: { currentUser: User }) {
   const [revokeTarget, setRevokeTarget] = useState<User | null>(null);
   const [reason, setReason] = useState('revoke user sessions');
   const isAdmin = currentUser.role === 'admin';
-  const isOperator = currentUser.role === 'operator';
-  const canCreateViewer = isAdmin || isOperator;
-  const activeTenantName = currentUser.active_tenant?.name || currentUser.active_tenant?.slug || 'active tenant';
 
   const load = async () => {
     try {
@@ -80,9 +77,10 @@ export function AccessView({ currentUser }: { currentUser: User }) {
       sortable: false,
       renderCell: (params) => {
         const row = params.row as User;
-        if (!canManageUser(row)) return <span className="muted">read only</span>;
+        if (!isAdmin) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
+            <Button size="small" variant="outlined" disabled={row.role !== 'user' || row.status === 'revoked' || !onViewUserConfig} onClick={() => onViewUserConfig?.(row.id)}><Eye size={14} />View config</Button>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
             <Button size="small" variant="outlined" onClick={() => openReset(row)}>Reset</Button>
             <Button size="small" variant="outlined" color="warning" onClick={() => {
@@ -93,12 +91,10 @@ export function AccessView({ currentUser }: { currentUser: User }) {
         );
       }
     }
-  ], [isAdmin, isOperator]);
+  ], [isAdmin, onViewUserConfig]);
 
   function canManageUser(user: User | null) {
-    if (!user) return false;
-    if (isAdmin) return true;
-    return isOperator && user.role === 'viewer';
+    return Boolean(user && isAdmin);
   }
 
   const openCreate = () => {
@@ -129,15 +125,14 @@ export function AccessView({ currentUser }: { currentUser: User }) {
   const submit = async () => {
     try {
       if (mode === 'create') {
-        if (!canCreateViewer) return;
-        const role = isOperator ? 'viewer' : form.role;
-        await api.createUser({ reason: form.reason, username: form.username, password: form.password, role });
+        if (!isAdmin) return;
+        await api.createUser({ reason: form.reason, username: form.username, password: form.password, role: form.role });
         setResult(`${form.username} created`);
       } else if (mode === 'edit' && target) {
         if (!canManageUser(target)) return;
         await api.updateUser(target.id, {
           reason: form.reason,
-          role: isOperator ? 'viewer' : form.role,
+          role: form.role,
           status: form.status,
           force_password_change: form.force_password_change
         });
@@ -176,14 +171,14 @@ export function AccessView({ currentUser }: { currentUser: User }) {
       <section className="wide-panel">
         <PanelHeader
           icon={<Users size={18} />}
-          title="Tenant Access"
-          eyebrow={`tenant RBAC · ${activeTenantName}`}
-          actions={canCreateViewer ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />{isOperator ? 'Add viewer' : 'Add user'}</button> : null}
+          title="Accounts"
+          eyebrow="admin/user RBAC"
+          actions={isAdmin ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add user</button> : null}
         />
         <InlineResult result={result} />
       </section>
 
-      <AdminGrid rows={users} columns={columns} loading={loading} emptyText="No tenant members" height={520} />
+      <AdminGrid rows={users} columns={columns} loading={loading} emptyText="No users" height={520} />
 
       <AdminDrawer
         open={mode !== ''}
@@ -198,13 +193,10 @@ export function AccessView({ currentUser }: { currentUser: User }) {
         {mode === 'create' || mode === 'reset' ? <TextField label="Temporary password" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} fullWidth required /> : null}
         {mode !== 'reset' ? (
           <>
-            {isAdmin ? (
-              <TextField select label="Role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as Role })} fullWidth>
-                <MenuItem value="viewer">Viewer</MenuItem>
-                <MenuItem value="operator">Operator</MenuItem>
-                <MenuItem value="admin">Admin</MenuItem>
-              </TextField>
-            ) : null}
+            <TextField select label="Role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as Role })} fullWidth>
+              <MenuItem value="user">User</MenuItem>
+              <MenuItem value="admin">Admin</MenuItem>
+            </TextField>
             <TextField select label="Status" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} fullWidth>
               <MenuItem value="active">Active</MenuItem>
               <MenuItem value="revoked">Revoked</MenuItem>

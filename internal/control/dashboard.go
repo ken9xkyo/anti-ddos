@@ -54,7 +54,7 @@ func (s *Store) BuildDashboardOverview(ctx context.Context, prom *PrometheusClie
 }
 
 func (s *Store) LatestApplyStatuses(ctx context.Context) ([]DashboardApplyStatus, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +63,8 @@ func (s *Store) LatestApplyStatuses(ctx context.Context) ([]DashboardApplyStatus
        pas.agent_id::text, a.hostname, pas.policy_version, pas.status, pas.error_stage, pas.error_reason, pas.reported_at
 FROM policy_apply_status pas
 JOIN agents a ON a.id = pas.agent_id
+WHERE pas.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND a.owner_user_id = pas.owner_user_id
 ORDER BY pas.agent_id, pas.reported_at DESC`)
 	if err != nil {
 		return nil, err
@@ -83,14 +85,16 @@ ORDER BY pas.agent_id, pas.reported_at DESC`)
 }
 
 func (s *Store) ListDashboardAgents(ctx context.Context, staleAfter time.Duration) ([]DashboardAgent, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx, `SELECT id::text, hostname, status, COALESCE(NULLIF(xdp_mode, ''), 'unknown'), devmap_support,
        active_policy_version, last_seen_at, COALESCE(metadata->'map_utilization', '{}'::jsonb)
-FROM agents ORDER BY hostname`)
+FROM agents
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY hostname`)
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +214,14 @@ func (s *Store) ListDashboardRules(ctx context.Context) ([]DashboardRule, error)
 }
 
 func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInterface, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT name, ifindex, mac, role, link_speed_bps FROM agent_interfaces WHERE agent_id=$1 ORDER BY name`, agentID)
+	rows, err := tx.Query(ctx, `SELECT name, ifindex, mac, role, link_speed_bps FROM agent_interfaces
+WHERE agent_id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY name`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +241,7 @@ func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInt
 }
 
 func (s *Store) recentCountersByService(ctx context.Context) (map[uint32]map[string]float64, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +249,7 @@ func (s *Store) recentCountersByService(ctx context.Context) (map[uint32]map[str
 	rows, err := tx.Query(ctx, `SELECT service_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
 FROM security_events
 WHERE event_time > now() - interval '5 minutes' AND service_id > 0
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 GROUP BY service_id, action, reason`)
 	if err != nil {
 		return nil, err
@@ -268,7 +275,7 @@ GROUP BY service_id, action, reason`)
 }
 
 func (s *Store) recentCountersByRule(ctx context.Context) (map[uint32]map[string]float64, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +283,7 @@ func (s *Store) recentCountersByRule(ctx context.Context) (map[uint32]map[string
 	rows, err := tx.Query(ctx, `SELECT rule_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
 FROM security_events
 WHERE event_time > now() - interval '5 minutes' AND rule_id > 0
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 GROUP BY rule_id, action, reason`)
 	if err != nil {
 		return nil, err

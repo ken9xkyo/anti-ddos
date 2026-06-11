@@ -140,12 +140,14 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	if reason == "" {
 		return TelegramConfig{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorTenantTx(ctx, actor)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return TelegramConfig{}, err
 	}
 	defer tx.Rollback(ctx)
-	beforeRaw, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
+	beforeRaw, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at
+FROM telegram_configs
+WHERE id=1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return TelegramConfig{}, err
 	}
@@ -158,9 +160,9 @@ func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input Te
 	}
 	before := maskTelegramConfig(beforeRaw)
 	enabled := boolDefault(input.Enabled, true)
-	row := tx.QueryRow(ctx, `INSERT INTO telegram_configs(tenant_id, id, bot_token_ref, chat_id, parse_mode, enabled)
-VALUES (NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, 1,$1,$2,$3,$4)
-ON CONFLICT (tenant_id, id) DO UPDATE SET
+	row := tx.QueryRow(ctx, `INSERT INTO telegram_configs(owner_user_id, id, bot_token_ref, chat_id, parse_mode, enabled)
+VALUES (NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, 1,$1,$2,$3,$4)
+ON CONFLICT (owner_user_id, id) DO UPDATE SET
     bot_token_ref=EXCLUDED.bot_token_ref,
     chat_id=EXCLUDED.chat_id,
     parse_mode=EXCLUDED.parse_mode,
@@ -188,12 +190,14 @@ func (s *Store) GetTelegramConfig(ctx context.Context) (TelegramConfig, error) {
 }
 
 func (s *Store) getTelegramConfigRaw(ctx context.Context) (TelegramConfig, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return TelegramConfig{}, err
 	}
 	defer tx.Rollback(ctx)
-	cfg, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at FROM telegram_configs WHERE id=1`))
+	cfg, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT bot_token_ref, chat_id, parse_mode, enabled, created_at, updated_at
+FROM telegram_configs
+WHERE id=1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`))
 	if err != nil {
 		return TelegramConfig{}, err
 	}
@@ -288,14 +292,14 @@ func (s *Store) createAlert(ctx context.Context, actor *Actor, input AlertInput)
 	if actor != nil {
 		actorID = actor.ID
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return Alert{}, err
 	}
 	defer tx.Rollback(ctx)
 	alert, err := scanAlert(tx.QueryRow(ctx, `INSERT INTO alerts(
-    id, tenant_id, severity, type, dedupe_key, service_id, affected_service, vector, evidence, recommended_action, created_by
-) VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10)
+    id, owner_user_id, severity, type, dedupe_key, service_id, affected_service, vector, evidence, recommended_action, created_by
+) VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10)
 RETURNING id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service, vector,
           evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at`,
 		id, normalizeAlertSeverity(input.Severity), strings.TrimSpace(input.Type), strings.TrimSpace(input.DedupeKey),
@@ -346,7 +350,7 @@ func (s *Store) ListAlerts(ctx context.Context, limit int) ([]Alert, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +358,7 @@ func (s *Store) ListAlerts(ctx context.Context, limit int) ([]Alert, error) {
 	rows, err := tx.Query(ctx, `SELECT id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service,
        vector, evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at
 FROM alerts
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY created_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -385,7 +390,7 @@ LIMIT $1`, limit)
 }
 
 func (s *Store) ListAlertDeliveries(ctx context.Context, alertID string) ([]AlertDelivery, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +398,7 @@ func (s *Store) ListAlertDeliveries(ctx context.Context, alertID string) ([]Aler
 	rows, err := tx.Query(ctx, `SELECT id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at
 FROM alert_deliveries
 WHERE alert_id=$1
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY created_at`, strings.TrimSpace(alertID))
 	if err != nil {
 		return nil, err
@@ -502,7 +508,7 @@ func (s *Store) alertRetryDelay(attempt uint32) time.Duration {
 
 func (s *Store) alertPolicy(ctx context.Context, alertType, severity string) (alertPolicy, error) {
 	policy := alertPolicy{RateLimitSeconds: defaultAlertRateLimitSeconds, MaxAttempts: defaultAlertMaxAttempts, Enabled: true}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return policy, err
 	}
@@ -510,6 +516,7 @@ func (s *Store) alertPolicy(ctx context.Context, alertType, severity string) (al
 	err = tx.QueryRow(ctx, `SELECT rate_limit_seconds, max_attempts, template, enabled
 FROM alert_policies
 WHERE alert_type=$1 AND severity=$2 AND channel='telegram'
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 LIMIT 1`, alertType, severity).Scan(&policy.RateLimitSeconds, &policy.MaxAttempts, &policy.Template, &policy.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policy, nil
@@ -525,7 +532,7 @@ func (s *Store) recentAlertSent(ctx context.Context, alert Alert, window time.Du
 		return false, nil
 	}
 	var exists bool
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -536,6 +543,8 @@ func (s *Store) recentAlertSent(ctx context.Context, alert Alert, window time.Du
     JOIN alert_deliveries d ON d.alert_id = a.id
     WHERE a.id <> $1
       AND a.dedupe_key = $2
+      AND a.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+      AND d.owner_user_id = a.owner_user_id
       AND d.status = 'sent'
       AND d.created_at >= now() - ($3::text)::interval
 )`, alert.ID, alert.DedupeKey, fmt.Sprintf("%d seconds", int(window.Seconds()))).Scan(&exists)
@@ -550,26 +559,28 @@ func (s *Store) RecentAlertExists(ctx context.Context, dedupeKey string, window 
 		return false
 	}
 	var exists bool
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return false
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `SELECT EXISTS (
     SELECT 1 FROM alerts
-    WHERE dedupe_key=$1 AND created_at >= now() - ($2::text)::interval
+    WHERE dedupe_key=$1
+      AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+      AND created_at >= now() - ($2::text)::interval
 )`, strings.TrimSpace(dedupeKey), fmt.Sprintf("%d seconds", int(window.Seconds()))).Scan(&exists)
 	return err == nil && exists
 }
 
 func (s *Store) setAlertStatus(ctx context.Context, id, status string) (Alert, error) {
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return Alert{}, err
 	}
 	defer tx.Rollback(ctx)
 	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE alerts SET status=$2, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service, vector,
           evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at`, id, status))
 	if err != nil {
@@ -587,13 +598,13 @@ func (s *Store) recordAlertDelivery(ctx context.Context, alertID, channel, statu
 	if status == alertStatusSent {
 		sentAt = time.Now().UTC()
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return AlertDelivery{}, err
 	}
 	defer tx.Rollback(ctx)
-	delivery, err := scanAlertDelivery(tx.QueryRow(ctx, `INSERT INTO alert_deliveries(id, tenant_id, alert_id, channel, status, attempt, error, response, sent_at)
-VALUES ($1, NULLIF(current_setting('anti_ddos.tenant_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8)
+	delivery, err := scanAlertDelivery(tx.QueryRow(ctx, `INSERT INTO alert_deliveries(id, owner_user_id, alert_id, channel, status, attempt, error, response, sent_at)
+VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8)
 RETURNING id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at`,
 		id, alertID, channel, status, attempt, errText, defaultJSON(response), sentAt))
 	if err != nil {

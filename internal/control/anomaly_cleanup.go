@@ -8,15 +8,15 @@ import (
 const legacyAutoEnforceDisableReason = "baseline anomaly detection is alert-only"
 
 func (s *Store) DisableLegacyAutoEnforceRules(ctx context.Context) (int, error) {
-	if tenantIDFromContext(ctx) == "" {
-		tenantIDs, err := s.activeTenantIDs(ctx)
+	if ownerUserIDFromContext(ctx) == "" {
+		ownerUserIDs, err := s.activeOwnerUserIDs(ctx)
 		if err != nil {
 			return 0, err
 		}
 		total := 0
 		var joined error
-		for _, tenantID := range tenantIDs {
-			count, err := s.DisableLegacyAutoEnforceRules(contextWithTenant(ctx, tenantID))
+		for _, ownerUserID := range ownerUserIDs {
+			count, err := s.DisableLegacyAutoEnforceRules(contextWithOwner(ctx, ownerUserID))
 			total += count
 			if err != nil {
 				joined = errors.Join(joined, err)
@@ -24,7 +24,7 @@ func (s *Store) DisableLegacyAutoEnforceRules(ctx context.Context) (int, error) 
 		}
 		return total, joined
 	}
-	tx, err := s.beginContextTenantTx(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -35,6 +35,7 @@ func (s *Store) DisableLegacyAutoEnforceRules(ctx context.Context) (int, error) 
        ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
 FROM rules
 WHERE enabled AND (owner=$1 OR evidence->>'auto_enforce' = 'true')
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY created_at
 FOR UPDATE`, legacyAutoEnforceOwner)
 	if err != nil {
@@ -62,7 +63,7 @@ FOR UPDATE`, legacyAutoEnforceOwner)
 	for _, before := range legacyRules {
 		var after Rule
 		err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
           threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
           ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at`, before.ID), &after)

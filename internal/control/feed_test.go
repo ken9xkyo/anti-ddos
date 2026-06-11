@@ -356,10 +356,10 @@ func TestFeedSyncIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleUser, "create viewer"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleOperator, "create operator"); err != nil {
+	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleUser, "create operator"); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(NewServer(store, cfg, nil))
