@@ -11,6 +11,10 @@ import type {
   BlacklistInput,
   DashboardData,
   DashboardOverview,
+  FeedConflict,
+  FeedRun,
+  FeedSource,
+  FeedSourceInput,
   OwnPasswordInput,
   PasswordResetInput,
   Rule,
@@ -67,8 +71,9 @@ export class ApiClient {
     });
   }
 
-  async dashboard(): Promise<DashboardData> {
-    const [overview, agents, services, rules, events, baselines, anomalies, telegramConfig, alerts] = await Promise.all([
+  async dashboard(user?: User): Promise<DashboardData> {
+    const canLoadFeed = user?.role === 'admin' && !user.read_only && !user.viewing_user;
+    const baseRequests = Promise.all([
       this.request<DashboardOverview>('/v1/dashboard/overview'),
       this.request<Agent[] | null>('/v1/dashboard/agents'),
       this.request<Service[] | null>('/v1/dashboard/services'),
@@ -79,6 +84,13 @@ export class ApiClient {
       this.request<TelegramConfig>('/v1/telegram/config'),
       this.request<Alert[] | null>('/v1/alerts?limit=30')
     ]);
+    const feedRequests = canLoadFeed
+      ? Promise.all([this.feedSources(), this.feedRuns(), this.feedConflicts()])
+      : Promise.resolve<[FeedSource[], FeedRun[], FeedConflict[]]>([[], [], []]);
+    const [[overview, agents, services, rules, events, baselines, anomalies, telegramConfig, alerts], [feedSources, feedRuns, feedConflicts]] = await Promise.all([
+      baseRequests,
+      feedRequests
+    ]);
     return {
       overview: normalizeOverview(overview),
       agents: asArray(agents),
@@ -88,7 +100,10 @@ export class ApiClient {
       baselines: asArray(baselines),
       anomalies: asArray(anomalies),
       telegramConfig,
-      alerts: asArray(alerts)
+      alerts: asArray(alerts),
+      feedSources,
+      feedRuns,
+      feedConflicts
     };
   }
 
@@ -262,6 +277,46 @@ export class ApiClient {
     });
   }
 
+  async feedSources(): Promise<FeedSource[]> {
+    return asArray(await this.request<FeedSource[] | null>('/v1/feed-sources'));
+  }
+
+  async createFeedSource(input: FeedSourceInput): Promise<FeedSource> {
+    return this.request<FeedSource>('/v1/feed-sources', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async updateFeedSource(id: string, input: FeedSourceInput): Promise<FeedSource> {
+    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async disableFeedSource(id: string, reason: string): Promise<FeedSource> {
+    return this.request<FeedSource>(`/v1/feed-sources/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
+    });
+  }
+
+  async syncFeedSource(id: string, reason: string): Promise<FeedRun> {
+    return this.request<FeedRun>(`/v1/feed-sources/${encodeURIComponent(id)}/sync`, {
+      method: 'POST',
+      body: JSON.stringify({ reason })
+    });
+  }
+
+  async feedRuns(limit = 50): Promise<FeedRun[]> {
+    return asArray(await this.request<FeedRun[] | null>(`/v1/feed-runs?limit=${encodeURIComponent(String(limit))}`));
+  }
+
+  async feedConflicts(): Promise<FeedConflict[]> {
+    return asArray(await this.request<FeedConflict[] | null>('/v1/feed-conflicts'));
+  }
+
   async snapshots(includeSnapshot = false): Promise<SnapshotMetadata[]> {
     return asArray(await this.request<SnapshotMetadata[] | null>(`/v1/snapshots?include_snapshot=${includeSnapshot ? 'true' : 'false'}`));
   }
@@ -346,6 +401,7 @@ function blacklistFilterQuery(filters: BlacklistFilters): string {
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();
@@ -358,6 +414,7 @@ function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   params.set('page', String(page));

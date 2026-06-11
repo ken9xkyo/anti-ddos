@@ -545,8 +545,8 @@ SELECT false, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
 FROM reputation_entries r
 JOIN feed_sources fs ON fs.id = r.source_id
 WHERE fs.enabled
-  AND fs.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
-  AND r.owner_user_id = fs.owner_user_id
+  AND fs.owner_user_id IS NULL
+  AND r.owner_user_id IS NULL
   AND r.status = 'active'
   AND r.action = 'drop'
   AND (r.expires_at IS NULL OR r.expires_at > now())

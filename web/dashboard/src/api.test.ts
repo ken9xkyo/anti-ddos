@@ -60,7 +60,7 @@ describe('ApiClient', () => {
     expect(localStorage.getItem('anti_ddos_token')).toBe('view-token');
   });
 
-  it('loads dashboard data without tenant or threat-feed endpoints', async () => {
+  it('loads user dashboard data without tenant or threat-feed endpoints', async () => {
     const data = dashboardFixture();
     const responses = dashboardResponses(data);
     const seen: string[] = [];
@@ -75,13 +75,39 @@ describe('ApiClient', () => {
 
     const client = new ApiClient();
     client.setToken('token-user');
-    const loaded = await client.dashboard();
+    const loaded = await client.dashboard(normalUser);
 
     expect(loaded.overview.traffic.pps).toBe(1200);
     expect(loaded.alerts[0].type).toBe('isp_escalation_needed');
     expect(seen.sort()).toEqual(Object.keys(responses).sort());
     expect(seen.some((path) => path.includes('/v1/tenants'))).toBe(false);
     expect(seen.some((path) => path.includes('/v1/feed-'))).toBe(false);
+  });
+
+  it('loads feed dashboard data for normal admin sessions only', async () => {
+    const data = dashboardFixture();
+    data.feedSources = [{ id: 'f1', name: 'global-feed', type: 'internal_json', required_for_production: false, enabled: true, interval_seconds: 3600, status: 'healthy', active_entries: 1, conflict_count: 0, parse_error_count: 0 }];
+    data.feedRuns = [{ id: 'run1', source_id: 'f1', source_name: 'global-feed', started_at: '2026-05-28T11:00:00Z', status: 'success', items_fetched: 1, items_valid: 1, parse_errors: 0 }];
+    data.feedConflicts = [];
+    const responses = dashboardResponses(data, true);
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = input.toString();
+      seen.push(path);
+      if (!(path in responses)) {
+        throw new Error(`unexpected request ${path}`);
+      }
+      return jsonResponse(responses[path]);
+    }));
+
+    const client = new ApiClient();
+    client.setToken('admin-token');
+    const loaded = await client.dashboard(adminUser);
+
+    expect(loaded.feedSources[0].name).toBe('global-feed');
+    expect(seen).toContain('/v1/feed-sources');
+    expect(seen).toContain('/v1/feed-runs?limit=50');
+    expect(seen).toContain('/v1/feed-conflicts');
   });
 
   it('normalizes null dashboard lists to empty arrays', async () => {
@@ -112,7 +138,7 @@ describe('ApiClient', () => {
 
     const client = new ApiClient();
     client.setToken('token-user');
-    const loaded = await client.dashboard();
+    const loaded = await client.dashboard(normalUser);
 
     expect(loaded.overview.security_events.top_sources).toEqual([]);
     expect(loaded.overview.latest_apply_status).toEqual([]);
@@ -123,8 +149,8 @@ describe('ApiClient', () => {
   });
 });
 
-function dashboardResponses(value: DashboardData): Record<string, unknown> {
-  return {
+function dashboardResponses(value: DashboardData, includeFeed = false): Record<string, unknown> {
+  const responses: Record<string, unknown> = {
     '/v1/dashboard/overview': value.overview,
     '/v1/dashboard/agents': value.agents,
     '/v1/dashboard/services': value.services,
@@ -135,4 +161,10 @@ function dashboardResponses(value: DashboardData): Record<string, unknown> {
     '/v1/telegram/config': value.telegramConfig,
     '/v1/alerts?limit=30': value.alerts
   };
+  if (includeFeed) {
+    responses['/v1/feed-sources'] = value.feedSources;
+    responses['/v1/feed-runs?limit=50'] = value.feedRuns;
+    responses['/v1/feed-conflicts'] = value.feedConflicts;
+  }
+  return responses;
 }

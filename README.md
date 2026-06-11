@@ -64,7 +64,7 @@ Sau migration, control-plane chỉ còn 2 role public:
 - `user`: quản lý config vận hành của chính mình gồm Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Baselines/Anomalies, Agents/Events/Alerts và Telegram Channel.
 - Admin khi đang xem config user chỉ đọc dữ liệu; mọi mutation config trả `403`.
 - Dữ liệu nghiệp vụ được gắn `owner_user_id`; query isolation dùng owner filter ở application layer.
-- `/v1/tenants*`, tenant switcher, `platform_role`, `operator` và `viewer` đã retired. Threat Feed/Reputation không còn là dashboard/API user-facing trong scope này.
+- `/v1/tenants*`, tenant switcher, `platform_role`, `operator` và `viewer` đã retired. Threat Feed/Reputation là admin-only global; user chỉ thấy feed-origin blacklist rows ở chế độ read-only.
 
 ## Quy trình Dev/Test/Deploy
 

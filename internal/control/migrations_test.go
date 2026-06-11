@@ -63,6 +63,35 @@ VALUES
 	}
 }
 
+func TestGlobalFeedMigrationAllowsNullOwners(t *testing.T) {
+	ctx, pool, _ := resetControlTestDB(t)
+	wantNullable := map[string]string{
+		"feed_sources":       "YES",
+		"feed_runs":          "YES",
+		"reputation_entries": "YES",
+		"feed_conflicts":     "NO",
+	}
+	for table, want := range wantNullable {
+		var nullable string
+		if err := pool.QueryRow(ctx, `SELECT is_nullable FROM information_schema.columns
+WHERE table_schema='public' AND table_name=$1 AND column_name='owner_user_id'`, table).Scan(&nullable); err != nil {
+			t.Fatal(err)
+		}
+		if nullable != want {
+			t.Fatalf("%s.owner_user_id nullable=%s, want %s", table, nullable, want)
+		}
+	}
+	var hasGlobalNameIndex bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (
+SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='feed_sources_global_name_unique_idx'
+)`).Scan(&hasGlobalNameIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !hasGlobalNameIndex {
+		t.Fatal("missing feed_sources_global_name_unique_idx")
+	}
+}
+
 func runMigrationsThrough(ctx context.Context, pool *pgxpool.Pool, maxVersion int) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {

@@ -1026,6 +1026,22 @@ CREATE INDEX IF NOT EXISTS alert_deliveries_owner_idx ON alert_deliveries(owner_
 CREATE INDEX IF NOT EXISTS audit_events_owner_idx ON audit_events(owner_user_id, created_at DESC);
 	`,
 	},
+	{
+		Version: 10,
+		Name:    "global_admin_threat_feed",
+		SQL: `
+ALTER TABLE feed_sources ALTER COLUMN owner_user_id DROP NOT NULL;
+ALTER TABLE feed_runs ALTER COLUMN owner_user_id DROP NOT NULL;
+ALTER TABLE reputation_entries ALTER COLUMN owner_user_id DROP NOT NULL;
+
+DROP INDEX IF EXISTS feed_sources_owner_name_unique_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS feed_sources_global_name_unique_idx ON feed_sources(LOWER(name)) WHERE owner_user_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS feed_sources_global_enabled_idx ON feed_sources(enabled, next_run_at) WHERE owner_user_id IS NULL;
+CREATE INDEX IF NOT EXISTS feed_runs_global_started_idx ON feed_runs(source_id, started_at DESC) WHERE owner_user_id IS NULL;
+CREATE INDEX IF NOT EXISTS reputation_entries_global_source_status_idx ON reputation_entries(source_id, status) WHERE owner_user_id IS NULL;
+	`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

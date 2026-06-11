@@ -861,9 +861,9 @@ func parseBlacklistEntriesQuery(values map[string][]string) (BlacklistEntriesQue
 		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
 	}
 	switch query.Origin {
-	case "all", "manual":
+	case "all", "manual", "feed":
 	default:
-		return query, fmt.Errorf("origin must be all or manual")
+		return query, fmt.Errorf("origin must be all, manual, or feed")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -978,6 +978,8 @@ func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
 	switch blacklistQueryValue(query.Origin, "all") {
 	case "manual":
 		clauses = append(clauses, "c.origin = 'manual'")
+	case "feed":
+		clauses = append(clauses, "c.origin = 'feed'")
 	}
 	switch blacklistQueryValue(query.State, "all") {
 	case "enabled":
@@ -1021,6 +1023,28 @@ SELECT b.id::text AS id,
        COALESCE(r.name, '') AS rule_name
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
+UNION ALL
+SELECT re.id::text AS id,
+       re.ebpf_id AS ebpf_id,
+       re.ip_or_cidr::text AS cidr,
+       re.score AS score,
+       re.action AS action,
+       fs.type AS source,
+       fs.name AS source_name,
+       ''::text AS rule_id,
+       re.reason AS reason,
+       re.expires_at AS expires_at,
+       (fs.enabled AND re.status = 'active' AND (re.expires_at IS NULL OR re.expires_at > now())) AS enabled,
+       re.status AS status,
+       'feed'::text AS origin,
+       false AS editable,
+       re.created_at AS created_at,
+       re.last_seen_at AS updated_at,
+       NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid AS owner_user_id,
+       ''::text AS rule_name
+FROM reputation_entries re
+JOIN feed_sources fs ON fs.id = re.source_id
+WHERE fs.owner_user_id IS NULL AND re.owner_user_id IS NULL
 )`
 }
 
@@ -1221,11 +1245,8 @@ func scanUDPSourcePortBlock(row rowScanner, entry *UDPSourcePortBlock) error {
 }
 
 func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSourceInput, reason string) (FeedSource, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		return FeedSource{}, err
-	}
-	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, false) {
-		return FeedSource{}, errors.New("admin role required for feed credential changes")
 	}
 	if err := validateFeedSourceInput(input); err != nil {
 		return FeedSource{}, err
@@ -1241,7 +1262,7 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	enabled := boolDefault(input.Enabled, false)
 	quota := defaultJSON(input.QuotaMetadata)
 	credentialRef := feedCredentialForCreate(input.CredentialRef)
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -1249,10 +1270,9 @@ func (s *Store) CreateFeedSource(ctx context.Context, actor *Actor, input FeedSo
 	var source FeedSource
 	err = scanFeedSource(tx.QueryRow(ctx, `INSERT INTO feed_sources(
     id, owner_user_id, name, type, url, credential_ref, required_for_production, enabled, interval_seconds, license_note, quota_metadata, status
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING `+feedSourceColumns(),
 		id,
-		actorOwnerUserID(actor),
 		input.Name,
 		normalizeFeedType(input.Type),
 		input.URL,
@@ -1274,12 +1294,12 @@ RETURNING `+feedSourceColumns(),
 }
 
 func (s *Store) ListFeedSources(ctx context.Context) ([]FeedSource, error) {
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, feedSourceSelectSQL()+` ORDER BY name`)
+	rows, err := tx.Query(ctx, feedSourceSelectSQL()+` WHERE owner_user_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

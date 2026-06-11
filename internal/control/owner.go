@@ -141,6 +141,16 @@ func requireAdmin(actor *Actor) error {
 	return nil
 }
 
+func requireGlobalFeedAdmin(actor *Actor) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if actor.ReadOnly || actor.ViewingUser != nil {
+		return authorizationError("normal admin session required")
+	}
+	return nil
+}
+
 func validUserRole(role string) bool {
 	return role == RoleAdmin || role == RoleUser
 }
@@ -230,11 +240,14 @@ func (s *Store) ownerContextForFeedSource(ctx context.Context, sourceID string) 
 	}
 	defer tx.Rollback(ctx)
 	var ownerUserID string
-	if err := tx.QueryRow(ctx, `SELECT owner_user_id::text FROM feed_sources WHERE id=$1`, sourceID).Scan(&ownerUserID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(owner_user_id::text, '') FROM feed_sources WHERE id=$1`, sourceID).Scan(&ownerUserID); err != nil {
 		return ctx, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ctx, err
+	}
+	if ownerUserID == "" {
+		return ctx, nil
 	}
 	return contextWithOwner(ctx, ownerUserID), nil
 }

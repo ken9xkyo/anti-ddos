@@ -12,14 +12,14 @@ Dashboard chi con hai role public: `admin` va `user`.
 | Group | Trang |
 |---|---|
 | Operation | Dashboard, Incidents, Detections, Events |
-| Configuration | Services, Rules, Whitelist, Blacklist, UDP Ports |
+| Configuration | Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports |
 | Setting | Snapshots, Accounts, Nodes |
 
-`Accounts` chi hien voi admin. `Tenants` va `Reputation` da retired.
+`Accounts` chi hien voi admin. `Reputation` chi hien voi admin normal session de quan ly global threat feeds. `Tenants` da retired.
 
 ## Data loading
 
-Sau khi dang nhap, dashboard goi cac endpoint owner-scoped de lay overview, agents, services, rules, security events, baselines, anomalies, Telegram config va alerts. Dashboard khong goi `/v1/tenants*` hoac `/v1/feed-*`.
+Sau khi dang nhap, dashboard goi cac endpoint owner-scoped de lay overview, agents, services, rules, security events, baselines, anomalies, Telegram config va alerts. Admin normal session goi them `/v1/feed-*`; user va admin view-user context khong goi feed endpoints. Dashboard khong goi `/v1/tenants*`.
 
 ## Safety
 

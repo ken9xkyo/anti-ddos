@@ -63,6 +63,15 @@ describe('DashboardShell RBAC', () => {
     expect(screen.queryByLabelText('tenant')).not.toBeInTheDocument();
   });
 
+  it('shows Reputation navigation only for normal admins', () => {
+    const { unmount } = renderShell(adminUser);
+    expect(screen.getByRole('button', { name: 'Reputation' })).toBeInTheDocument();
+
+    unmount();
+    renderShell({ ...adminUser, viewing_user: { id: normalUser.id, username: normalUser.username }, read_only: true });
+    expect(screen.queryByRole('button', { name: 'Reputation' })).not.toBeInTheDocument();
+  });
+
   it('allows users to mutate config and keeps admin view-user sessions read-only', () => {
     const viewingUser: User = {
       ...adminUser,

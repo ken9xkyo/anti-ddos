@@ -46,7 +46,8 @@ Heartbeat, snapshot, apply và events resolve owner từ `agent_id` sau khi regi
 - Accounts có `View config` để admin mở dashboard read-only của user.
 - User thấy đầy đủ controls mutation config/Telegram của chính mình.
 - Admin trong view-user context chỉ thấy dữ liệu và không thấy/nút mutation config.
-- Threat Feed/Reputation không còn navigation hoặc API user-facing trong scope này.
+- `Reputation` chỉ hiện với admin normal session, không hiện với user hoặc admin view-user context.
+- Threat Feed/Reputation là global admin-only: admin quản lý feed sources/runs/conflicts; user không gọi feed endpoints nhưng thấy feed-origin rows trong Blacklist ở chế độ read-only.
 
 ## Verification
 

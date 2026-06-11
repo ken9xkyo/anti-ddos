@@ -149,6 +149,9 @@ export function dashboardFixture(): DashboardData {
       status: 'sent',
       created_at: now,
       deliveries: [{ id: 'd1', alert_id: 'al1', channel: 'telegram', status: 'sent', attempt: 1, created_at: now }]
-    }]
+    }],
+    feedSources: [],
+    feedRuns: [],
+    feedConflicts: []
   };
 }

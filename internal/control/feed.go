@@ -58,39 +58,38 @@ type internalFeedItem struct {
 }
 
 type feedWhitelist struct {
-	ID     string
-	Prefix netip.Prefix
+	ID          string
+	OwnerUserID string
+	Prefix      netip.Prefix
 }
 
 type conflictMatch struct {
 	WhitelistID string
+	OwnerUserID string
 }
 
 func (s *Store) SyncDueFeeds(ctx context.Context) (int, error) {
-	tx, err := s.beginContextOrUnscopedTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id::text, owner_user_id::text FROM feed_sources
+	rows, err := tx.Query(ctx, `SELECT id::text FROM feed_sources
 WHERE enabled
+  AND owner_user_id IS NULL
   AND (next_run_at IS NULL OR next_run_at <= now())
 ORDER BY COALESCE(next_run_at, now()), name`)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
-	type dueFeed struct {
-		id          string
-		ownerUserID string
-	}
-	var feeds []dueFeed
+	feeds := make([]string, 0)
 	for rows.Next() {
-		var feed dueFeed
-		if err := rows.Scan(&feed.id, &feed.ownerUserID); err != nil {
+		var feedID string
+		if err := rows.Scan(&feedID); err != nil {
 			return 0, err
 		}
-		feeds = append(feeds, feed)
+		feeds = append(feeds, feedID)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
@@ -99,9 +98,8 @@ ORDER BY COALESCE(next_run_at, now()), name`)
 		return 0, err
 	}
 	var joined error
-	for _, feed := range feeds {
-		feedCtx := contextWithOwner(ctx, feed.ownerUserID)
-		if _, err := s.SyncFeedSource(feedCtx, feed.id, nil, "scheduled feed sync"); err != nil {
+	for _, feedID := range feeds {
+		if _, err := s.SyncFeedSource(ctx, feedID, nil, "scheduled feed sync"); err != nil {
 			joined = errors.Join(joined, err)
 		}
 	}
@@ -119,17 +117,6 @@ func (s *Store) SyncFeedSource(ctx context.Context, sourceID string, actor *Acto
 	}
 	defer lock.Unlock()
 
-	if ownerUserIDFromContext(ctx) == "" {
-		if ownerUserIDFromActor := actorOwnerUserID(actor); ownerUserIDFromActor != "" {
-			ctx = contextWithOwner(ctx, ownerUserIDFromActor)
-		} else {
-			var err error
-			ctx, err = s.ownerContextForFeedSource(ctx, sourceID)
-			if err != nil {
-				return FeedRun{}, err
-			}
-		}
-	}
 	source, err := s.GetFeedSource(ctx, sourceID)
 	if err != nil {
 		return FeedRun{}, err
@@ -432,12 +419,12 @@ func aggregateFeedEntries(entries []normalizedFeedEntry, whitelist []feedWhiteli
 }
 
 func (s *Store) replaceFeedEntries(ctx context.Context, source FeedSource, entries []normalizedFeedEntry, whitelist []feedWhitelist, actor *Actor, reason string) (uint32, error) {
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE reputation_entries SET status='inactive', last_seen_at=now() WHERE source_id=$1`, source.ID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE reputation_entries SET status='inactive', last_seen_at=now() WHERE source_id=$1 AND owner_user_id IS NULL`, source.ID); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE feed_conflicts SET status='resolved', resolved_at=now() WHERE source_id=$1 AND status='active'`, source.ID); err != nil {
@@ -446,13 +433,10 @@ func (s *Store) replaceFeedEntries(ctx context.Context, source FeedSource, entri
 	var activeEntries, conflicts uint32
 	for _, entry := range entries {
 		matches := matchingWhitelists(entry.CIDR, whitelist)
-		status := "active"
 		if len(matches) > 0 {
-			status = "suppressed"
 			conflicts += uint32(len(matches))
-		} else {
-			activeEntries++
 		}
+		activeEntries++
 		var expires any
 		if entry.TTLSeconds > 0 {
 			expires = time.Now().UTC().Add(time.Duration(entry.TTLSeconds) * time.Second)
@@ -463,7 +447,7 @@ func (s *Store) replaceFeedEntries(ctx context.Context, source FeedSource, entri
 		}
 		var reputationID string
 		err = tx.QueryRow(ctx, `INSERT INTO reputation_entries(id, owner_user_id, source_id, ip_or_cidr, score, action, reason, ttl_seconds, expires_at, status, metadata)
-VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10)
+VALUES ($1, NULL, $2,$3,$4,$5,$6,$7,$8,'active',$9)
 ON CONFLICT (source_id, ip_or_cidr, action, score, ttl_seconds) DO UPDATE SET
     reason=EXCLUDED.reason,
     expires_at=EXCLUDED.expires_at,
@@ -471,7 +455,7 @@ ON CONFLICT (source_id, ip_or_cidr, action, score, ttl_seconds) DO UPDATE SET
     metadata=EXCLUDED.metadata,
     last_seen_at=now()
 RETURNING id::text`,
-			entryID, source.ID, entry.CIDR.String(), entry.Score, entry.Action, entry.Reason, entry.TTLSeconds, expires, status, defaultJSON(entry.Metadata),
+			entryID, source.ID, entry.CIDR.String(), entry.Score, entry.Action, entry.Reason, entry.TTLSeconds, expires, defaultJSON(entry.Metadata),
 		).Scan(&reputationID)
 		if err != nil {
 			return 0, err
@@ -482,9 +466,9 @@ RETURNING id::text`,
 				return 0, err
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO feed_conflicts(id, owner_user_id, source_id, reputation_id, whitelist_id, status)
-VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,'active')
+VALUES ($1, $2, $3,$4,$5,'active')
 ON CONFLICT (reputation_id, whitelist_id) DO UPDATE SET status='active', resolved_at=NULL, detected_at=now()`,
-				conflictID, source.ID, reputationID, match.WhitelistID,
+				conflictID, match.OwnerUserID, source.ID, reputationID, match.WhitelistID,
 			); err != nil {
 				return 0, err
 			}
@@ -492,21 +476,40 @@ ON CONFLICT (reputation_id, whitelist_id) DO UPDATE SET status='active', resolve
 	}
 	nextRun := time.Now().UTC().Add(time.Duration(effectiveFeedIntervalSeconds(source)) * time.Second)
 	if _, err := tx.Exec(ctx, `UPDATE feed_sources SET status=$2, active_entries=$3, conflict_count=$4, next_run_at=$5, updated_at=now()
-WHERE id=$1`, source.ID, feedStatusHealthy, activeEntries, conflicts, nextRun); err != nil {
+WHERE id=$1 AND owner_user_id IS NULL`, source.ID, feedStatusHealthy, activeEntries, conflicts, nextRun); err != nil {
 		return 0, err
-	}
-	meta, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, mutationReason("", reason))
-	if err != nil {
-		return 0, err
-	}
-	version := uint32(0)
-	if meta != nil {
-		version = meta.Version
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return version, nil
+	return s.rebuildAllActiveUserSnapshots(ctx, actor, mutationReason("", reason))
+}
+
+func (s *Store) rebuildAllActiveUserSnapshots(ctx context.Context, actor *Actor, reason string) (uint32, error) {
+	ownerIDs, err := s.activeOwnerUserIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var maxVersion uint32
+	for _, ownerID := range ownerIDs {
+		ownerCtx := contextWithOwner(ctx, ownerID)
+		tx, err := s.beginOwnerTx(ownerCtx, ownerID)
+		if err != nil {
+			return 0, err
+		}
+		meta, rebuildErr := s.rebuildSnapshotInTx(ownerCtx, tx, actor, nil, reason)
+		if rebuildErr != nil {
+			_ = tx.Rollback(ctx)
+			return 0, rebuildErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, err
+		}
+		if meta != nil && meta.Version > maxVersion {
+			maxVersion = meta.Version
+		}
+	}
+	return maxVersion, nil
 }
 
 func (s *Store) startFeedRun(ctx context.Context, sourceID string) (FeedRun, error) {
@@ -515,13 +518,13 @@ func (s *Store) startFeedRun(ctx context.Context, sourceID string) (FeedRun, err
 		return FeedRun{}, err
 	}
 	var run FeedRun
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return FeedRun{}, err
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `INSERT INTO feed_runs(id, owner_user_id, source_id, status)
-VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,'running')
+VALUES ($1, NULL, $2,'running')
 RETURNING id::text, source_id::text, started_at, finished_at, status, items_fetched, items_valid, parse_errors, error, snapshot_version`,
 		id, sourceID,
 	).Scan(&run.ID, &run.SourceID, &run.StartedAt, &run.FinishedAt, &run.Status, &run.ItemsFetched, &run.ItemsValid, &run.ParseErrors, &run.Error, &run.SnapshotVersion)
@@ -545,7 +548,7 @@ func (s *Store) finishFeedRun(ctx context.Context, source FeedSource, runID stri
 		status = "error"
 		errText = agentRedactedError(runErr)
 	}
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return FeedRun{}, err
 	}
@@ -564,11 +567,11 @@ RETURNING id::text, source_id::text, started_at, finished_at, status, items_fetc
 	if runErr != nil {
 		_, err = tx.Exec(ctx, `UPDATE feed_sources
 SET status=$2, last_error_at=now(), last_error=$3, parse_error_count=$4, next_run_at=$5, updated_at=now()
-WHERE id=$1`, source.ID, feedStatusError, errText, parseErrors, nextRun)
+WHERE id=$1 AND owner_user_id IS NULL`, source.ID, feedStatusError, errText, parseErrors, nextRun)
 	} else {
 		_, err = tx.Exec(ctx, `UPDATE feed_sources
 SET status=$2, last_success_at=now(), last_error='', parse_error_count=$3, next_run_at=$4, updated_at=now()
-WHERE id=$1`, source.ID, feedStatusHealthy, parseErrors, nextRun)
+WHERE id=$1 AND owner_user_id IS NULL`, source.ID, feedStatusHealthy, parseErrors, nextRun)
 	}
 	if err != nil {
 		return FeedRun{}, err
@@ -580,7 +583,23 @@ WHERE id=$1`, source.ID, feedStatusHealthy, parseErrors, nextRun)
 		if s.metrics != nil {
 			s.metrics.feedSyncErrors.WithLabelValues(boundedMetricValue(source.Name), "sync").Inc()
 		}
-		_, alertErr := s.CreateSystemAlert(ctx, AlertInput{
+		s.createGlobalFeedFailureAlerts(ctx, source, errText)
+		return run, runErr
+	}
+	if s.metrics != nil {
+		s.metrics.feedSyncSuccess.WithLabelValues(boundedMetricValue(source.Name)).Inc()
+	}
+	return run, nil
+}
+
+func (s *Store) createGlobalFeedFailureAlerts(ctx context.Context, source FeedSource, errText string) {
+	ownerIDs, err := s.activeOwnerUserIDs(ctx)
+	if err != nil {
+		s.logger.Warn("feed failure alert owner lookup failed", "source_id", source.ID, "error", agentRedactedError(err))
+		return
+	}
+	for _, ownerID := range ownerIDs {
+		_, alertErr := s.CreateSystemAlert(contextWithOwner(ctx, ownerID), AlertInput{
 			Severity:          "warning",
 			Type:              "feed_failure",
 			DedupeKey:         "feed_failure:" + source.ID,
@@ -590,24 +609,19 @@ WHERE id=$1`, source.ID, feedStatusHealthy, parseErrors, nextRun)
 			RecommendedAction: "check feed source connectivity and credentials; last valid entries remain active",
 		})
 		if alertErr != nil {
-			s.logger.Warn("feed failure alert creation failed", "source_id", source.ID, "error", agentRedactedError(alertErr))
+			s.logger.Warn("feed failure alert creation failed", "source_id", source.ID, "owner_user_id", ownerID, "error", agentRedactedError(alertErr))
 		}
-		return run, runErr
 	}
-	if s.metrics != nil {
-		s.metrics.feedSyncSuccess.WithLabelValues(boundedMetricValue(source.Name)).Inc()
-	}
-	return run, nil
 }
 
 func (s *Store) GetFeedSource(ctx context.Context, id string) (FeedSource, error) {
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return FeedSource{}, err
 	}
 	defer tx.Rollback(ctx)
 	var source FeedSource
-	err = scanFeedSource(tx.QueryRow(ctx, feedSourceSelectSQL()+` WHERE id=$1`, strings.TrimSpace(id)), &source)
+	err = scanFeedSource(tx.QueryRow(ctx, feedSourceSelectSQL()+` WHERE id=$1 AND owner_user_id IS NULL`, strings.TrimSpace(id)), &source)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -618,17 +632,11 @@ func (s *Store) GetFeedSource(ctx context.Context, id string) (FeedSource, error
 }
 
 func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, input FeedSourceInput, reason string) (FeedSource, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		return FeedSource{}, err
-	}
-	if actor.Role != RoleAdmin && feedCredentialChangeRequiresAdmin(input.CredentialRef, true) {
-		return FeedSource{}, errors.New("admin role required for feed credential changes")
 	}
 	if err := validateFeedSourceInput(input); err != nil {
 		return FeedSource{}, err
-	}
-	if ownerUserID := actorOwnerUserID(actor); ownerUserID != "" {
-		ctx = contextWithOwner(ctx, ownerUserID)
 	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
@@ -648,7 +656,7 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 		interval = before.IntervalSeconds
 	}
 	nextRun := time.Now().UTC().Add(time.Duration(effectiveFeedIntervalSeconds(FeedSource{Type: input.Type, IntervalSeconds: interval})) * time.Second)
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return FeedSource{}, err
 	}
@@ -657,11 +665,11 @@ func (s *Store) UpdateFeedSource(ctx context.Context, actor *Actor, id string, i
 	err = scanFeedSource(tx.QueryRow(ctx, `UPDATE feed_sources SET
     name=$2, type=$3, url=$4, credential_ref=$5, required_for_production=$6, enabled=$7,
     interval_seconds=$8, license_note=$9, quota_metadata=$10, status=$11, next_run_at=$12, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id IS NULL
 RETURNING `+feedSourceColumns(),
 		id,
 		input.Name,
-		input.Type,
+		normalizeFeedType(input.Type),
 		input.URL,
 		credentialRef,
 		input.RequiredForProduction,
@@ -678,19 +686,22 @@ RETURNING `+feedSourceColumns(),
 	if err := insertAudit(ctx, tx, actor, "update_feed_source", "feed_source", source.ID, maskFeedSourceCredential(before), maskFeedSourceCredential(source), reason, ""); err != nil {
 		return FeedSource{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return FeedSource{}, err
+	}
 	if before.Enabled != source.Enabled {
-		if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+		if _, err := s.rebuildAllActiveUserSnapshots(ctx, actor, reason); err != nil {
 			return FeedSource{}, err
 		}
 	}
-	return source, tx.Commit(ctx)
+	return source, nil
 }
 
 func (s *Store) ListFeedRuns(ctx context.Context, limit int) ([]FeedRun, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -699,6 +710,7 @@ func (s *Store) ListFeedRuns(ctx context.Context, limit int) ([]FeedRun, error) 
        r.items_fetched, r.items_valid, r.parse_errors, r.error, r.snapshot_version
 FROM feed_runs r
 JOIN feed_sources fs ON fs.id = r.source_id
+WHERE r.owner_user_id IS NULL AND fs.owner_user_id IS NULL
 ORDER BY r.started_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -720,7 +732,7 @@ LIMIT $1`, limit)
 }
 
 func (s *Store) ListFeedConflicts(ctx context.Context) ([]FeedConflict, error) {
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -732,6 +744,8 @@ JOIN feed_sources fs ON fs.id = c.source_id
 JOIN reputation_entries r ON r.id = c.reputation_id
 JOIN whitelist_entries w ON w.id = c.whitelist_id
 WHERE c.status = 'active'
+  AND fs.owner_user_id IS NULL
+  AND r.owner_user_id IS NULL
 ORDER BY c.detected_at DESC`)
 	if err != nil {
 		return nil, err
@@ -752,12 +766,12 @@ ORDER BY c.detected_at DESC`)
 }
 
 func (s *Store) loadFeedWhitelist(ctx context.Context) ([]feedWhitelist, error) {
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id::text, ip_or_cidr::text FROM whitelist_entries
+	rows, err := tx.Query(ctx, `SELECT id::text, owner_user_id::text, ip_or_cidr::text FROM whitelist_entries
 WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 	if err != nil {
 		return nil, err
@@ -767,7 +781,7 @@ WHERE enabled AND (expires_at IS NULL OR expires_at > now())`)
 	for rows.Next() {
 		var item feedWhitelist
 		var raw string
-		if err := rows.Scan(&item.ID, &raw); err != nil {
+		if err := rows.Scan(&item.ID, &item.OwnerUserID, &raw); err != nil {
 			return nil, err
 		}
 		prefix, err := parseCIDR(raw)
@@ -787,7 +801,7 @@ func matchingWhitelists(prefix netip.Prefix, whitelist []feedWhitelist) []confli
 	out := make([]conflictMatch, 0)
 	for _, item := range whitelist {
 		if prefixesOverlap(prefix, item.Prefix) {
-			out = append(out, conflictMatch{WhitelistID: item.ID})
+			out = append(out, conflictMatch{WhitelistID: item.ID, OwnerUserID: item.OwnerUserID})
 		}
 	}
 	return out

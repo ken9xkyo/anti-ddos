@@ -6,12 +6,13 @@ Tat ca user dang nhap bang `username` va `password`. Response user chi co role `
 
 - Sidebar gom `Operation`, `Configuration` va `Setting`.
 - `Operation`: Dashboard, Incidents, Detections, Events.
-- `Configuration`: Services, Rules, Whitelist, Blacklist, UDP Ports.
+- `Configuration`: Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports.
 - `Setting`: Snapshots, Accounts, Nodes.
 - `Accounts` chi hien voi admin.
+- `Reputation` chi hien voi admin normal session.
 - Topbar hien `username · role`; khi admin xem config user, topbar hien them `viewing <username> · read only`.
 
-Dashboard polling khong goi tenant hoac feed endpoints.
+Dashboard polling khong goi tenant endpoints. Chi admin normal session goi feed endpoints; user va admin view-user context khong goi `/v1/feed-*`.
 
 ## Read-only context
 

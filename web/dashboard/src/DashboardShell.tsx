@@ -17,6 +17,7 @@ import { InvestigationView } from './views/InvestigationView';
 import { RulesAdminView } from './views/RulesAdminView';
 import { WhitelistAdminView } from './views/WhitelistAdminView';
 import { BlacklistAdminView } from './views/BlacklistAdminView';
+import { ReputationView } from './views/ReputationView';
 import { UDPPortsAdminView } from './views/UDPPortsAdminView';
 import { SnapshotsView } from './views/SnapshotsView';
 import { AccessView } from './views/AccessView';
@@ -47,10 +48,15 @@ export function DashboardShell({
 }) {
   const canMutate = user.role === 'user' && !user.read_only;
   const isAdmin = user.role === 'admin';
+  const canManageReputation = isAdmin && !user.read_only && !user.viewing_user;
   const visibleNavGroups = useMemo(() => navGroups.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.id !== 'access' || isAdmin)
-  })).filter((group) => group.items.length > 0), [isAdmin]);
+    items: group.items.filter((item) => {
+      if (item.id === 'access') return isAdmin;
+      if (item.id === 'reputation') return canManageReputation;
+      return true;
+    })
+  })).filter((group) => group.items.length > 0), [canManageReputation, isAdmin]);
   const stale = useMemo(() => {
     if (!lastRefresh) return true;
     return Date.now() - new Date(lastRefresh).getTime() > 6000;
@@ -124,6 +130,15 @@ export function DashboardShell({
         {data && activeTab === 'rules' ? <RulesAdminView services={data.services} canMutate={canMutate} /> : null}
         {data && activeTab === 'whitelist' ? <WhitelistAdminView services={data.services} canMutate={canMutate} /> : null}
         {data && activeTab === 'blacklist' ? <BlacklistAdminView canMutate={canMutate} /> : null}
+        {data && activeTab === 'reputation' && canManageReputation ? (
+          <ReputationView
+            sources={data.feedSources}
+            runs={data.feedRuns}
+            conflicts={data.feedConflicts}
+            canMutate={canManageReputation}
+            onRefresh={onRefresh}
+          />
+        ) : null}
         {data && activeTab === 'udpPorts' ? <UDPPortsAdminView canMutate={canMutate} /> : null}
         {data && activeTab === 'detection' ? <DetectionView anomalies={data.anomalies} baselines={data.baselines} rules={data.rules} /> : null}
         {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}

@@ -566,35 +566,40 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 }
 
 func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason string) (FeedSource, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		return FeedSource{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return FeedSource{}, errors.New("reason is required")
 	}
-	tx, err := s.beginActorOwnerTx(ctx, actor)
-	if err != nil {
-		return FeedSource{}, err
-	}
-	defer tx.Rollback(ctx)
 	before, err := s.GetFeedSource(ctx, id)
 	if err != nil {
 		return FeedSource{}, err
 	}
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return FeedSource{}, err
+	}
+	defer tx.Rollback(ctx)
 	var source FeedSource
 	if err := scanFeedSource(tx.QueryRow(ctx, `UPDATE feed_sources
 SET enabled=false, status='disabled', next_run_at=NULL, updated_at=now()
-WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+WHERE id=$1 AND owner_user_id IS NULL
 RETURNING `+feedSourceColumns(), id), &source); err != nil {
 		return FeedSource{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_feed_source", "feed_source", id, maskFeedSourceCredential(before), maskFeedSourceCredential(source), strings.TrimSpace(reason), ""); err != nil {
 		return FeedSource{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return FeedSource{}, err
 	}
-	return source, tx.Commit(ctx)
+	if before.Enabled {
+		if _, err := s.rebuildAllActiveUserSnapshots(ctx, actor, strings.TrimSpace(reason)); err != nil {
+			return FeedSource{}, err
+		}
+	}
+	return source, nil
 }
 
 func validateUserRoleStatus(role, status string) error {

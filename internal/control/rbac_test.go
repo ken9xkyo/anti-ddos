@@ -71,8 +71,12 @@ func TestAdminUserRBACNoTenant(t *testing.T) {
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", adminToken, map[string]string{"slug": "customer-a"})
 	requireHTTPStatus(t, resp, http.StatusNotFound)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, map[string]string{"name": "legacy-feed"})
-	requireHTTPStatus(t, resp, http.StatusNotFound)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/feed-sources", adminToken, nil)
+	requireHTTPStatus(t, resp, http.StatusOK)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/feed-sources", userToken, nil)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/feed-sources", viewSession.Token, nil)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
 
 	audits, err := store.ListAuditEvents(ownerCtx, 100)
 	if err != nil {

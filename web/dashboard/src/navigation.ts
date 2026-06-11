@@ -5,6 +5,7 @@ import {
   DatabaseBackup,
   Gauge,
   ListChecks,
+  RadioTower,
   Router,
   Search,
   Server,
@@ -29,6 +30,7 @@ export const navGroups = [
       { id: 'rules', label: 'Rules', icon: ListChecks },
       { id: 'whitelist', label: 'Whitelist', icon: ShieldCheck },
       { id: 'blacklist', label: 'Blacklist', icon: Ban },
+      { id: 'reputation', label: 'Reputation', icon: RadioTower },
       { id: 'udpPorts', label: 'UDP Ports', icon: Ban }
     ]
   },

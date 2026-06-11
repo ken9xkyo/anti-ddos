@@ -20,7 +20,7 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 - Auth agent dung `Authorization: Bearer <agent_shared_token>` neu `AgentSharedToken` duoc cau hinh. Neu token nay rong, agent endpoints khong bi chan boi shared token.
 - User session khong con tenant. Operational data duoc co lap bang owner context `owner_user_id`: user thay/mutate data cua chinh minh; admin view-user chi doc data cua target user.
 - Mutation reason lay tu body `reason` truoc, fallback sang header `X-Audit-Reason`.
-- Nhieu store error duoc map thanh `400`; loi role co text `role required` duoc map thanh `403`.
+- Nhieu validation error duoc map thanh `400`; row theo id khong ton tai tra `404`; loi role/authorization tra `403`.
 - `POST /v1/agents/{id}/snapshot` khong ton tai; agent fetch snapshot bang `GET`.
 
 ## 2. RBAC admin/user
@@ -36,7 +36,7 @@ Mutation policy:
 - Operational config mutations: `user` only and only for `owner_user_id = actor.ID`.
 - Admin view-user context: read-only, operational mutations return `403`.
 - Telegram config: `user` only for own owner context; response luon masked as `*****`.
-- Threat Feed/Reputation endpoints are retired from user-facing API in this scope.
+- Threat Feed/Reputation: admin-only global, yeu cau normal admin session. User va admin view-user context goi `/v1/feed-*` nhan `403`.
 
 ## 3. Common data enums
 
@@ -335,7 +335,7 @@ Optional list filters:
 }
 ```
 
-Threat feed/reputation rows are not exposed through this endpoint in the current user-facing API.
+Endpoint nay tra ca `origin="manual"` va `origin="feed"`. Feed-origin rows den tu global active reputation, co `editable=false`, co the filter bang `origin=feed`, va khong the patch/delete qua blacklist mutation endpoints. Manual rows van co `editable=true` cho user owner.
 
 `BlacklistInput`:
 
@@ -407,7 +407,49 @@ Only enabled and non-expired entries are included in owner policy snapshots as `
 
 ## 14. Feeds and reputation
 
-Threat Feed/Reputation is not user-facing in the current admin/user RBAC scope. The dashboard does not call feed endpoints, and `/v1/feed-sources`, `/v1/feed-runs` and `/v1/feed-conflicts` are retired from the public Control API.
+Threat Feed/Reputation la admin-only global. Cac endpoint duoi day yeu cau `role=admin` va normal session, khong phai `read_only`/`view-user`. User va admin view-user context nhan `403`.
+
+| Method | Path | Body/query | Response | Semantics |
+|---|---|---|---|---|
+| GET | `/v1/feed-sources` | none | `FeedSource[]` | List global feed sources |
+| POST | `/v1/feed-sources` | `FeedSourceInput` | `FeedSource` | Create global feed source |
+| GET | `/v1/feed-sources/{id}` | none | `FeedSource` | Get global feed source |
+| PATCH | `/v1/feed-sources/{id}` | `FeedSourceInput` | `FeedSource` | Update global feed source |
+| DELETE | `/v1/feed-sources/{id}` | `X-Audit-Reason` | `FeedSource` | Disable global feed source and rebuild all active user snapshots |
+| POST | `/v1/feed-sources/{id}/sync` | optional `{reason}` | `FeedRun` | Sync feed now, refresh global reputation, rebuild all active user snapshots on success |
+| GET | `/v1/feed-runs?limit=N` | query | `FeedRun[]` | Recent global feed sync runs |
+| GET | `/v1/feed-conflicts` | none | `FeedConflict[]` | Active conflicts between global reputation and user whitelists |
+
+`FeedSourceInput`:
+
+```json
+{
+  "reason": "create feed",
+  "name": "abuseipdb",
+  "type": "abuseipdb",
+  "url": "https://example.test/feed",
+  "credential_ref": "env://ABUSEIPDB_KEY",
+  "required_for_production": true,
+  "enabled": true,
+  "interval_seconds": 3600,
+  "license_note": "commercial",
+  "quota_metadata": {"ttl_seconds": 3600},
+  "status": "placeholder"
+}
+```
+
+Credential safety:
+
+- Response va audit payload luon mask credential thanh `***`.
+- PATCH voi `credential_ref: "***"` giu nguyen credential hien co.
+- PATCH voi `credential_ref: ""` xoa credential.
+
+Data behavior:
+
+- `feed_sources`, `feed_runs` va `reputation_entries` global dung `owner_user_id = NULL`.
+- `feed_conflicts.owner_user_id` la owner user cua whitelist dang conflict.
+- Active global reputation rows co `action="drop"` duoc union vao policy snapshot cua moi active user.
+- `/v1/blacklist/entries` cua user hien feed-origin rows read-only (`editable=false`); create/update/delete blacklist chi tac dong manual blacklist.
 
 ## 15. Telegram and alerts
 

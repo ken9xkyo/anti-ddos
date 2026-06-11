@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -72,6 +73,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/blacklist/", s.handleBlacklistByID)
 	s.mux.HandleFunc("/v1/udp-source-port-blocks", s.handleUDPSourcePortBlocks)
 	s.mux.HandleFunc("/v1/udp-source-port-blocks/", s.handleUDPSourcePortBlockByID)
+	s.mux.HandleFunc("/v1/feed-sources", s.handleFeedSources)
+	s.mux.HandleFunc("/v1/feed-sources/", s.handleFeedSourceByID)
+	s.mux.HandleFunc("/v1/feed-runs", s.handleFeedRuns)
+	s.mux.HandleFunc("/v1/feed-conflicts", s.handleFeedConflicts)
 	s.mux.HandleFunc("/v1/telegram/config", s.handleTelegramConfig)
 	s.mux.HandleFunc("/v1/telegram/test", s.handleTelegramTest)
 	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
@@ -581,6 +586,132 @@ func (s *Server) handleUDPSourcePortBlockByID(w http.ResponseWriter, r *http.Req
 	}
 }
 
+func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		sources, err := s.store.ListFeedSources(r.Context())
+		writeResult(w, maskFeedSourceCredentials(sources), err)
+	case http.MethodPost:
+		var req FeedSourceInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		source, err := s.store.CreateFeedSource(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, maskFeedSourceCredential(source), err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	rawPath := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/feed-sources/"), "/")
+	parts := strings.Split(rawPath, "/")
+	if rawPath == "" || len(parts) > 2 || parts[0] == "" {
+		writeError(w, http.StatusNotFound, errors.New("feed source not found"))
+		return
+	}
+	id := parts[0]
+	if len(parts) == 2 {
+		if parts[1] != "sync" {
+			writeError(w, http.StatusNotFound, errors.New("feed source subroute not found"))
+			return
+		}
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+			return
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = r.Header.Get("X-Audit-Reason")
+		}
+		run, err := s.store.SyncFeedSource(r.Context(), id, actor, reason)
+		writeResult(w, run, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		source, err := s.store.GetFeedSource(r.Context(), id)
+		writeResult(w, maskFeedSourceCredential(source), err)
+	case http.MethodPatch:
+		var req FeedSourceInput
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, maskFeedSourceCredential(source), err)
+	case http.MethodDelete:
+		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
+		writeResult(w, maskFeedSourceCredential(source), err)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (s *Server) handleFeedRuns(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, errors.New("limit must be a positive integer"))
+			return
+		}
+		limit = parsed
+	}
+	runs, err := s.store.ListFeedRuns(r.Context(), limit)
+	writeResult(w, runs, err)
+}
+
+func (s *Server) handleFeedConflicts(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	conflicts, err := s.store.ListFeedConflicts(r.Context())
+	writeResult(w, conflicts, err)
+}
+
 func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireActor(w, r); !ok {
 		return
@@ -837,7 +968,9 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 func writeResult(w http.ResponseWriter, value any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errForbidden) || strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
+		if errors.Is(err, pgx.ErrNoRows) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, errForbidden) || strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
 			status = http.StatusForbidden
 		}
 		writeError(w, status, err)
@@ -928,6 +1061,17 @@ func routeName(r *http.Request) string {
 		return "/v1/udp-source-port-blocks"
 	case strings.HasPrefix(path, "/v1/udp-source-port-blocks/"):
 		return "/v1/udp-source-port-blocks/{id}"
+	case path == "/v1/feed-sources":
+		return "/v1/feed-sources"
+	case strings.HasPrefix(path, "/v1/feed-sources/"):
+		if strings.HasSuffix(path, "/sync") {
+			return "/v1/feed-sources/{id}/sync"
+		}
+		return "/v1/feed-sources/{id}"
+	case path == "/v1/feed-runs":
+		return "/v1/feed-runs"
+	case path == "/v1/feed-conflicts":
+		return "/v1/feed-conflicts"
 	case path == "/v1/telegram/config":
 		return "/v1/telegram/config"
 	case path == "/v1/telegram/test":

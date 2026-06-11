@@ -9,15 +9,15 @@ Anti-DDoS Scrubbing Gateway gom Data Plane XDP/eBPF, Node Agent, Control API, Po
 | Actor | Muc tieu | Quyen |
 |---|---|---|
 | `user` | Van hanh config Anti-DDoS cua chinh minh | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, baselines/anomalies, agents/events/alerts va Telegram |
-| `admin` | Quan ly tai khoan va ho tro user | User lifecycle mutations; read-only view config cua tung user qua Accounts |
+| `admin` | Quan ly tai khoan, global threat feeds va ho tro user | User lifecycle mutations; global feed management; read-only view config cua tung user qua Accounts |
 
 ## Architecture
 
 - Data Plane: XDP/eBPF drop/rate-limit/redirect va counters/events.
 - Node Agent: attach/rollback XDP, sync snapshot, forward sampled events, expose metrics.
-- Control API: auth/session, owner-scoped config APIs, account admin APIs, agent APIs.
+- Control API: auth/session, owner-scoped config APIs, account admin APIs, admin-only global feed APIs, agent APIs.
 - PostgreSQL: identity/session tables va operational tables co `owner_user_id`.
-- Dashboard: React/Vite ops console khong tenant switcher, khong Reputation/Threat Feed user-facing.
+- Dashboard: React/Vite ops console khong tenant switcher; Reputation chi hien voi admin normal session.
 
 ## Data Isolation
 
@@ -41,5 +41,5 @@ Tenant tables, tenant memberships, `active_tenant_id`, tenant RLS and `platform_
 
 - Admin read-only config context cannot mutate operational config.
 - Manual blacklist and UDP source-port blocks are owner-scoped and audited.
+- Global active reputation from admin-managed feeds is included in every active user's policy snapshot; users see feed-origin blacklist rows read-only.
 - Telegram token is write-only/masked.
-- Threat Feed/Reputation is not user-facing in this scope.

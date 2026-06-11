@@ -134,7 +134,6 @@ func TestAlertingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerActor := &Actor{User: owner}
 	ownerCtx := contextWithOwner(ctx, owner.ID)
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
@@ -277,7 +276,7 @@ func TestAlertingIntegration(t *testing.T) {
 		http.Error(w, "feed unavailable", http.StatusInternalServerError)
 	}))
 	defer feedServer.Close()
-	source, err := store.CreateFeedSource(ownerCtx, ownerActor, FeedSourceInput{
+	source, err := store.CreateFeedSource(ctx, adminActor, FeedSourceInput{
 		Reason:          "create failing feed",
 		Name:            "alerting-failing-feed",
 		Type:            "internal_json",
@@ -288,7 +287,7 @@ func TestAlertingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SyncFeedSource(ownerCtx, source.ID, ownerActor, "trigger feed failure"); err == nil {
+	if _, err := store.SyncFeedSource(ctx, source.ID, adminActor, "trigger feed failure"); err == nil {
 		t.Fatal("expected feed sync failure")
 	}
 	agentResp, err := store.RegisterAgent(ownerCtx, AgentRegisterRequest{Hostname: "node-a", XDPMode: "native", DevmapSupport: true})

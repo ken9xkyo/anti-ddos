@@ -24,9 +24,10 @@ export default function App() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      const next = await api.dashboard();
+      const next = await api.dashboard(user);
       setData(next);
       setLastRefresh(new Date().toISOString());
       setError('');
@@ -35,7 +36,13 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    if (activeTab === 'reputation' && user && (user.role !== 'admin' || user.read_only || user.viewing_user)) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, user]);
 
   useEffect(() => {
     if (!user) return;

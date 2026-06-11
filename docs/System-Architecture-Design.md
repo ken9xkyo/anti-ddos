@@ -46,5 +46,6 @@ Operational tables use `owner_user_id`, including agents, services, forwarding p
 
 - `/v1/tenants*`
 - Tenant switcher and Tenants page
-- Threat Feed/Reputation dashboard/API surface
 - `operator`/`viewer` role model
+
+Threat Feed/Reputation is restored as admin-only global feed management and is not tenant/user-owned.

@@ -2,12 +2,12 @@
 
 ## Mục đích
 
-`Blacklist` hiển thị manual blacklist entries của user. Threat feed/reputation không còn hiển thị trong dashboard scope hiện tại.
+`Blacklist` hiển thị manual blacklist entries của user và global feed-origin reputation rows ở chế độ read-only.
 
 ## Ai dùng
 
 - `user`: tạo, sửa và disable manual blacklist entry của chính mình.
-- `admin`: chỉ xem read-only khi đang ở `View config` context.
+- `admin`: chỉ xem read-only khi đang ở `View config` context; admin normal session quản lý feed tại tab `Reputation`.
 
 ## Thành phần UI
 
@@ -26,6 +26,7 @@
 
 - Trang gọi API `/v1/blacklist/entries` với query filter và server-side pagination.
 - Manual create/update/disable vẫn gọi `/v1/blacklist` và `/v1/blacklist/{id}`.
+- Feed-origin rows đến từ global active reputation, có `origin=feed` và `editable=false`.
 - Search/filter có debounce ngắn để tránh gọi API quá dày khi nhập.
 - Create/update/disable blacklist đều rebuild policy snapshot.
 - Dashboard luôn gửi action `drop`; backend từ chối action khác.
@@ -48,5 +49,6 @@
 ## Lưu ý vận hành
 
 - Disable là soft-disable: entry vẫn còn để audit nhưng không đi vào snapshot active tiếp theo.
-- Trang `Reputation` da retired; feed/reputation neu can se duoc thiet ke lai trong feature rieng.
+- Feed-origin rows không có nút edit/disable và backend trả lỗi nếu cố mutate qua blacklist endpoint.
+- Trang `Reputation` chỉ dành cho admin normal session để quản lý global feed sources.
 - Whitelist vẫn có precedence trước blacklist khi packet đã match protected service.

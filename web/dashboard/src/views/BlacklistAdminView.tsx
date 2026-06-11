@@ -33,7 +33,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
   const [paginationModel, setPaginationModel] = useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
-  const [filters, setFilters] = useState<BlacklistFilters>({ state: 'all', expiry: 'all' });
+  const [filters, setFilters] = useState<BlacklistFilters>({ origin: 'all', state: 'all', expiry: 'all' });
   const [mode, setMode] = useState<'create' | 'edit' | ''>('');
   const [target, setTarget] = useState<BlacklistEntryRow | null>(null);
   const [form, setForm] = useState<BlacklistForm>(emptyForm);
@@ -72,12 +72,22 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
   const hasActiveFilters = Boolean(
     filters.q?.trim() ||
     filters.source?.trim() ||
+    (filters.origin && filters.origin !== 'all') ||
     (filters.state && filters.state !== 'all') ||
     (filters.expiry && filters.expiry !== 'all')
   );
 
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'cidr', headerName: 'CIDR', flex: 1, minWidth: 155 },
+    {
+      field: 'origin',
+      headerName: 'Origin',
+      width: 115,
+      renderCell: (params) => {
+        const row = params.row as BlacklistEntryRow;
+        return <StatusPill state={row.origin === 'feed' ? 'info' : 'ok'} text={row.origin} />;
+      }
+    },
     {
       field: 'source',
       headerName: 'Source',
@@ -105,6 +115,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
       renderCell: (params) => {
         const row = params.row as BlacklistEntryRow;
         if (!canMutate) return <span className="muted">read only</span>;
+        if (!row.editable) return <span className="muted">feed read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
@@ -125,6 +136,7 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
   };
 
   const openEdit = (entry: BlacklistEntryRow) => {
+    if (!entry.editable) return;
     setTarget(entry);
     setForm({
       reason: `update ${entry.cidr}`,
@@ -157,6 +169,11 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
 
   const disable = async () => {
     if (!disableTarget) return;
+    if (!disableTarget.editable) {
+      setResult('feed-origin rows are read only');
+      setDisableTarget(null);
+      return;
+    }
     try {
       await api.disableBlacklist(disableTarget.id, reason);
       setResult(`${disableTarget.cidr} disabled`);
@@ -178,7 +195,15 @@ export function BlacklistAdminView({ canMutate }: { canMutate: boolean }) {
         />
         <DataToolbar>
           <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => updateFilters({ q: value })} placeholder="cidr, source, reason, rule" />
-          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => updateFilters({ source: value })} placeholder="manual" />
+          <SearchField label="Source" value={filters.source ?? ''} onChange={(value) => updateFilters({ source: value })} placeholder="manual, feed source" />
+          <label>
+            Origin
+            <select value={filters.origin ?? 'all'} onChange={(event) => updateFilters({ origin: event.target.value as BlacklistFilters['origin'] })}>
+              <option value="all">All</option>
+              <option value="manual">Manual</option>
+              <option value="feed">Feed</option>
+            </select>
+          </label>
           <label>
             State
             <select value={filters.state ?? 'all'} onChange={(event) => updateFilters({ state: event.target.value as BlacklistFilters['state'] })}>
