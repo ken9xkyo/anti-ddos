@@ -297,49 +297,6 @@ export interface UDPSourcePortBlockFilters {
   expiry?: 'all' | 'valid' | 'expired' | 'none';
 }
 
-export interface BaselineProfile {
-  id: string;
-  service_id: string;
-  service_ebpf_id?: number;
-  service_name?: string;
-  interface: string;
-  protocol: string;
-  port?: number;
-  window: string;
-  expected_pps: number;
-  expected_bps: number;
-  expected_cps: number;
-  history_hours: number;
-  confidence: number;
-  approved: boolean;
-  status: string;
-}
-
-export interface AnomalyEvaluation {
-  id: string;
-  service_id?: string;
-  service_ebpf_id?: number;
-  service_name?: string;
-  baseline_id?: string;
-  evaluated_at: string;
-  window: string;
-  pps: number;
-  bps: number;
-  cps: number;
-  drop_ratio: number;
-  score: number;
-  confidence: number;
-  signals?: string[];
-  recommendation: string;
-  recommended_action: string;
-  proposed_ttl_seconds?: number;
-  proposed_rule_id?: string;
-  auto_enforced: boolean;
-  status: string;
-  reason?: string;
-  source?: string;
-}
-
 export interface Agent {
   id: string;
   hostname: string;
@@ -547,8 +504,6 @@ export interface DashboardData {
   services: Service[];
   rules: Rule[];
   events: SecurityEvent[];
-  baselines: BaselineProfile[];
-  anomalies: AnomalyEvaluation[];
   telegramConfig: TelegramConfig;
   alerts: Alert[];
   feedSources: FeedSource[];

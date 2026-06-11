@@ -54,8 +54,6 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
 
     agent_id = register_agent(api)
     service = api.post("/v1/services", service_payload(f"{prefix}-api-https", enabled=True))
-    baseline = api.post("/v1/baselines", baseline_payload(service["id"]))
-    api.post(f"/v1/baselines/{baseline['id']}/approve", {"reason": "automation approve baseline"})
     rule = api.post("/v1/rules", rule_payload(f"{prefix}-ttl-rule", service["id"]))
     api.agent_post(f"/v1/agents/{agent_id}/events", AGENT_TOKEN, security_event_payload(service["ebpf_id"], rule["ebpf_id"]))
 
@@ -72,7 +70,6 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
         "parse_mode": "HTML",
         "enabled": True,
     })
-    operator.post("/v1/anomalies/evaluate", {"reason": "automation anomaly evaluation"})
     operator.post("/v1/alerts/evaluate-isp-escalation", {
         "reason": "automation ISP runbook",
         "service_id": service["id"],
@@ -87,7 +84,7 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
     api.agent_post(f"/v1/agents/{agent_id}/apply", AGENT_TOKEN, {
         "policy_version": latest,
         "status": "applied",
-        "map_stats": {"service_allowlist": {"entries": 1}, "rule_config": {"entries": 2}},
+        "map_stats": {"service_allowlist": {"entries": 1}, "rule_config": {"entries": 1}},
         "devmap_stats": {"updated": 1},
     })
 
@@ -166,23 +163,6 @@ def service_payload(name: str, *, enabled: bool) -> dict[str, Any]:
         "resolved_next_hop_mac": "02:00:00:00:00:09",
         "resolved_src_mac": "02:00:00:00:00:08",
         "neighbor_resolution_status": "resolved",
-    }
-
-
-def baseline_payload(service_id: str) -> dict[str, Any]:
-    return {
-        "reason": "automation create baseline",
-        "service_id": service_id,
-        "interface": "wan0",
-        "protocol": "tcp",
-        "port": 443,
-        "window": "5m",
-        "expected_pps": 100,
-        "expected_bps": 10000,
-        "expected_cps": 10,
-        "history_hours": 24,
-        "confidence": 0.95,
-        "evidence": {"source": "automation"},
     }
 
 

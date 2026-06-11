@@ -10,7 +10,7 @@ Entry points:
 - Snapshot diff: `internal/control/snapshot_diff.go`
 
 Navigation labels are grouped in `web/dashboard/src/navigation.ts`:
-- `Operation`: Dashboard (`overview`), Incidents, Detections (`detection`), Events (`investigation`)
+- `Operation`: Dashboard (`overview`), Incidents, Events (`investigation`)
 - `Configuration`: Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports
 - `Setting`: Snapshots, Accounts (`access`), Nodes (`fleet`)
 

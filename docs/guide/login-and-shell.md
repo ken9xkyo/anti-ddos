@@ -5,7 +5,7 @@ Tat ca user dang nhap bang `username` va `password`. Response user chi co role `
 ## Shell
 
 - Sidebar gom `Operation`, `Configuration` va `Setting`.
-- `Operation`: Dashboard, Incidents, Detections, Events.
+- `Operation`: Dashboard, Incidents, Events.
 - `Configuration`: Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports.
 - `Setting`: Snapshots, Accounts, Nodes.
 - `Accounts` chi hien voi admin.

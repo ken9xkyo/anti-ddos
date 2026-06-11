@@ -202,7 +202,7 @@ func TestAlertingIntegration(t *testing.T) {
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:          "warning",
-		Type:              "anomaly",
+		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
 		AffectedService:   "api",
 		Vector:            "udp_flood",
@@ -215,7 +215,7 @@ func TestAlertingIntegration(t *testing.T) {
 	before := calls.Load()
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:          "warning",
-		Type:              "anomaly",
+		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
 		AffectedService:   "api",
 		Vector:            "udp_flood",
@@ -325,7 +325,7 @@ func TestAlertingIntegration(t *testing.T) {
 	for _, alert := range alerts {
 		seen[alert.Type] = true
 	}
-	for _, typ := range []string{"test_alert", "anomaly", "feed_failure", "neighbor_unresolved", "isp_escalation_needed"} {
+	for _, typ := range []string{"test_alert", "operator_notice", "feed_failure", "neighbor_unresolved", "isp_escalation_needed"} {
 		if !seen[typ] {
 			t.Fatalf("missing alert type %s in %#v", typ, seen)
 		}

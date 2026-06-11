@@ -666,6 +666,77 @@ ORDER BY priority, created_at DESC`)
 	return out, tx.Commit(ctx)
 }
 
+func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
+	if ownerUserIDFromContext(ctx) == "" {
+		ownerUserIDs, err := s.activeOwnerUserIDs(ctx)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		var joined error
+		for _, ownerUserID := range ownerUserIDs {
+			count, err := s.ExpireTTLRules(contextWithOwner(ctx, ownerUserID))
+			total += count
+			if err != nil {
+				joined = errors.Join(joined, err)
+			}
+		}
+		return total, joined
+	}
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
+       threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
+       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
+FROM rules
+WHERE enabled AND expires_at IS NOT NULL AND expires_at <= now()
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY expires_at`)
+	if err != nil {
+		return 0, err
+	}
+	var expired []Rule
+	for rows.Next() {
+		var rule Rule
+		if err := scanRule(rows, &rule); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		expired = append(expired, rule)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(expired) == 0 {
+		return 0, tx.Commit(ctx)
+	}
+
+	for _, before := range expired {
+		var after Rule
+		err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
+WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
+          threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
+          ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at`, before.ID), &after)
+		if err != nil {
+			return 0, err
+		}
+		if err := insertAudit(ctx, tx, nil, "expire_rule", "rule", before.ID, before, after, "ttl expired", ""); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := s.rebuildSnapshotInTx(ctx, tx, nil, nil, "ttl expired"); err != nil {
+		return 0, err
+	}
+	return len(expired), tx.Commit(ctx)
+}
+
 func scanRule(row rowScanner, rule *Rule) error {
 	var expires *time.Time
 	if err := row.Scan(
@@ -1394,6 +1465,14 @@ func defaultJSON(value json.RawMessage) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return value
+}
+
+func mustJSON(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return raw
 }
 
 func int32Ports(ports []uint16) []int32 {

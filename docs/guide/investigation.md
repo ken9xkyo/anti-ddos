@@ -28,7 +28,7 @@ Tất cả role đều dùng được trang này. Trang hiện tại là read-on
 2. Chọn `Investigate`.
 3. Đọc bảng kết quả để xác định source, destination, protocol, action, reason, service và rule liên quan.
 4. Nếu không có target cụ thể, dùng `Recent Sampled Events` để xem mẫu gần nhất.
-5. Đối chiếu action/reason với `Overview`, `Detection`, `Rules` và `Whitelist` khi cần kết luận nguyên nhân.
+5. Đối chiếu action/reason với `Overview`, `Rules` và `Whitelist` khi cần kết luận nguyên nhân.
 
 ## Trạng thái rỗng và lỗi
 

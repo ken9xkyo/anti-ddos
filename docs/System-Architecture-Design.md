@@ -31,7 +31,7 @@ Core identity/session:
 - `app_users`
 - `user_sessions` with optional `view_owner_user_id`
 
-Operational tables use `owner_user_id`, including agents, services, forwarding policies, rules, whitelist, manual blacklist, UDP ports, snapshots, apply status, events, baselines, anomalies, Telegram config, alerts and audit.
+Operational tables use `owner_user_id`, including agents, services, forwarding policies, rules, whitelist, manual blacklist, UDP ports, snapshots, apply status, events, Telegram config, alerts and audit.
 
 ## Runtime flow
 

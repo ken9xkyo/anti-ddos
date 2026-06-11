@@ -74,7 +74,6 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireEmptyDashboardArrays(t, server.URL, readOnlyToken)
 
 	service := createDashboardService(t, server.URL, userToken)
-	baseline := createDashboardBaseline(t, server.URL, userToken, service.ID)
 	rule := createDashboardRule(t, server.URL, userToken, service.ID)
 	agentID := registerDashboardAgent(t, server.URL)
 	ingestDashboardEvent(t, server.URL, agentID, service.EBPFID, rule.EBPFID)
@@ -101,7 +100,6 @@ func TestDashboardAPIIntegration(t *testing.T) {
 		{"services", "/v1/dashboard/services", "api-https"},
 		{"rules", "/v1/dashboard/rules", "dashboard-ttl-rule"},
 		{"security events", "/v1/security-events?src=198.51.100.10", "198.51.100.10"},
-		{"baselines", "/v1/baselines", baseline.ID},
 	}
 	for _, tc := range readCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -318,29 +316,6 @@ func createDashboardService(t *testing.T, baseURL, token string) Service {
 	var service Service
 	decodeTestBody(t, resp, &service)
 	return service
-}
-
-func createDashboardBaseline(t *testing.T, baseURL, token, serviceID string) BaselineProfile {
-	t.Helper()
-	resp := authedJSON(t, http.MethodPost, baseURL+"/v1/baselines", token, BaselineProfileInput{
-		Reason:       "create dashboard baseline",
-		ServiceID:    serviceID,
-		Interface:    "wan0",
-		Protocol:     "tcp",
-		Port:         443,
-		Window:       "5m",
-		ExpectedPPS:  100,
-		ExpectedBPS:  10000,
-		ExpectedCPS:  10,
-		HistoryHours: 24,
-		Confidence:   0.95,
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	var baseline BaselineProfile
-	decodeTestBody(t, resp, &baseline)
-	resp = authedJSON(t, http.MethodPost, baseURL+"/v1/baselines/"+baseline.ID+"/approve", token, map[string]string{"reason": "approve dashboard baseline"})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	return baseline
 }
 
 func createDashboardRule(t *testing.T, baseURL, token, serviceID string) Rule {

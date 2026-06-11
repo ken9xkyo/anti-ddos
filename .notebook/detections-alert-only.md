@@ -1,19 +1,18 @@
-# Detections Are Alert-Only
-> flow | detection, baseline, anomaly, rules
+# Detections Removed
+> flow | detection, alerts, dashboard
 
-Last updated: 2026-06-04
+Last updated: 2026-06-11
 
-Detection anomaly evaluation is alert-only. Baselines are used for monitoring thresholds, confidence context and alert generation; they do not create `rate_limit` rules.
+The Detections dashboard feature for baselines and anomaly evaluations has been removed from active code. Shared alerting remains under `Incidents` and still powers Telegram test alerts, ISP runbook alerts, feed failure alerts and agent/apply failure alerts.
 
 Key pointers:
 
-- `internal/control/anomaly.go:evaluateServiceAnomaly()` scores Prometheus signals, records `anomaly_evaluations`, and creates `anomaly` alerts for `alert_only` results.
-- `internal/control/anomaly_cleanup.go:DisableLegacyAutoEnforceRules()` disables enabled legacy rules with owner `system:auto-enforce` or evidence `auto_enforce=true`, audits each rule, and rebuilds the policy snapshot.
-- `cmd/control-api/main.go` runs legacy cleanup after migrations for both `migrate` and `serve`.
-- `web/dashboard/src/views/DetectionView.tsx` renders `Anomalies / Alerts`; mitigation CRUD remains in `Rules`.
-- `web/dashboard/src/views/DetectionView.tsx` uses client-side search and fixed 10-row pagination independently for Anomalies / Alerts, Baselines, and Active Rules.
+- `web/dashboard/src/navigation.ts` no longer defines a `detection` tab.
+- `web/dashboard/src/api.ts` dashboard polling no longer calls `/v1/baselines` or `/v1/anomalies`.
+- `internal/control/server.go` no longer registers baseline/anomaly endpoints.
+- `internal/control/scheduler.go` starts rule expiry and feed schedulers only.
 
 Compatibility:
 
-- `AnomalyEvaluation.auto_enforced`, `proposed_rule_id` and `proposed_ttl_seconds` remain in the API for historical data and client compatibility.
-- New evaluations set `auto_enforced=false` and leave proposed rule fields empty.
+- Historical migrations still create `baseline_profiles` and `anomaly_evaluations`; this change intentionally does not drop existing data.
+- Use `Incidents` for alert triage and `Rules` for manual mitigation changes.

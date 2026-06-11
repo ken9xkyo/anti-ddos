@@ -128,8 +128,6 @@ describe('ApiClient', () => {
       '/v1/dashboard/services',
       '/v1/dashboard/rules',
       '/v1/security-events?limit=50',
-      '/v1/baselines',
-      '/v1/anomalies?limit=30',
       '/v1/alerts?limit=30'
     ]) {
       responses[path] = null;
@@ -144,7 +142,6 @@ describe('ApiClient', () => {
     expect(loaded.overview.latest_apply_status).toEqual([]);
     expect(loaded.agents).toEqual([]);
     expect(loaded.events).toEqual([]);
-    expect(loaded.anomalies).toEqual([]);
     expect(loaded.alerts).toEqual([]);
   });
 });
@@ -156,8 +153,6 @@ function dashboardResponses(value: DashboardData, includeFeed = false): Record<s
     '/v1/dashboard/services': value.services,
     '/v1/dashboard/rules': value.rules,
     '/v1/security-events?limit=50': value.events,
-    '/v1/baselines': value.baselines,
-    '/v1/anomalies?limit=30': value.anomalies,
     '/v1/telegram/config': value.telegramConfig,
     '/v1/alerts?limit=30': value.alerts
   };

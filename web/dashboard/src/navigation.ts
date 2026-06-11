@@ -1,5 +1,4 @@
 import {
-  Activity,
   AlertTriangle,
   Ban,
   DatabaseBackup,
@@ -19,7 +18,6 @@ export const navGroups = [
     items: [
       { id: 'overview', label: 'Dashboard', icon: Gauge },
       { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
-      { id: 'detection', label: 'Detections', icon: Activity },
       { id: 'investigation', label: 'Events', icon: Search }
     ]
   },

@@ -11,7 +11,6 @@ import { navGroups, tabLabel, type Tab } from './navigation';
 import { OverviewView } from './views/OverviewView';
 import { IncidentsView } from './views/IncidentsView';
 import { ServicesView } from './views/ServicesView';
-import { DetectionView } from './views/DetectionView';
 import { FleetView } from './views/FleetView';
 import { InvestigationView } from './views/InvestigationView';
 import { RulesAdminView } from './views/RulesAdminView';
@@ -140,7 +139,6 @@ export function DashboardShell({
           />
         ) : null}
         {data && activeTab === 'udpPorts' ? <UDPPortsAdminView canMutate={canMutate} /> : null}
-        {data && activeTab === 'detection' ? <DetectionView anomalies={data.anomalies} baselines={data.baselines} rules={data.rules} /> : null}
         {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}
         {data && activeTab === 'access' && isAdmin ? <AccessView currentUser={user} onViewUserConfig={onViewUserConfig} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}

@@ -48,6 +48,6 @@
 
 ## Lưu ý vận hành
 
-- `Detection` có bảng `Active Rules` read-only. CRUD rule phải thực hiện ở `Rules`.
+- `Rules` là nơi xem và thay đổi rule; mọi thay đổi cần reason để audit.
 - Disable là soft-disable: rule vẫn nhìn thấy trong lịch sử/danh sách nhưng bị loại khỏi snapshot active tiếp theo.
 - `Mode` và `Action` nên được chọn thận trọng. `drop` hoặc `rate_limit` ở `enforce` có thể tác động traffic thật.

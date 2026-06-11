@@ -21,6 +21,6 @@ sequenceDiagram
     end
     Metrics->>Agent: Scrape /metrics trên host
     Metrics->>API: Scrape /metrics trong compose
-    UI->>API: GET dashboard, events, alerts và anomaly endpoints
+    UI->>API: GET dashboard, events và alerts
     API->>DB: Query events, agents, policy và alert state
     UI-->>Metrics: User xem Grafana dashboards

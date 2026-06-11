@@ -8,7 +8,7 @@ Anti-DDoS Scrubbing Gateway gom Data Plane XDP/eBPF, Node Agent, Control API, Po
 
 | Actor | Muc tieu | Quyen |
 |---|---|---|
-| `user` | Van hanh config Anti-DDoS cua chinh minh | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, baselines/anomalies, agents/events/alerts va Telegram |
+| `user` | Van hanh config Anti-DDoS cua chinh minh | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, agents/events/alerts va Telegram |
 | `admin` | Quan ly tai khoan, global threat feeds va ho tro user | User lifecycle mutations; global feed management; read-only view config cua tung user qua Accounts |
 
 ## Architecture

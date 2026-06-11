@@ -55,7 +55,7 @@ COMPOSE_LOG_SERVICES := postgres control-api prometheus grafana admin-dashboard
 
 .PHONY: help usage
 .PHONY: bpf-build bpf-test policygen-build agent-build agent-start agent-stop agent-remove go-build ui-build build
-.PHONY: go-test go-vet go-race ui-test lint integration-test control-postgres-test control-core-postgres-test observability-postgres-test anomaly-alert-only-postgres-test anomaly-auto-enforce-postgres-test threat-feed-postgres-test alerting-postgres-test dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e agent-lifecycle-veth-test devmap-forwarding-veth-test test test-all
+.PHONY: go-test go-vet go-race ui-test lint integration-test control-postgres-test control-core-postgres-test observability-postgres-test threat-feed-postgres-test alerting-postgres-test dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e agent-lifecycle-veth-test devmap-forwarding-veth-test test test-all
 .PHONY: env-init compose-config compose-build dev-up dev-down dev-reset dev-ps dev-logs dev-health admin-bootstrap
 .PHONY: deploy deploy-down deploy-logs clean
 
@@ -109,8 +109,6 @@ help:
 	@printf '  make integration-test             Run all Control Plane PostgreSQL integration tests\n'
 	@printf '  make control-core-postgres-test   Run Control Core PostgreSQL integration test\n'
 	@printf '  make observability-postgres-test  Run Observability PostgreSQL integration test\n'
-	@printf '  make anomaly-alert-only-postgres-test Run anomaly alert-only PostgreSQL integration test\n'
-	@printf '  make anomaly-auto-enforce-postgres-test Legacy alias for anomaly alert-only test\n'
 	@printf '  make threat-feed-postgres-test    Run Threat Feed PostgreSQL integration test\n'
 	@printf '  make alerting-postgres-test       Run Alerting PostgreSQL integration test\n'
 	@printf '  make dashboard-postgres-test      Run Dashboard API PostgreSQL integration test\n'
@@ -447,12 +445,6 @@ control-core-postgres-test:
 
 observability-postgres-test:
 	scripts/lab/observability-postgres-test.sh
-
-anomaly-alert-only-postgres-test:
-	scripts/lab/anomaly-alert-only-postgres-test.sh
-
-anomaly-auto-enforce-postgres-test:
-	scripts/lab/anomaly-auto-enforce-postgres-test.sh
 
 threat-feed-postgres-test:
 	scripts/lab/threat-feed-postgres-test.sh

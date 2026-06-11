@@ -47,7 +47,6 @@ def run_browser_suite(
             assert_services_workflow(page, seed)
             assert_rules_workflow(page, seed)
             assert_whitelist_workflow(page, seed)
-            assert_detection(page, seed)
             assert_reputation_operator_workflow(page, seed, feed_url)
             assert_snapshots_workflow(page)
             assert_fleet(page)
@@ -95,7 +94,6 @@ def assert_shell_navigation(page: Page) -> None:
     for tab in [
         "Dashboard",
         "Incidents",
-        "Detections",
         "Events",
         "Services",
         "Rules",
@@ -256,14 +254,6 @@ def assert_whitelist_workflow(page: Page, seed: SeedData) -> None:
     page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation disable UI whitelist")
     page.get_by_role("button", name=re.compile(r"Disable entry", re.I)).click()
     expect(data_grid_row(page, cidr)).to_contain_text("disabled", timeout=20000)
-
-
-def assert_detection(page: Page, seed: SeedData) -> None:
-    goto_tab(page, "Detections")
-    expect_visible_text(page, seed.service["name"], timeout=20000)
-    expect_visible_text(page, "approved")
-    expect_visible_text(page, re.compile(r"pps_spike|alert_only", re.I))
-    expect_visible_text(page, "Active Rules")
 
 
 def assert_reputation_operator_workflow(page: Page, seed: SeedData, feed_url: str) -> None:

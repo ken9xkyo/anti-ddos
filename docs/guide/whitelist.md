@@ -47,6 +47,6 @@
 
 ## Lưu ý vận hành
 
-- Whitelist conflict có thể xuất hiện trong anomaly evidence để triage nguồn trusted. Detection không còn dùng whitelist để chặn hoặc kích hoạt auto-enforcement.
+- Whitelist có precedence trong snapshot active; dùng `Rules`, `Blacklist` và `Reputation` để đối chiếu khi triage nguồn trusted.
 - Service filter dùng effective service filter. Global entry vẫn có thể xuất hiện tùy filter vì entry global có hiệu lực rộng hơn service cụ thể.
 - Disable là soft-disable: entry vẫn còn để audit nhưng không đi vào snapshot active tiếp theo.

@@ -18,23 +18,22 @@ Tất cả role đều dùng được trang này. Đây là trang read-only, kh�
   - `Drop rate`: packet/s đang bị drop.
   - `Redirect rate`: packet/s được redirect hợp lệ.
   - `Not allowed`: service miss hoặc traffic không khớp service được bảo vệ.
-  - `Anomaly score`: điểm anomaly mới nhất và trạng thái signal.
 - `Traffic Shape`: biểu đồ PPS, Kbps và CPS.
 - `Decision Rates`: biểu đồ packet/s theo action.
 - `Control Plane Status`: trạng thái Prometheus, snapshot version hiện tại và thời điểm generated.
-- `Current Operational Signal`: alert và anomaly mới nhất.
+- `Current Operational Signal`: alert mới nhất.
 - Top lists: `Top source /24`, `Top ports`, `Decision samples`.
 - `Latest Apply Status`: bảng trạng thái apply policy theo agent.
 
 ## Dữ liệu và API liên quan
 
-Trang lấy dữ liệu từ luồng dashboard polling, chủ yếu từ overview, alerts, anomalies, agents và security event summary. Trang chỉ mô tả trạng thái đang thấy; contract chi tiết nằm trong [Control API](../Control-Api.md).
+Trang lấy dữ liệu từ luồng dashboard polling, chủ yếu từ overview, alerts, agents và security event summary. Trang chỉ mô tả trạng thái đang thấy; contract chi tiết nằm trong [Control API](../Control-Api.md).
 
 ## Thao tác chính
 
 - Đọc metric cards trước để xác định hệ thống đang bình thường, bị tăng traffic hay có drop/not-allowed bất thường.
 - So sánh `Drop rate`, `Redirect rate` và `Not allowed` để phân biệt traffic bị chặn, traffic sạch được chuyển tiếp, và traffic không khớp service.
-- Xem `Current Operational Signal` để biết alert/anomaly nào cần ưu tiên.
+- Xem `Current Operational Signal` để biết alert nào cần ưu tiên.
 - Xem `Latest Apply Status` nếu nghi ngờ policy snapshot chưa được agent apply thành công.
 
 ## Trạng thái rỗng và lỗi
@@ -46,5 +45,5 @@ Trang lấy dữ liệu từ luồng dashboard polling, chủ yếu từ overvie
 ## Lưu ý vận hành
 
 - `Agents healthy` giảm hoặc `Latest Apply Status` có `failed` là tín hiệu cần đối chiếu thêm ở `Fleet` và `Services`.
-- `Anomaly score` cao là tín hiệu alert-only. Cần kiểm tra `Detection` để xem status, source, confidence và recommended action; nếu cần enforce thì tạo rule thủ công ở `Rules`.
+- Alert quan trọng cần được xử lý ở `Incidents`; nếu cần enforce traffic thì tạo hoặc chỉnh rule thủ công ở `Rules`.
 - `Overview` không thay thế biểu đồ chi tiết dài hạn trong Grafana; trang này tối ưu cho quyết định nhanh trong dashboard.

@@ -61,7 +61,7 @@ Tài liệu chi tiết: [docs/deployment/docker-compose.md](docs/deployment/dock
 Sau migration, control-plane chỉ còn 2 role public:
 
 - `admin`: quản lý tài khoản, reset password, revoke sessions và mở read-only dashboard của từng user qua Accounts.
-- `user`: quản lý config vận hành của chính mình gồm Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Baselines/Anomalies, Agents/Events/Alerts và Telegram Channel.
+- `user`: quản lý config vận hành của chính mình gồm Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Agents/Events/Alerts và Telegram Channel.
 - Admin khi đang xem config user chỉ đọc dữ liệu; mọi mutation config trả `403`.
 - Dữ liệu nghiệp vụ được gắn `owner_user_id`; query isolation dùng owner filter ở application layer.
 - `/v1/tenants*`, tenant switcher, `platform_role`, `operator` và `viewer` đã retired. Threat Feed/Reputation là admin-only global; user chỉ thấy feed-origin blacklist rows ở chế độ read-only.
@@ -89,8 +89,7 @@ make test-all
 
 Một số kiểm thử tích hợp PostgreSQL sẽ tự dùng PostgreSQL container riêng khi không có `ANTI_DDOS_CONTROL_TEST_DSN`.
 Có thể chạy riêng theo nhóm bằng các target `control-core-postgres-test`, `observability-postgres-test`,
-`anomaly-alert-only-postgres-test`, `threat-feed-postgres-test`, `alerting-postgres-test` và
-`dashboard-postgres-test`.
+`threat-feed-postgres-test`, `alerting-postgres-test` và `dashboard-postgres-test`.
 Sau thay đổi RBAC/RLS, ưu tiên chạy thêm target tổng hợp:
 
 ```bash

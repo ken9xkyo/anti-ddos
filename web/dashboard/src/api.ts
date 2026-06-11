@@ -1,9 +1,7 @@
 import type {
   Agent,
   Alert,
-  AnomalyEvaluation,
   AuditEvent,
-  BaselineProfile,
   BlacklistEntriesPage,
   BlacklistEntry,
   BlacklistEntryRow,
@@ -79,15 +77,13 @@ export class ApiClient {
       this.request<Service[] | null>('/v1/dashboard/services'),
       this.request<Rule[] | null>('/v1/dashboard/rules'),
       this.request<SecurityEvent[] | null>('/v1/security-events?limit=50'),
-      this.request<BaselineProfile[] | null>('/v1/baselines'),
-      this.request<AnomalyEvaluation[] | null>('/v1/anomalies?limit=30'),
       this.request<TelegramConfig>('/v1/telegram/config'),
       this.request<Alert[] | null>('/v1/alerts?limit=30')
     ]);
     const feedRequests = canLoadFeed
       ? Promise.all([this.feedSources(), this.feedRuns(), this.feedConflicts()])
       : Promise.resolve<[FeedSource[], FeedRun[], FeedConflict[]]>([[], [], []]);
-    const [[overview, agents, services, rules, events, baselines, anomalies, telegramConfig, alerts], [feedSources, feedRuns, feedConflicts]] = await Promise.all([
+    const [[overview, agents, services, rules, events, telegramConfig, alerts], [feedSources, feedRuns, feedConflicts]] = await Promise.all([
       baseRequests,
       feedRequests
     ]);
@@ -97,8 +93,6 @@ export class ApiClient {
       services: asArray(services),
       rules: asArray(rules),
       events: asArray(events),
-      baselines: asArray(baselines),
-      anomalies: asArray(anomalies),
       telegramConfig,
       alerts: asArray(alerts),
       feedSources,

@@ -8,7 +8,7 @@ Admin Dashboard la ops console cho Control Plane Anti-DDoS. Dashboard khong con 
 
 | Role | UI behavior |
 |---|---|
-| `user` | Thay dashboard va duoc mutation config cua chinh minh: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Telegram, Baselines/Anomalies. |
+| `user` | Thay dashboard va duoc mutation config cua chinh minh: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots va Telegram. |
 | `admin` | Thay Accounts de quan ly users va Reputation de quan ly global threat feeds. Co nut `View config` de mo dashboard read-only cua mot user. Khong co mutation controls cho config cua user. |
 
 Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `viewing <username>` va `read only`.
@@ -17,7 +17,7 @@ Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `
 
 | Group | Items |
 |---|---|
-| Operation | Dashboard, Incidents, Detections, Events |
+| Operation | Dashboard, Incidents, Events |
 | Configuration | Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports |
 | Setting | Snapshots, Accounts, Nodes |
 
@@ -26,7 +26,7 @@ Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `
 ## Main workflows
 
 - `POST /v1/auth/login` dang nhap bang `username`/`password`, response khong co tenant fields.
-- Dashboard polling goi overview, agents, services, rules, events, baselines, anomalies, Telegram config va alerts. Chi admin normal session moi goi `/v1/feed-*`; user va admin view-user context khong goi feed endpoints. Dashboard khong goi `/v1/tenants*`.
+- Dashboard polling goi overview, agents, services, rules, events, Telegram config va alerts. Chi admin normal session moi goi `/v1/feed-*`; user va admin view-user context khong goi feed endpoints. Dashboard khong goi `/v1/tenants*`.
 - Services/Rules/Whitelist/Manual Blacklist/UDP Ports/Snapshots chi render mutation controls khi `user.role === "user"` va `read_only` khong bat.
 - Telegram config/test chi cho `user` trong owner context cua chinh minh.
 - Accounts cho `admin` create/update/revoke/reset password/revoke sessions va `View config`.
@@ -48,7 +48,7 @@ Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `
 | Users | `POST /v1/users/{id}/sessions/revoke` | `admin` | Revoke sessions |
 | Config | Services/Rules/Whitelist/Blacklist/UDP Ports/Snapshots/Telegram | `user` owner only | Mutation own config; admin read-only context bi `403` |
 | Reputation | `/v1/feed-sources*`, `/v1/feed-runs`, `/v1/feed-conflicts` | `admin` normal session only | Quan ly global threat feeds; user va admin view-user bi `403` |
-| Dashboard read | Overview/Agents/Services/Rules/Events/Baselines/Anomalies/Alerts | Authenticated | Read owner-scoped data |
+| Dashboard read | Overview/Agents/Services/Rules/Events/Alerts | Authenticated | Read owner-scoped data |
 
 ## Verification
 

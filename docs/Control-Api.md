@@ -27,7 +27,7 @@ Control API la JSON API dung cho dashboard/admin console, agent control loop va 
 
 | Role | Mo ta |
 |---|---|
-| `user` | Doc va mutation config van hanh cua chinh minh: services, rules, whitelist, manual blacklist, UDP ports, snapshots, baselines/anomalies, agents/events/alerts va Telegram |
+| `user` | Doc va mutation config van hanh cua chinh minh: services, rules, whitelist, manual blacklist, UDP ports, snapshots, agents/events/alerts va Telegram |
 | `admin` | Quan ly account lifecycle va mo read-only config context cua tung user qua `/v1/admin/view-user` |
 
 Mutation policy:
@@ -570,37 +570,7 @@ Event query parameters:
 
 Agent event ingest is documented in section 21.
 
-## 19. Baselines and anomalies
-
-Authenticated read. `user` can mutate own baselines and evaluate anomalies; `admin` view-user context is read-only.
-
-| Method | Path | Body/query | Response | Semantics |
-|---|---|---|---|---|
-| GET | `/v1/baselines` | none | `BaselineProfile[]` | List baseline profiles |
-| POST | `/v1/baselines` | `BaselineProfileInput` | `BaselineProfile` | Create baseline |
-| POST | `/v1/baselines/{id}/approve` | `{reason}` | `BaselineProfile` | Approve baseline |
-| POST | `/v1/baselines/{id}/recalibrate` | `BaselineProfileInput` | `BaselineProfile` | Recalibrate baseline |
-| GET | `/v1/anomalies?limit=N` | query | `AnomalyEvaluation[]` | List anomalies |
-| POST | `/v1/anomalies/evaluate` | `{reason}` | `AnomalyEvaluation[]` | Evaluate anomalies and create alert-only operational signals; it does not create mitigation rules |
-
-`AnomalyEvaluation` keeps legacy compatibility fields such as `auto_enforced`, `proposed_rule_id` and `proposed_ttl_seconds`. New evaluations set `auto_enforced=false` and leave proposed rule fields empty; users create any `rate_limit` rule manually through `Rules`.
-
-`BaselineProfileInput` key fields:
-
-- `reason`
-- `service_id`
-- `interface`
-- `protocol`
-- `port`
-- `window`
-- `expected_pps`
-- `expected_bps`
-- `expected_cps`
-- `history_hours`
-- `confidence`
-- `evidence`
-
-## 20. Dashboard read API
+## 19. Dashboard read API
 
 Authenticated. These endpoints are optimized for dashboard polling and view models. Dashboard overview uses owner-scoped control-plane data.
 
@@ -622,7 +592,7 @@ Dashboard overview includes:
 - `snapshot_version`
 - `latest_apply_status`
 
-## 21. Agent control API
+## 20. Agent control API
 
 Agent endpoints use the agent shared bearer token, not user sessions.
 `POST /v1/agents/register` also requires `X-Owner-User-ID` or `X-Owner-Username`. Heartbeat, snapshot, apply and event ingestion resolve owner from `agent_id` after registration.
@@ -689,7 +659,7 @@ Agent endpoints use the agent shared bearer token, not user sessions.
 
 Batch limit: max 1000 events.
 
-## 22. Endpoint summary
+## 21. Endpoint summary
 
 | Domain | Endpoints |
 |---|---|
@@ -699,10 +669,10 @@ Batch limit: max 1000 events.
 | Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist`, `PATCH/DELETE /v1/blacklist/{id}`, `GET/POST /v1/udp-source-port-blocks`, `PATCH/DELETE /v1/udp-source-port-blocks/{id}` |
 | Alerts | `GET/POST /v1/alerts`, `GET /v1/alerts/{id}/deliveries`, `POST /v1/alerts/evaluate-isp-escalation`, `GET/POST /v1/telegram/config`, `POST /v1/telegram/test` |
 | Snapshots | `GET /v1/snapshots`, `GET /v1/snapshots/{version}`, `GET /v1/snapshots/diff`, `POST /v1/snapshots/build`, `POST /v1/snapshots/rollback` |
-| Observability | `GET /v1/audit`, `GET /v1/security-events`, `GET /v1/security-events/summary`, `GET /v1/security-events/investigate`, `GET/POST /v1/baselines`, `POST /v1/baselines/{id}/approve`, `POST /v1/baselines/{id}/recalibrate`, `GET /v1/anomalies`, `POST /v1/anomalies/evaluate`, `GET /v1/dashboard/overview`, `GET /v1/dashboard/agents`, `GET /v1/dashboard/services`, `GET /v1/dashboard/rules` |
+| Observability | `GET /v1/audit`, `GET /v1/security-events`, `GET /v1/security-events/summary`, `GET /v1/security-events/investigate`, `GET /v1/dashboard/overview`, `GET /v1/dashboard/agents`, `GET /v1/dashboard/services`, `GET /v1/dashboard/rules` |
 | Agents | `POST /v1/agents/register`, `POST /v1/agents/{id}/heartbeat`, `GET /v1/agents/{id}/snapshot`, `POST /v1/agents/{id}/apply`, `POST /v1/agents/{id}/events` |
 
-## 23. Verification guidance
+## 22. Verification guidance
 
 When changing Control API behavior, update this document and run relevant gates:
 

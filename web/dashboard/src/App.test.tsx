@@ -52,7 +52,7 @@ describe('DashboardShell RBAC', () => {
     for (const group of ['Operation', 'Configuration', 'Setting']) {
       expect(screen.getByText(group)).toBeInTheDocument();
     }
-    for (const label of ['Dashboard', 'Incidents', 'Detections', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Snapshots', 'Nodes']) {
+    for (const label of ['Dashboard', 'Incidents', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Snapshots', 'Nodes']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
@@ -180,8 +180,6 @@ function dashboardResponses(value: DashboardData): Record<string, unknown> {
     '/v1/dashboard/services': value.services,
     '/v1/dashboard/rules': value.rules,
     '/v1/security-events?limit=50': value.events,
-    '/v1/baselines': value.baselines,
-    '/v1/anomalies?limit=30': value.anomalies,
     '/v1/telegram/config': value.telegramConfig,
     '/v1/alerts?limit=30': value.alerts
   };
