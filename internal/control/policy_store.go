@@ -362,8 +362,14 @@ func scanForwardingPolicy(row rowScanner, policy *ForwardingPolicy) error {
 }
 
 func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input WhitelistInput, reason string) (WhitelistEntry, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, input.Scope, input.ServiceID)
+	if err != nil {
 		return WhitelistEntry{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	input.Scope = legacyScopeForScopeType(scope.ScopeType)
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateWhitelistInput(input); err != nil {
 		return WhitelistEntry{}, err
@@ -377,7 +383,7 @@ func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input Wh
 		return WhitelistEntry{}, err
 	}
 	enabled := boolDefault(input.Enabled, true)
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
@@ -394,18 +400,19 @@ func (s *Store) CreateWhitelistEntry(ctx context.Context, actor *Actor, input Wh
 		expires = input.ExpiresAt
 	}
 	var entry WhitelistEntry
-	err = scanWhitelistEntry(tx.QueryRow(ctx, `INSERT INTO whitelist_entries(id, owner_user_id, ip_or_cidr, scope, service_id, label, reason, owner, priority, expires_at, enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-          expires_at, enabled, created_at, updated_at`,
+	err = scanWhitelistEntry(tx.QueryRow(ctx, `INSERT INTO whitelist_entries(id, owner_user_id, ip_or_cidr, scope, scope_type, service_id, label, reason, owner, priority, expires_at, enabled)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, scope_type, COALESCE(service_id::text, ''), label, reason, owner, priority,
+          expires_at, enabled, true, created_at, updated_at`,
 		id,
-		actorOwnerUserID(actor),
+		scope.OwnerUserID,
 		input.CIDR,
 		normalizeScope(input.Scope),
+		scope.ScopeType,
 		serviceID,
 		input.Label,
 		reason,
-		input.Owner,
+		scope.Owner,
 		defaultPriority(input.Priority),
 		expires,
 		enabled,
@@ -416,21 +423,21 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 	if err := insertAudit(ctx, tx, actor, "create_whitelist", "whitelist_entry", entry.ID, nil, entry, reason, ""); err != nil {
 		return WhitelistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return WhitelistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
-func (s *Store) ListWhitelistEntries(ctx context.Context, query WhitelistEntryQuery) ([]WhitelistEntry, error) {
-	where, args := whitelistEntryWhere(query)
+func (s *Store) ListWhitelistEntries(ctx context.Context, actor *Actor, query WhitelistEntryQuery) ([]WhitelistEntry, error) {
+	where, args := whitelistEntryWhere(actor, query)
 	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT w.id::text, w.ebpf_id, w.ip_or_cidr::text, w.scope, COALESCE(w.service_id::text, ''), w.label, w.reason, w.owner, w.priority,
-          w.expires_at, w.enabled, w.created_at, w.updated_at
+	rows, err := tx.Query(ctx, `SELECT w.id::text, w.ebpf_id, w.ip_or_cidr::text, w.scope, w.scope_type, COALESCE(w.service_id::text, ''), w.label, w.reason, w.owner, w.priority,
+          w.expires_at, w.enabled, `+policyEditableSQL("w", actor)+`, w.created_at, w.updated_at
 FROM whitelist_entries w
 LEFT JOIN backend_services bs ON bs.id = w.service_id
 `+where+` ORDER BY w.priority, w.created_at DESC`, args...)
@@ -456,6 +463,7 @@ func parseWhitelistEntryQuery(values map[string][]string) (WhitelistEntryQuery, 
 	query := WhitelistEntryQuery{
 		Search:    first(values, "q"),
 		Scope:     whitelistQueryValue(first(values, "scope"), "all"),
+		ScopeType: whitelistQueryValue(first(values, "scope_type"), "all"),
 		ServiceID: first(values, "service_id"),
 		State:     whitelistQueryValue(first(values, "state"), "all"),
 		Expiry:    whitelistQueryValue(first(values, "expiry"), "all"),
@@ -464,6 +472,11 @@ func parseWhitelistEntryQuery(values map[string][]string) (WhitelistEntryQuery, 
 	case "all", "global", "service":
 	default:
 		return query, fmt.Errorf("scope must be all, global, or service")
+	}
+	switch query.ScopeType {
+	case "all", ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+	default:
+		return query, fmt.Errorf("scope_type must be all, admin_global, user_global, or service")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -486,8 +499,8 @@ func whitelistQueryValue(value, fallback string) string {
 	return value
 }
 
-func whitelistEntryWhere(query WhitelistEntryQuery) (string, []any) {
-	clauses := []string{"w.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
+func whitelistEntryWhere(actor *Actor, query WhitelistEntryQuery) (string, []any) {
+	clauses := []string{policyListWhere("w", actor)}
 	args := make([]any, 0)
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -504,6 +517,10 @@ func whitelistEntryWhere(query WhitelistEntryQuery) (string, []any) {
 		add("w.scope = $%d", "global")
 	case "service":
 		add("w.scope = $%d", "service")
+	}
+	switch whitelistQueryValue(query.ScopeType, "all") {
+	case ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+		add("w.scope_type = $%d", query.ScopeType)
 	}
 	switch whitelistQueryValue(query.State, "all") {
 	case "enabled":
@@ -539,6 +556,7 @@ func scanWhitelistEntry(row rowScanner, entry *WhitelistEntry) error {
 		&entry.EBPFID,
 		&entry.CIDR,
 		&entry.Scope,
+		&entry.ScopeType,
 		&entry.ServiceID,
 		&entry.Label,
 		&entry.Reason,
@@ -546,6 +564,7 @@ func scanWhitelistEntry(row rowScanner, entry *WhitelistEntry) error {
 		&entry.Priority,
 		&expires,
 		&entry.Enabled,
+		&entry.Editable,
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
 	); err != nil {
@@ -556,8 +575,13 @@ func scanWhitelistEntry(row rowScanner, entry *WhitelistEntry) error {
 }
 
 func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, reason string) (Rule, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return Rule{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateRuleInput(input); err != nil {
 		return Rule{}, err
@@ -584,7 +608,7 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -596,14 +620,15 @@ func (s *Store) CreateRule(ctx context.Context, actor *Actor, input RuleInput, r
 	}
 	var rule Rule
 	err = scanRule(tx.QueryRow(ctx, `INSERT INTO rules(
-    id, owner_user_id, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
+    id, owner_user_id, scope_type, service_id, name, priority, match_expr, action, mode, threshold_pps, threshold_bps, threshold_cps,
     dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence, confidence, enabled, owner
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at`,
+          confidence::float8, enabled, owner, true, created_at, updated_at`,
 		id,
-		actorOwnerUserID(actor),
+		scope.OwnerUserID,
+		scope.ScopeType,
 		serviceID,
 		input.Name,
 		defaultPriority(input.Priority),
@@ -622,7 +647,7 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 		evidence,
 		input.Confidence,
 		enabled,
-		input.Owner,
+		scope.Owner,
 	), &rule)
 	if err != nil {
 		return Rule{}, err
@@ -630,23 +655,23 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 	if err := insertAudit(ctx, tx, actor, "create_rule", "rule", rule.ID, nil, rule, reason, ""); err != nil {
 		return Rule{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return Rule{}, err
 	}
-	return rule, tx.Commit(ctx)
+	return rule, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
-func (s *Store) ListRules(ctx context.Context) ([]Rule, error) {
+func (s *Store) ListRules(ctx context.Context, actor *Actor) ([]Rule, error) {
 	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at
+          confidence::float8, enabled, owner, `+policyEditableSQL("", actor)+`, created_at, updated_at
 FROM rules
-WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+WHERE `+policyListWhere("", actor)+`
 ORDER BY priority, created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -668,12 +693,13 @@ ORDER BY priority, created_at DESC`)
 
 func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
 	if ownerUserIDFromContext(ctx) == "" {
+		adminCount, adminErr := s.expireAdminGlobalTTLRules(ctx)
 		ownerUserIDs, err := s.activeOwnerUserIDs(ctx)
 		if err != nil {
-			return 0, err
+			return adminCount, errors.Join(adminErr, err)
 		}
-		total := 0
-		var joined error
+		total := adminCount
+		var joined error = adminErr
 		for _, ownerUserID := range ownerUserIDs {
 			count, err := s.ExpireTTLRules(contextWithOwner(ctx, ownerUserID))
 			total += count
@@ -689,9 +715,9 @@ func (s *Store) ExpireTTLRules(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback(ctx)
 
-	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
+	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode,
        threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
-       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at
+       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, false, created_at, updated_at
 FROM rules
 WHERE enabled AND expires_at IS NOT NULL AND expires_at <= now()
   AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
@@ -721,9 +747,9 @@ ORDER BY expires_at`)
 		var after Rule
 		err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
 WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
-RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode,
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode,
           threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
-          ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, created_at, updated_at`, before.ID), &after)
+          ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, false, created_at, updated_at`, before.ID), &after)
 		if err != nil {
 			return 0, err
 		}
@@ -737,12 +763,69 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 	return len(expired), tx.Commit(ctx)
 }
 
+func (s *Store) expireAdminGlobalTTLRules(ctx context.Context) (int, error) {
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode,
+       threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
+       ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, false, created_at, updated_at
+FROM rules
+WHERE enabled AND expires_at IS NOT NULL AND expires_at <= now()
+  AND scope_type = 'admin_global'
+ORDER BY expires_at`)
+	if err != nil {
+		return 0, err
+	}
+	var expired []Rule
+	for rows.Next() {
+		var rule Rule
+		if err := scanRule(rows, &rule); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		expired = append(expired, rule)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(expired) == 0 {
+		return 0, tx.Commit(ctx)
+	}
+	for _, before := range expired {
+		var after Rule
+		err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
+WHERE id=$1 AND scope_type = 'admin_global'
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode,
+          threshold_pps, threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom,
+          ttl_seconds, expires_at, evidence, confidence::float8, enabled, owner, false, created_at, updated_at`, before.ID), &after)
+		if err != nil {
+			return 0, err
+		}
+		if err := insertAudit(ctx, tx, nil, "expire_rule", "rule", before.ID, before, after, "ttl expired", ""); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	if _, err := s.rebuildAllActiveUserSnapshots(ctx, nil, "ttl expired"); err != nil {
+		return len(expired), err
+	}
+	return len(expired), nil
+}
+
 func scanRule(row rowScanner, rule *Rule) error {
 	var expires *time.Time
 	if err := row.Scan(
 		&rule.ID,
 		&rule.EBPFID,
 		&rule.ServiceID,
+		&rule.ScopeType,
 		&rule.Name,
 		&rule.Priority,
 		&rule.MatchExpr,
@@ -761,6 +844,7 @@ func scanRule(row rowScanner, rule *Rule) error {
 		&rule.Confidence,
 		&rule.Enabled,
 		&rule.Owner,
+		&rule.Editable,
 		&rule.CreatedAt,
 		&rule.UpdatedAt,
 	); err != nil {
@@ -771,8 +855,13 @@ func scanRule(row rowScanner, rule *Rule) error {
 }
 
 func (s *Store) CreateBlacklistEntry(ctx context.Context, actor *Actor, input BlacklistInput, reason string) (BlacklistEntry, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return BlacklistEntry{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateBlacklistInput(input); err != nil {
 		return BlacklistEntry{}, err
@@ -790,32 +879,44 @@ func (s *Store) CreateBlacklistEntry(ctx context.Context, actor *Actor, input Bl
 	if strings.TrimSpace(input.RuleID) != "" {
 		ruleID = strings.TrimSpace(input.RuleID)
 	}
+	var serviceID any
+	if strings.TrimSpace(input.ServiceID) != "" {
+		serviceID = strings.TrimSpace(input.ServiceID)
+	}
 	var expires any
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	defer tx.Rollback(ctx)
+	if strings.TrimSpace(input.ServiceID) != "" {
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return BlacklistEntry{}, err
+		}
+	}
 	if strings.TrimSpace(input.RuleID) != "" {
-		if _, err := getRule(ctx, tx, strings.TrimSpace(input.RuleID)); err != nil {
+		if _, err := getRule(ctx, tx, strings.TrimSpace(input.RuleID), scope); err != nil {
 			return BlacklistEntry{}, err
 		}
 	}
 	var entry BlacklistEntry
-	err = scanBlacklistEntry(tx.QueryRow(ctx, `INSERT INTO manual_blacklist_entries(id, owner_user_id, ip_or_cidr, score, action, source, rule_id, reason, expires_at, enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`,
+	err = scanBlacklistEntry(tx.QueryRow(ctx, `INSERT INTO manual_blacklist_entries(id, owner_user_id, scope_type, service_id, ip_or_cidr, score, action, source, rule_id, reason, owner, expires_at, enabled)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope_type, COALESCE(service_id::text, ''), score, action, source, COALESCE(rule_id::text, ''), reason, owner, expires_at, enabled, true, created_at, updated_at`,
 		id,
-		actorOwnerUserID(actor),
+		scope.OwnerUserID,
+		scope.ScopeType,
+		serviceID,
 		input.CIDR,
 		input.Score,
 		normalizeBlacklistAction(input.Action),
 		input.Source,
 		ruleID,
 		reason,
+		scope.Owner,
 		expires,
 		enabled,
 	), &entry)
@@ -825,20 +926,20 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 	if err := insertAudit(ctx, tx, actor, "create_blacklist", "manual_blacklist_entry", entry.ID, nil, entry, reason, ""); err != nil {
 		return BlacklistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return BlacklistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
-func (s *Store) ListBlacklistEntries(ctx context.Context, query BlacklistEntryQuery) ([]BlacklistEntry, error) {
-	where, args := blacklistEntryWhere(query)
+func (s *Store) ListBlacklistEntries(ctx context.Context, actor *Actor, query BlacklistEntryQuery) ([]BlacklistEntry, error) {
+	where, args := blacklistEntryWhere(actor, query)
 	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT b.id::text, b.ebpf_id, b.ip_or_cidr::text, b.score, b.action, b.source, COALESCE(b.rule_id::text, ''), b.reason, b.expires_at, b.enabled, b.created_at, b.updated_at
+	rows, err := tx.Query(ctx, `SELECT b.id::text, b.ebpf_id, b.ip_or_cidr::text, b.scope_type, COALESCE(b.service_id::text, ''), b.score, b.action, b.source, COALESCE(b.rule_id::text, ''), b.reason, b.owner, b.expires_at, b.enabled, `+policyEditableSQL("b", actor)+`, b.created_at, b.updated_at
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
 `+where+` ORDER BY b.created_at DESC`, args...)
@@ -860,9 +961,9 @@ LEFT JOIN rules r ON r.id = b.rule_id
 	return out, tx.Commit(ctx)
 }
 
-func (s *Store) ListBlacklistEntryRows(ctx context.Context, query BlacklistEntriesQuery) (BlacklistEntriesPage, error) {
+func (s *Store) ListBlacklistEntryRows(ctx context.Context, actor *Actor, query BlacklistEntriesQuery) (BlacklistEntriesPage, error) {
 	query = normalizeBlacklistEntriesQuery(query)
-	where, args := blacklistEntriesWhere(query)
+	where, args := blacklistEntriesWhere(actor, query)
 	page := BlacklistEntriesPage{Page: query.Page, PageSize: query.PageSize}
 	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
@@ -882,7 +983,8 @@ func (s *Store) ListBlacklistEntryRows(ctx context.Context, query BlacklistEntri
 	args = append(args, int64(query.PageSize), int64(query.Page)*int64(query.PageSize))
 	rows, err := tx.Query(ctx, blacklistEntriesCTE()+`
 SELECT c.id, c.ebpf_id, c.cidr, c.score, c.action, c.source, c.source_name, c.rule_id, c.reason, c.expires_at,
-       c.enabled, c.status, c.origin, c.editable, c.created_at, c.updated_at
+       c.enabled, c.status, c.origin, (c.origin = 'manual' AND `+policyEditableSQL("c", actor)+`) AS editable,
+       c.created_at, c.updated_at, c.scope_type, c.service_id, c.owner
 FROM combined c
 `+where+fmt.Sprintf(` ORDER BY c.created_at DESC, c.origin, c.cidr, c.id LIMIT $%d OFFSET $%d`, limitArg, offsetArg), args...)
 	if err != nil {
@@ -905,10 +1007,17 @@ FROM combined c
 
 func parseBlacklistEntryQuery(values map[string][]string) (BlacklistEntryQuery, error) {
 	query := BlacklistEntryQuery{
-		Search: first(values, "q"),
-		Source: strings.TrimSpace(first(values, "source")),
-		State:  blacklistQueryValue(first(values, "state"), "all"),
-		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+		Search:    first(values, "q"),
+		Source:    strings.TrimSpace(first(values, "source")),
+		ScopeType: blacklistQueryValue(first(values, "scope_type"), "all"),
+		ServiceID: first(values, "service_id"),
+		State:     blacklistQueryValue(first(values, "state"), "all"),
+		Expiry:    blacklistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.ScopeType {
+	case "all", ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+	default:
+		return query, fmt.Errorf("scope_type must be all, admin_global, user_global, or service")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -925,16 +1034,23 @@ func parseBlacklistEntryQuery(values map[string][]string) (BlacklistEntryQuery, 
 
 func parseBlacklistEntriesQuery(values map[string][]string) (BlacklistEntriesQuery, error) {
 	query := BlacklistEntriesQuery{
-		Search: first(values, "q"),
-		Source: strings.TrimSpace(first(values, "source")),
-		Origin: blacklistQueryValue(first(values, "origin"), "all"),
-		State:  blacklistQueryValue(first(values, "state"), "all"),
-		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+		Search:    first(values, "q"),
+		Source:    strings.TrimSpace(first(values, "source")),
+		Origin:    blacklistQueryValue(first(values, "origin"), "all"),
+		ScopeType: blacklistQueryValue(first(values, "scope_type"), "all"),
+		ServiceID: first(values, "service_id"),
+		State:     blacklistQueryValue(first(values, "state"), "all"),
+		Expiry:    blacklistQueryValue(first(values, "expiry"), "all"),
 	}
 	switch query.Origin {
 	case "all", "manual", "feed":
 	default:
 		return query, fmt.Errorf("origin must be all, manual, or feed")
+	}
+	switch query.ScopeType {
+	case "all", ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+	default:
+		return query, fmt.Errorf("scope_type must be all, admin_global, user_global, or service")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -971,6 +1087,9 @@ func normalizeBlacklistEntriesQuery(query BlacklistEntriesQuery) BlacklistEntrie
 	if query.Origin == "" {
 		query.Origin = "all"
 	}
+	if query.ScopeType == "" {
+		query.ScopeType = "all"
+	}
 	if query.State == "" {
 		query.State = "all"
 	}
@@ -998,8 +1117,8 @@ func parseOptionalUintQuery(values map[string][]string, key string) (uint32, err
 	return uint32(parsed), nil
 }
 
-func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
-	clauses := []string{"b.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
+func blacklistEntryWhere(actor *Actor, query BlacklistEntryQuery) (string, []any) {
+	clauses := []string{policyListWhere("b", actor)}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
@@ -1011,6 +1130,15 @@ func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
 		args = append(args, source)
 		idx := len(args)
 		clauses = append(clauses, fmt.Sprintf("LOWER(b.source) = LOWER($%d)", idx))
+	}
+	switch blacklistQueryValue(query.ScopeType, "all") {
+	case ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+		args = append(args, query.ScopeType)
+		clauses = append(clauses, fmt.Sprintf("b.scope_type = $%d", len(args)))
+	}
+	if serviceID := strings.TrimSpace(query.ServiceID); serviceID != "" {
+		args = append(args, serviceID)
+		clauses = append(clauses, fmt.Sprintf("b.service_id = $%d", len(args)))
 	}
 	switch blacklistQueryValue(query.State, "all") {
 	case "enabled":
@@ -1032,8 +1160,8 @@ func blacklistEntryWhere(query BlacklistEntryQuery) (string, []any) {
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
-func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
-	clauses := []string{"c.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
+func blacklistEntriesWhere(actor *Actor, query BlacklistEntriesQuery) (string, []any) {
+	clauses := []string{policyListWhere("c", actor)}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
@@ -1051,6 +1179,15 @@ func blacklistEntriesWhere(query BlacklistEntriesQuery) (string, []any) {
 		clauses = append(clauses, "c.origin = 'manual'")
 	case "feed":
 		clauses = append(clauses, "c.origin = 'feed'")
+	}
+	switch blacklistQueryValue(query.ScopeType, "all") {
+	case ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+		args = append(args, query.ScopeType)
+		clauses = append(clauses, fmt.Sprintf("c.scope_type = $%d", len(args)))
+	}
+	if serviceID := strings.TrimSpace(query.ServiceID); serviceID != "" {
+		args = append(args, serviceID)
+		clauses = append(clauses, fmt.Sprintf("c.service_id = $%d", len(args)))
 	}
 	switch blacklistQueryValue(query.State, "all") {
 	case "enabled":
@@ -1091,7 +1228,10 @@ SELECT b.id::text AS id,
        b.created_at AS created_at,
        b.updated_at AS updated_at,
        b.owner_user_id AS owner_user_id,
-       COALESCE(r.name, '') AS rule_name
+       COALESCE(r.name, '') AS rule_name,
+       b.scope_type AS scope_type,
+       COALESCE(b.service_id::text, '') AS service_id,
+       b.owner AS owner
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
 UNION ALL
@@ -1112,7 +1252,10 @@ SELECT re.id::text AS id,
        re.first_seen_at AS created_at,
        re.last_seen_at AS updated_at,
        NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid AS owner_user_id,
-       ''::text AS rule_name
+       ''::text AS rule_name,
+       'admin_global'::text AS scope_type,
+       ''::text AS service_id,
+       fs.name AS owner
 FROM reputation_entries re
 JOIN feed_sources fs ON fs.id = re.source_id
 WHERE fs.owner_user_id IS NULL AND re.owner_user_id IS NULL
@@ -1125,13 +1268,17 @@ func scanBlacklistEntry(row rowScanner, entry *BlacklistEntry) error {
 		&entry.ID,
 		&entry.EBPFID,
 		&entry.CIDR,
+		&entry.ScopeType,
+		&entry.ServiceID,
 		&entry.Score,
 		&entry.Action,
 		&entry.Source,
 		&entry.RuleID,
 		&entry.Reason,
+		&entry.Owner,
 		&expires,
 		&entry.Enabled,
+		&entry.Editable,
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
 	); err != nil {
@@ -1160,6 +1307,9 @@ func scanBlacklistEntryRow(row rowScanner, entry *BlacklistEntryRow) error {
 		&entry.Editable,
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
+		&entry.ScopeType,
+		&entry.ServiceID,
+		&entry.Owner,
 	); err != nil {
 		return err
 	}
@@ -1168,8 +1318,13 @@ func scanBlacklistEntryRow(row rowScanner, entry *BlacklistEntryRow) error {
 }
 
 func (s *Store) CreateUDPSourcePortBlock(ctx context.Context, actor *Actor, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return UDPSourcePortBlock{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateUDPSourcePortBlockInput(input); err != nil {
 		return UDPSourcePortBlock{}, err
@@ -1187,21 +1342,30 @@ func (s *Store) CreateUDPSourcePortBlock(ctx context.Context, actor *Actor, inpu
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
-	tx, err := s.beginActorOwnerTx(ctx, actor)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	defer tx.Rollback(ctx)
+	var serviceID any
+	if strings.TrimSpace(input.ServiceID) != "" {
+		serviceID = strings.TrimSpace(input.ServiceID)
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return UDPSourcePortBlock{}, err
+		}
+	}
 	var entry UDPSourcePortBlock
-	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, expires_at, enabled)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
+	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, scope_type, service_id, port, label, reason, owner, expires_at, enabled)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+RETURNING id::text, ebpf_id, port, scope_type, COALESCE(service_id::text, ''), label, reason, owner, expires_at, enabled, true, created_at, updated_at`,
 		id,
-		actorOwnerUserID(actor),
+		scope.OwnerUserID,
+		scope.ScopeType,
+		serviceID,
 		input.Port,
 		strings.TrimSpace(input.Label),
 		reason,
-		strings.TrimSpace(input.Owner),
+		scope.Owner,
 		expires,
 		enabled,
 	), &entry)
@@ -1211,20 +1375,20 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 	if err := insertAudit(ctx, tx, actor, "create_udp_source_port_block", "udp_source_port_block", entry.ID, nil, entry, reason, ""); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
-func (s *Store) ListUDPSourcePortBlocks(ctx context.Context, query UDPSourcePortBlockQuery) ([]UDPSourcePortBlock, error) {
-	where, args := udpSourcePortBlockWhere(query)
+func (s *Store) ListUDPSourcePortBlocks(ctx context.Context, actor *Actor, query UDPSourcePortBlockQuery) ([]UDPSourcePortBlock, error) {
+	where, args := udpSourcePortBlockWhere(actor, query)
 	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at
+	rows, err := tx.Query(ctx, `SELECT id::text, ebpf_id, port, scope_type, COALESCE(service_id::text, ''), label, reason, owner, expires_at, enabled, `+policyEditableSQL("", actor)+`, created_at, updated_at
 FROM udp_source_port_blocks
 `+where+` ORDER BY port ASC`, args...)
 	if err != nil {
@@ -1247,9 +1411,16 @@ FROM udp_source_port_blocks
 
 func parseUDPSourcePortBlockQuery(values map[string][]string) (UDPSourcePortBlockQuery, error) {
 	query := UDPSourcePortBlockQuery{
-		Search: first(values, "q"),
-		State:  blacklistQueryValue(first(values, "state"), "all"),
-		Expiry: blacklistQueryValue(first(values, "expiry"), "all"),
+		Search:    first(values, "q"),
+		ScopeType: blacklistQueryValue(first(values, "scope_type"), "all"),
+		ServiceID: first(values, "service_id"),
+		State:     blacklistQueryValue(first(values, "state"), "all"),
+		Expiry:    blacklistQueryValue(first(values, "expiry"), "all"),
+	}
+	switch query.ScopeType {
+	case "all", ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+	default:
+		return query, fmt.Errorf("scope_type must be all, admin_global, user_global, or service")
 	}
 	switch query.State {
 	case "all", "enabled", "disabled":
@@ -1264,14 +1435,23 @@ func parseUDPSourcePortBlockQuery(values map[string][]string) (UDPSourcePortBloc
 	return query, nil
 }
 
-func udpSourcePortBlockWhere(query UDPSourcePortBlockQuery) (string, []any) {
-	clauses := []string{"owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
+func udpSourcePortBlockWhere(actor *Actor, query UDPSourcePortBlockQuery) (string, []any) {
+	clauses := []string{policyListWhere("", actor)}
 	args := make([]any, 0)
 
 	if search := strings.TrimSpace(query.Search); search != "" {
 		args = append(args, "%"+search+"%")
 		idx := len(args)
 		clauses = append(clauses, fmt.Sprintf(`(port::text ILIKE $%d OR label ILIKE $%d OR reason ILIKE $%d OR owner ILIKE $%d)`, idx, idx, idx, idx))
+	}
+	switch blacklistQueryValue(query.ScopeType, "all") {
+	case ScopeTypeAdminGlobal, ScopeTypeUserGlobal, ScopeTypeService:
+		args = append(args, query.ScopeType)
+		clauses = append(clauses, fmt.Sprintf("scope_type = $%d", len(args)))
+	}
+	if serviceID := strings.TrimSpace(query.ServiceID); serviceID != "" {
+		args = append(args, serviceID)
+		clauses = append(clauses, fmt.Sprintf("service_id = $%d", len(args)))
 	}
 	switch blacklistQueryValue(query.State, "all") {
 	case "enabled":
@@ -1300,11 +1480,14 @@ func scanUDPSourcePortBlock(row rowScanner, entry *UDPSourcePortBlock) error {
 		&entry.ID,
 		&entry.EBPFID,
 		&port,
+		&entry.ScopeType,
+		&entry.ServiceID,
 		&entry.Label,
 		&entry.Reason,
 		&entry.Owner,
 		&expires,
 		&entry.Enabled,
+		&entry.Editable,
 		&entry.CreatedAt,
 		&entry.UpdatedAt,
 	); err != nil {
@@ -1655,15 +1838,13 @@ func validateWhitelistInput(input WhitelistInput) error {
 	if _, err := parseCIDR(input.CIDR); err != nil {
 		errs = append(errs, fmt.Errorf("cidr: %w", err))
 	}
-	scope := normalizeScope(input.Scope)
-	if scope != "global" && scope != "service" {
+	legacyScope := normalizeScope(input.Scope)
+	if legacyScope != "global" && legacyScope != "service" {
 		errs = append(errs, errors.New("scope must be global or service"))
 	}
-	if scope == "service" && strings.TrimSpace(input.ServiceID) == "" {
-		errs = append(errs, errors.New("service scoped whitelist requires service_id"))
-	}
-	if strings.TrimSpace(input.Owner) == "" {
-		errs = append(errs, errors.New("owner is required"))
+	scopeType := effectiveScopeType(input.ScopeType, input.Scope, input.ServiceID)
+	if err := validatePolicyScope(scopeType, strings.TrimSpace(input.ServiceID)); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -1691,8 +1872,9 @@ func validateRuleInput(input RuleInput) error {
 	default:
 		errs = append(errs, errors.New("dimension must be source, service or source_service"))
 	}
-	if strings.TrimSpace(input.Owner) == "" {
-		errs = append(errs, errors.New("owner is required"))
+	scopeType := effectiveScopeType(input.ScopeType, "", input.ServiceID)
+	if err := validatePolicyScope(scopeType, strings.TrimSpace(input.ServiceID)); err != nil {
+		errs = append(errs, err)
 	}
 	if len(input.MatchExpr) > 0 && !json.Valid(input.MatchExpr) {
 		errs = append(errs, errors.New("match_expr must be valid JSON"))
@@ -1714,13 +1896,18 @@ func validateBlacklistInput(input BlacklistInput) error {
 	if strings.TrimSpace(input.Source) == "" {
 		errs = append(errs, errors.New("source is required"))
 	}
+	scopeType := effectiveScopeType(input.ScopeType, "", input.ServiceID)
+	if err := validatePolicyScope(scopeType, strings.TrimSpace(input.ServiceID)); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
 func validateUDPSourcePortBlockInput(input UDPSourcePortBlockInput) error {
 	var errs []error
-	if strings.TrimSpace(input.Owner) == "" {
-		errs = append(errs, errors.New("owner is required"))
+	scopeType := effectiveScopeType(input.ScopeType, "", input.ServiceID)
+	if err := validatePolicyScope(scopeType, strings.TrimSpace(input.ServiceID)); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

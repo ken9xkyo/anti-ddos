@@ -373,7 +373,7 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListWhitelistEntries(r.Context(), query)
+		entries, err := s.store.ListWhitelistEntries(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req WhitelistInput
@@ -420,7 +420,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := s.store.ListRules(r.Context())
+		rules, err := s.store.ListRules(r.Context(), actor)
 		writeResult(w, rules, err)
 	case http.MethodPost:
 		var req RuleInput
@@ -472,7 +472,7 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListBlacklistEntries(r.Context(), query)
+		entries, err := s.store.ListBlacklistEntries(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req BlacklistInput
@@ -487,7 +487,7 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBlacklistEntries(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.requireActor(w, r)
+	actor, ok := s.requireActor(w, r)
 	if !ok {
 		return
 	}
@@ -500,7 +500,7 @@ func (s *Server) handleBlacklistEntries(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	entries, err := s.store.ListBlacklistEntryRows(r.Context(), query)
+	entries, err := s.store.ListBlacklistEntryRows(r.Context(), actor, query)
 	writeResult(w, entries, err)
 }
 
@@ -542,7 +542,7 @@ func (s *Server) handleUDPSourcePortBlocks(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListUDPSourcePortBlocks(r.Context(), query)
+		entries, err := s.store.ListUDPSourcePortBlocks(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req UDPSourcePortBlockInput

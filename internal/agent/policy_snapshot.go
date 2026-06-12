@@ -56,6 +56,8 @@ type PolicyCIDREntry struct {
 type PolicyUDPSourcePortBlock struct {
 	EntryID         uint32 `json:"entry_id"`
 	Port            uint16 `json:"port"`
+	Scope           uint32 `json:"scope,omitempty"`
+	ServiceID       uint32 `json:"service_id,omitempty"`
 	ExpiresAtUnixNS uint64 `json:"expires_at_unix_ns,omitempty"`
 }
 
@@ -78,6 +80,7 @@ type PolicyService struct {
 
 type PolicyRule struct {
 	RuleID          uint32 `json:"rule_id"`
+	ScopeType       string `json:"scope_type,omitempty"`
 	Priority        uint32 `json:"priority"`
 	Action          uint32 `json:"action"`
 	Mode            uint32 `json:"mode"`
@@ -126,12 +129,14 @@ type canonicalPolicySnapshot struct {
 }
 
 var supportedPolicyFeatureFlags = map[string]struct{}{
-	"policy_snapshot_v1":          {},
-	"ipv4":                        {},
-	"ab_policy_maps":              {},
-	"tx_devmap":                   {},
-	"udp_src_port_block":          {},
-	"service_scoped_whitelist_v4": {},
+	"policy_snapshot_v1":                {},
+	"ipv4":                              {},
+	"ab_policy_maps":                    {},
+	"tx_devmap":                         {},
+	"udp_src_port_block":                {},
+	"service_scoped_whitelist_v4":       {},
+	"service_scoped_blacklist_v4":       {},
+	"service_scoped_udp_src_port_block": {},
 }
 
 func LoadPolicySnapshot(path string) (PolicySnapshot, error) {
@@ -275,6 +280,12 @@ func normalizePolicySnapshot(snapshot PolicySnapshot) PolicySnapshot {
 		if left.Port != right.Port {
 			return left.Port < right.Port
 		}
+		if left.Scope != right.Scope {
+			return left.Scope < right.Scope
+		}
+		if left.ServiceID != right.ServiceID {
+			return left.ServiceID < right.ServiceID
+		}
 		return left.EntryID < right.EntryID
 	})
 	sort.Slice(snapshot.Services, func(i, j int) bool {
@@ -329,8 +340,12 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 			return ExpectedMaps["whitelist_service_v4_a"].MaxEntries
 		case "blacklist_v4":
 			return ExpectedMaps["blacklist_v4_a"].MaxEntries
+		case "blacklist_service_v4":
+			return ExpectedMaps["blacklist_service_v4_a"].MaxEntries
 		case "udp_source_port_blocks":
 			return ExpectedMaps["udp_src_port_blocks_a"].MaxEntries
+		case "udp_source_port_service_blocks":
+			return ExpectedMaps["udp_src_port_service_blocks_a"].MaxEntries
 		case "service_allowlist":
 			return ExpectedMaps["service_allowlist_a"].MaxEntries
 		case "rule_config":
@@ -400,35 +415,78 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 	addStat("whitelist_v4", whitelistGlobalEntries, unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
 	addStat("whitelist_service_v4", whitelistServiceEntries, unsafe.Sizeof(ServiceLPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
 
-	blacklistKeys := make(map[string]struct{}, len(snapshot.BlacklistV4))
+	blacklistGlobalKeys := make(map[string]struct{}, len(snapshot.BlacklistV4))
+	blacklistServiceKeys := make(map[string]struct{}, len(snapshot.BlacklistV4))
+	var blacklistGlobalEntries uint32
+	var blacklistServiceEntries uint32
 	for _, entry := range snapshot.BlacklistV4 {
-		key, err := cidrPolicyKey(entry)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("blacklist_v4 entry %d: %w", entry.EntryID, err))
-			continue
-		}
 		if entry.ExpiresAtUnixNS != 0 && entry.ExpiresAtUnixNS <= nowNS {
 			errs = append(errs, fmt.Errorf("blacklist_v4 entry %d is expired", entry.EntryID))
 		}
-		mapKey := fmt.Sprintf("%d:%d", key.PrefixLen, key.Addr)
-		if _, ok := blacklistKeys[mapKey]; ok {
-			errs = append(errs, fmt.Errorf("duplicate blacklist_v4 key %s", entry.CIDR))
+		switch entry.Scope {
+		case policyScopeGlobal:
+			key, err := cidrPolicyKey(entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("blacklist_v4 entry %d: %w", entry.EntryID, err))
+				continue
+			}
+			mapKey := fmt.Sprintf("%d:%d", key.PrefixLen, key.Addr)
+			if _, ok := blacklistGlobalKeys[mapKey]; ok {
+				errs = append(errs, fmt.Errorf("duplicate blacklist_v4 key %s", entry.CIDR))
+			}
+			blacklistGlobalKeys[mapKey] = struct{}{}
+			blacklistGlobalEntries++
+		case policyScopeService:
+			key, err := serviceCIDRPolicyKey(entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("blacklist_service_v4 entry %d: %w", entry.EntryID, err))
+				continue
+			}
+			mapKey := fmt.Sprintf("%d:%d:%d", key.ServiceID, key.PrefixLen, key.Addr)
+			if _, ok := blacklistServiceKeys[mapKey]; ok {
+				errs = append(errs, fmt.Errorf("duplicate blacklist_service_v4 key service_id=%d cidr=%s", entry.ServiceID, entry.CIDR))
+			}
+			blacklistServiceKeys[mapKey] = struct{}{}
+			blacklistServiceEntries++
+		default:
+			errs = append(errs, fmt.Errorf("blacklist_v4 entry %d has unsupported scope %d", entry.EntryID, entry.Scope))
 		}
-		blacklistKeys[mapKey] = struct{}{}
 	}
-	addStat("blacklist_v4", uint32(len(snapshot.BlacklistV4)), unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
+	addStat("blacklist_v4", blacklistGlobalEntries, unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
+	addStat("blacklist_service_v4", blacklistServiceEntries, unsafe.Sizeof(ServiceLPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
 
 	udpPortKeys := make(map[uint16]struct{}, len(snapshot.UDPSourcePortBlocks))
+	udpServiceKeys := make(map[ServiceUDPSourcePortKey]struct{}, len(snapshot.UDPSourcePortBlocks))
+	var udpGlobalEntries uint32
+	var udpServiceEntries uint32
 	for _, entry := range snapshot.UDPSourcePortBlocks {
 		if entry.ExpiresAtUnixNS != 0 && entry.ExpiresAtUnixNS <= nowNS {
 			errs = append(errs, fmt.Errorf("udp_source_port_blocks entry %d is expired", entry.EntryID))
 		}
-		if _, ok := udpPortKeys[entry.Port]; ok {
-			errs = append(errs, fmt.Errorf("duplicate udp_source_port_blocks port %d", entry.Port))
+		switch entry.Scope {
+		case policyScopeGlobal:
+			if _, ok := udpPortKeys[entry.Port]; ok {
+				errs = append(errs, fmt.Errorf("duplicate udp_source_port_blocks port %d", entry.Port))
+			}
+			udpPortKeys[entry.Port] = struct{}{}
+			udpGlobalEntries++
+		case policyScopeService:
+			if entry.ServiceID == 0 {
+				errs = append(errs, fmt.Errorf("udp_source_port_blocks entry %d service scope requires service_id", entry.EntryID))
+				continue
+			}
+			key := ServiceUDPSourcePortKey{ServiceID: entry.ServiceID, Port: uint32(entry.Port)}
+			if _, ok := udpServiceKeys[key]; ok {
+				errs = append(errs, fmt.Errorf("duplicate udp_source_port_service_blocks service_id=%d port %d", entry.ServiceID, entry.Port))
+			}
+			udpServiceKeys[key] = struct{}{}
+			udpServiceEntries++
+		default:
+			errs = append(errs, fmt.Errorf("udp_source_port_blocks entry %d has unsupported scope %d", entry.EntryID, entry.Scope))
 		}
-		udpPortKeys[entry.Port] = struct{}{}
 	}
-	addStat("udp_source_port_blocks", uint32(len(snapshot.UDPSourcePortBlocks)), unsafe.Sizeof(uint32(0)), unsafe.Sizeof(UDPSourcePortBlockValue{}))
+	addStat("udp_source_port_blocks", udpGlobalEntries, unsafe.Sizeof(uint32(0)), unsafe.Sizeof(UDPSourcePortBlockValue{}))
+	addStat("udp_source_port_service_blocks", udpServiceEntries, unsafe.Sizeof(ServiceUDPSourcePortKey{}), unsafe.Sizeof(UDPSourcePortBlockValue{}))
 
 	serviceKeys := make(map[ServiceKey]struct{}, len(snapshot.Services))
 	devmapTargets := make(map[uint32]uint32)
@@ -515,7 +573,7 @@ func cidrPolicyKey(entry PolicyCIDREntry) (LPMV4Key, error) {
 
 func serviceCIDRPolicyKey(entry PolicyCIDREntry) (ServiceLPMV4Key, error) {
 	if entry.ServiceID == 0 {
-		return ServiceLPMV4Key{}, errors.New("service-scoped whitelist requires service_id")
+		return ServiceLPMV4Key{}, errors.New("service-scoped CIDR entry requires service_id")
 	}
 	prefix, err := parseV4Prefix(entry.CIDR)
 	if err != nil {
@@ -547,6 +605,18 @@ func udpSourcePortBlockMapEntry(entry PolicyUDPSourcePortBlock) (uint32, UDPSour
 	return uint32(entry.Port), UDPSourcePortBlockValue{
 		EntryID:         entry.EntryID,
 		Port:            uint32(entry.Port),
+		Scope:           entry.Scope,
+		ServiceID:       entry.ServiceID,
+		ExpiresAtUnixNS: entry.ExpiresAtUnixNS,
+	}
+}
+
+func udpSourcePortServiceBlockMapEntry(entry PolicyUDPSourcePortBlock) (ServiceUDPSourcePortKey, UDPSourcePortBlockValue) {
+	return ServiceUDPSourcePortKey{ServiceID: entry.ServiceID, Port: uint32(entry.Port)}, UDPSourcePortBlockValue{
+		EntryID:         entry.EntryID,
+		Port:            uint32(entry.Port),
+		Scope:           entry.Scope,
+		ServiceID:       entry.ServiceID,
 		ExpiresAtUnixNS: entry.ExpiresAtUnixNS,
 	}
 }

@@ -1042,6 +1042,104 @@ CREATE INDEX IF NOT EXISTS feed_runs_global_started_idx ON feed_runs(source_id, 
 CREATE INDEX IF NOT EXISTS reputation_entries_global_source_status_idx ON reputation_entries(source_id, status) WHERE owner_user_id IS NULL;
 	`,
 	},
+	{
+		Version: 11,
+		Name:    "policy_scope_model_operational_reset",
+		SQL: `
+TRUNCATE TABLE
+    alert_deliveries,
+    alerts,
+    alert_policies,
+    telegram_configs,
+    anomaly_evaluations,
+    baseline_profiles,
+    security_events,
+    policy_apply_status,
+    policy_snapshots,
+    feed_conflicts,
+    manual_blacklist_entries,
+    whitelist_entries,
+    rules,
+    forwarding_policies,
+    backend_services,
+    agent_interfaces,
+    agents,
+    udp_source_port_blocks,
+    audit_events
+RESTART IDENTITY CASCADE;
+
+ALTER TABLE whitelist_entries ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user_global';
+ALTER TABLE rules ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user_global';
+ALTER TABLE manual_blacklist_entries ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user_global';
+ALTER TABLE manual_blacklist_entries ADD COLUMN IF NOT EXISTS service_id uuid REFERENCES backend_services(id) ON DELETE CASCADE;
+ALTER TABLE manual_blacklist_entries ADD COLUMN IF NOT EXISTS owner text NOT NULL DEFAULT 'system';
+ALTER TABLE udp_source_port_blocks ADD COLUMN IF NOT EXISTS scope_type text NOT NULL DEFAULT 'user_global';
+ALTER TABLE udp_source_port_blocks ADD COLUMN IF NOT EXISTS service_id uuid REFERENCES backend_services(id) ON DELETE CASCADE;
+
+ALTER TABLE whitelist_entries DROP CONSTRAINT IF EXISTS whitelist_entries_scope_type_check;
+ALTER TABLE whitelist_entries ADD CONSTRAINT whitelist_entries_scope_type_check CHECK (scope_type IN ('admin_global', 'user_global', 'service'));
+ALTER TABLE rules DROP CONSTRAINT IF EXISTS rules_scope_type_check;
+ALTER TABLE rules ADD CONSTRAINT rules_scope_type_check CHECK (scope_type IN ('admin_global', 'user_global', 'service'));
+ALTER TABLE manual_blacklist_entries DROP CONSTRAINT IF EXISTS manual_blacklist_entries_scope_type_check;
+ALTER TABLE manual_blacklist_entries ADD CONSTRAINT manual_blacklist_entries_scope_type_check CHECK (scope_type IN ('admin_global', 'user_global', 'service'));
+ALTER TABLE udp_source_port_blocks DROP CONSTRAINT IF EXISTS udp_source_port_blocks_scope_type_check;
+ALTER TABLE udp_source_port_blocks ADD CONSTRAINT udp_source_port_blocks_scope_type_check CHECK (scope_type IN ('admin_global', 'user_global', 'service'));
+
+ALTER TABLE udp_source_port_blocks DROP CONSTRAINT IF EXISTS udp_source_port_blocks_port_key;
+DROP INDEX IF EXISTS udp_source_port_blocks_owner_port_unique_idx;
+
+CREATE INDEX IF NOT EXISTS whitelist_entries_scope_type_idx ON whitelist_entries(scope_type, owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS rules_scope_type_idx ON rules(scope_type, owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS manual_blacklist_entries_scope_type_idx ON manual_blacklist_entries(scope_type, owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS manual_blacklist_entries_service_id_idx ON manual_blacklist_entries(service_id);
+CREATE INDEX IF NOT EXISTS udp_source_port_blocks_scope_type_idx ON udp_source_port_blocks(scope_type, owner_user_id, service_id);
+CREATE INDEX IF NOT EXISTS udp_source_port_blocks_service_id_idx ON udp_source_port_blocks(service_id);
+
+WITH seed(port, label) AS (
+    VALUES
+    (0, 'reserved source port'),
+    (19, 'CHARGEN'),
+    (53, 'DNS'),
+    (69, 'TFTP'),
+    (111, 'SunRPC'),
+    (123, 'NTP'),
+    (137, 'NetBIOS'),
+    (161, 'SNMP'),
+    (162, 'SNMP trap'),
+    (389, 'CLDAP'),
+    (427, 'SLP'),
+    (520, 'RIP'),
+    (1194, 'OpenVPN'),
+    (1900, 'SSDP'),
+    (3702, 'WS-Discovery'),
+    (5353, 'mDNS'),
+    (10001, 'Ubiquiti discovery'),
+    (11211, 'Memcached'),
+    (20800, 'Call of Duty'),
+    (27005, 'SRCDS')
+)
+INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, scope_type, enabled)
+SELECT (
+        substr(h.hash, 1, 8) || '-' ||
+        substr(h.hash, 9, 4) || '-' ||
+        substr(h.hash, 13, 4) || '-' ||
+        substr(h.hash, 17, 4) || '-' ||
+        substr(h.hash, 21, 12)
+    )::uuid,
+    u.id,
+    seed.port,
+    seed.label,
+    'seeded UDP reflection source-port candidate from CISA/Cloudflare guidance',
+    'system',
+    'user_global',
+    false
+FROM app_users u
+CROSS JOIN seed
+CROSS JOIN LATERAL (SELECT md5(u.id::text || ':policy-scope:' || seed.port::text) AS hash) h
+WHERE u.role='user' AND u.status='active'
+ON CONFLICT (id) DO NOTHING;
+	`,
+	},
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {

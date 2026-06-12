@@ -167,7 +167,7 @@ func (s *Store) SecurityEventSummary(ctx context.Context, query SecurityEventQue
 	return summary, tx.Commit(ctx)
 }
 
-func (s *Store) InvestigateSecurityEvents(ctx context.Context, target string, limit int) (map[string]any, error) {
+func (s *Store) InvestigateSecurityEvents(ctx context.Context, actor *Actor, target string, limit int) (map[string]any, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, errors.New("target is required")
@@ -177,11 +177,11 @@ func (s *Store) InvestigateSecurityEvents(ctx context.Context, target string, li
 	if err != nil {
 		return nil, err
 	}
-	whitelist, err := s.ListWhitelistEntries(ctx, WhitelistEntryQuery{})
+	whitelist, err := s.ListWhitelistEntries(ctx, actor, WhitelistEntryQuery{})
 	if err != nil {
 		return nil, err
 	}
-	blacklist, err := s.ListBlacklistEntries(ctx, BlacklistEntryQuery{})
+	blacklist, err := s.ListBlacklistEntries(ctx, actor, BlacklistEntryQuery{})
 	if err != nil {
 		return nil, err
 	}

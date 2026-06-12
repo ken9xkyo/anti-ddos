@@ -3,6 +3,7 @@
 
 Last updated: 2026-06-12
 
+- [policy-scope-model](policy-scope-model.md) - Admin/user/service policy scopes and effective reads | flow | policy, rbac, snapshot, xdp
 - [admin-console-vnext](admin-console-vnext.md) - Admin console CRUD/access/snapshot/blacklist implementation map | flow | dashboard, mui, control-api
 - [xdp-hardening-whitelist-rate-state](xdp-hardening-whitelist-rate-state.md) - XDP parser hardening, service whitelist split, and locked rate state v2 | gotcha | xdp, ebpf, verifier, whitelist, rate-limit
 - [multi-tenant-rbac](multi-tenant-rbac.md) - Tenant membership RBAC, RLS transaction helpers, and agent tenant binding | flow | auth, tenant, rls, agents, dashboard

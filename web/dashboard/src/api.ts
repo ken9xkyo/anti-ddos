@@ -380,6 +380,7 @@ function whitelistFilterQuery(filters: WhitelistFilters): string {
   const params = new URLSearchParams();
   const q = filters.q?.trim();
   if (q) params.set('q', q);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
   if (filters.scope && filters.scope !== 'all') params.set('scope', filters.scope);
   const serviceID = filters.service_id?.trim();
   if (serviceID) params.set('service_id', serviceID);
@@ -395,6 +396,9 @@ function blacklistFilterQuery(filters: BlacklistFilters): string {
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
   if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
@@ -408,6 +412,9 @@ function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
   if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
@@ -421,6 +428,9 @@ function udpSourcePortBlockQuery(filters: UDPSourcePortBlockFilters): string {
   const params = new URLSearchParams();
   const q = filters.q?.trim();
   if (q) params.set('q', q);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();

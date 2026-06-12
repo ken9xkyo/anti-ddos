@@ -124,11 +124,19 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 		rollbackInactive()
 		return failPolicyApply(result, "populate_whitelist", err)
 	}
-	if err := populateCIDRPolicyMap(policySlotMap(runtime.Collection.Maps, "blacklist_v4", inactiveSlot), snapshot.BlacklistV4); err != nil {
+	if err := populateBlacklistMaps(
+		policySlotMap(runtime.Collection.Maps, "blacklist_v4", inactiveSlot),
+		policySlotMap(runtime.Collection.Maps, "blacklist_service_v4", inactiveSlot),
+		snapshot.BlacklistV4,
+	); err != nil {
 		rollbackInactive()
 		return failPolicyApply(result, "populate_blacklist", err)
 	}
-	if err := populateUDPSourcePortBlockMap(policySlotMap(runtime.Collection.Maps, "udp_src_port_blocks", inactiveSlot), snapshot.UDPSourcePortBlocks); err != nil {
+	if err := populateUDPSourcePortBlockMaps(
+		policySlotMap(runtime.Collection.Maps, "udp_src_port_blocks", inactiveSlot),
+		policySlotMap(runtime.Collection.Maps, "udp_src_port_service_blocks", inactiveSlot),
+		snapshot.UDPSourcePortBlocks,
+	); err != nil {
 		rollbackInactive()
 		return failPolicyApply(result, "populate_udp_source_port_blocks", err)
 	}
@@ -248,8 +256,14 @@ func clearInactivePolicySlot(maps map[string]*ebpf.Map, slot uint32) error {
 	if err := clearCIDRPolicyMap(policySlotMap(maps, "blacklist_v4", slot)); err != nil {
 		return fmt.Errorf("clear blacklist_v4 slot %d: %w", slot, err)
 	}
+	if err := clearServiceCIDRPolicyMap(policySlotMap(maps, "blacklist_service_v4", slot)); err != nil {
+		return fmt.Errorf("clear blacklist_service_v4 slot %d: %w", slot, err)
+	}
 	if err := clearUDPSourcePortBlockMap(policySlotMap(maps, "udp_src_port_blocks", slot)); err != nil {
 		return fmt.Errorf("clear udp_src_port_blocks slot %d: %w", slot, err)
+	}
+	if err := clearUDPSourcePortServiceBlockMap(policySlotMap(maps, "udp_src_port_service_blocks", slot)); err != nil {
+		return fmt.Errorf("clear udp_src_port_service_blocks slot %d: %w", slot, err)
 	}
 	if err := clearServicePolicyMap(policySlotMap(maps, "service_allowlist", slot)); err != nil {
 		return fmt.Errorf("clear service_allowlist slot %d: %w", slot, err)
@@ -356,6 +370,28 @@ func clearUDPSourcePortBlockMap(m *ebpf.Map) error {
 	return nil
 }
 
+func clearUDPSourcePortServiceBlockMap(m *ebpf.Map) error {
+	if m == nil {
+		return errors.New("map not loaded")
+	}
+	var keys []ServiceUDPSourcePortKey
+	var key ServiceUDPSourcePortKey
+	var value UDPSourcePortBlockValue
+	iter := m.Iterate()
+	for iter.Next(&key, &value) {
+		keys = append(keys, key)
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := m.Delete(&key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func clearRulePolicyMap(m *ebpf.Map) error {
 	if m == nil {
 		return errors.New("map not loaded")
@@ -416,13 +452,53 @@ func populateCIDRPolicyMap(m *ebpf.Map, entries []PolicyCIDREntry) error {
 	return nil
 }
 
-func populateUDPSourcePortBlockMap(m *ebpf.Map, entries []PolicyUDPSourcePortBlock) error {
-	if m == nil {
-		return errors.New("map not loaded")
+func populateBlacklistMaps(globalMap, serviceMap *ebpf.Map, entries []PolicyCIDREntry) error {
+	if globalMap == nil {
+		return errors.New("global blacklist map not loaded")
+	}
+	if serviceMap == nil {
+		return errors.New("service blacklist map not loaded")
 	}
 	for _, entry := range entries {
+		value := cidrPolicyValue(entry)
+		if entry.Scope == policyScopeService {
+			key, err := serviceCIDRPolicyKey(entry)
+			if err != nil {
+				return err
+			}
+			if err := serviceMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+				return fmt.Errorf("update service blacklist cidr %s service_id=%d: %w", entry.CIDR, entry.ServiceID, err)
+			}
+			continue
+		}
+		key, err := cidrPolicyKey(entry)
+		if err != nil {
+			return err
+		}
+		if err := globalMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("update blacklist cidr %s: %w", entry.CIDR, err)
+		}
+	}
+	return nil
+}
+
+func populateUDPSourcePortBlockMaps(globalMap, serviceMap *ebpf.Map, entries []PolicyUDPSourcePortBlock) error {
+	if globalMap == nil {
+		return errors.New("global udp source port block map not loaded")
+	}
+	if serviceMap == nil {
+		return errors.New("service udp source port block map not loaded")
+	}
+	for _, entry := range entries {
+		if entry.Scope == policyScopeService {
+			key, value := udpSourcePortServiceBlockMapEntry(entry)
+			if err := serviceMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+				return fmt.Errorf("update service udp source port service_id=%d port %d: %w", entry.ServiceID, entry.Port, err)
+			}
+			continue
+		}
 		key, value := udpSourcePortBlockMapEntry(entry)
-		if err := m.Update(&key, &value, ebpf.UpdateAny); err != nil {
+		if err := globalMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
 			return fmt.Errorf("update udp source port %d: %w", entry.Port, err)
 		}
 	}

@@ -6,8 +6,8 @@ Admin Dashboard is the React/Vite operations console for the Anti-DDoS Control P
 
 | Role/session | UI behavior |
 |---|---|
-| `user` | Can view and mutate own Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots and Telegram config. |
-| `admin` normal session | Can manage Accounts and Reputation feed sources/runs/conflicts. Can open `View config` for an active user. |
+| `user` | Can view effective policy and mutate own Services, user-global/service Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots and Telegram config. |
+| `admin` normal session | Can manage Accounts, Reputation feed sources/runs/conflicts and admin-global Rules, Whitelist, Manual Blacklist and UDP Ports. Can open `View config` for an active user. |
 | `admin` view-user session | Can read target user dashboard/config data. Mutation controls are hidden and backend mutations return `403`. |
 
 The topbar shows `username · role`. When admin is viewing user config, it also shows `viewing <username>` and `read only`.
@@ -27,7 +27,8 @@ The topbar shows `username · role`. When admin is viewing user config, it also 
 - Login calls `POST /v1/auth/login` with `username` and `password`.
 - Dashboard polling loads overview, agents, services, rules, recent security events, Telegram config and alerts.
 - Feed endpoints are loaded only when `user.role === "admin"` and the session is not read-only and not viewing another user.
-- Services/Rules/Whitelist/Manual Blacklist/UDP Ports/Snapshots render mutation controls only when `user.role === "user"` and `read_only` is false.
+- Services/Snapshots/Telegram render mutation controls only for mutable user sessions.
+- Rules/Whitelist/Manual Blacklist/UDP Ports render mutation controls for mutable user policy scopes and normal admin admin-global policy scopes; row actions still honor `editable=false`.
 - Incidents can configure/test Telegram only for a mutable user owner context.
 - Accounts lets admins create/update/revoke users, reset passwords, revoke sessions and open read-only user config context.
 - Reputation lets normal admins create/update/disable/sync global feed sources and review feed runs/conflicts.
@@ -41,7 +42,8 @@ The topbar shows `username · role`. When admin is viewing user config, it also 
 | Current user | `GET /v1/me`, `POST /v1/me/password` | Authenticated | Load user or change own password |
 | Admin view | `POST /v1/admin/view-user` | `admin` | Open read-only config context for active user |
 | Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, password/session subroutes | `admin` | Account lifecycle |
-| Config | Services, Rules, Whitelist, Blacklist, UDP Ports, Snapshots, Telegram | `user` owner only for mutation | Mutate own config; read-only admin context can read |
+| User config | Services, Snapshots, Telegram | `user` owner only for mutation | Mutate own user-owned config; read-only admin context can read |
+| Policy config | Rules, Whitelist, Blacklist, UDP Ports | `user` for `user_global`/`service`, normal `admin` for `admin_global` | Mutate scoped policy; effective reads include read-only rows where applicable |
 | Reputation | `/v1/feed-sources*`, `/v1/feed-runs`, `/v1/feed-conflicts` | normal `admin` session | Manage global threat feeds |
 | Dashboard read | Overview, Agents, Services, Rules, Events, Alerts | Authenticated owner context | Poll dashboard data |
 

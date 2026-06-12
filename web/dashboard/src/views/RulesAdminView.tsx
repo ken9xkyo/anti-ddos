@@ -6,10 +6,11 @@ import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, JsonTextField, parseJsonObject, ReasonField } from '../adminUi';
 import { PanelHeader, StatusPill } from '../components';
 import { durationValue, formatDateTime, percentValue } from '../format';
-import type { Rule, RuleInput, Service } from '../types';
+import type { Rule, RuleInput, ScopeType, Service } from '../types';
 
 type RuleForm = {
   reason: string;
+  scope_type: ScopeType;
   service_id: string;
   name: string;
   priority: string;
@@ -33,6 +34,7 @@ type RuleForm = {
 
 const emptyRuleForm: RuleForm = {
   reason: 'update mitigation rule',
+  scope_type: 'user_global',
   service_id: '',
   name: '',
   priority: '100',
@@ -54,7 +56,15 @@ const emptyRuleForm: RuleForm = {
   evidence: ''
 };
 
-export function RulesAdminView({ services, canMutate }: { services: Service[]; canMutate: boolean }) {
+export function RulesAdminView({
+  services,
+  canMutate,
+  scopeOptions
+}: {
+  services: Service[];
+  canMutate: boolean;
+  scopeOptions: ScopeType[];
+}) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
@@ -80,10 +90,12 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
     load();
   }, []);
 
-  const serviceName = (id?: string) => services.find((service) => service.id === id)?.name || 'global';
+  const defaultScopeType = scopeOptions[0] ?? 'user_global';
+  const serviceName = (id?: string) => services.find((service) => service.id === id)?.name || 'all services';
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'name', headerName: 'Name', flex: 1, minWidth: 180 },
-    { field: 'service_id', headerName: 'Scope', width: 150, valueGetter: (_, row) => serviceName(row.service_id) },
+    { field: 'scope_type', headerName: 'Scope', width: 135, valueGetter: (_, row) => scopeTypeLabel(row.scope_type) },
+    { field: 'service_id', headerName: 'Service', width: 150, valueGetter: (_, row) => row.scope_type === 'service' ? serviceName(row.service_id) : 'all services' },
     { field: 'action', headerName: 'Action', width: 115 },
     { field: 'mode', headerName: 'Mode', width: 110 },
     { field: 'dimension', headerName: 'Dimension', width: 145 },
@@ -100,6 +112,7 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
       renderCell: (params) => {
         const row = params.row as Rule;
         if (!canMutate) return <span className="muted">read only</span>;
+        if (row.editable === false) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
@@ -115,7 +128,7 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
 
   const openCreate = () => {
     setTarget(null);
-    setForm({ ...emptyRuleForm, reason: 'create mitigation rule' });
+    setForm({ ...emptyRuleForm, scope_type: defaultScopeType, reason: 'create mitigation rule' });
     setMode('create');
   };
 
@@ -123,6 +136,7 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
     setTarget(rule);
     setForm({
       reason: `update ${rule.name}`,
+      scope_type: rule.scope_type ?? (rule.service_id ? 'service' : defaultScopeType),
       service_id: rule.service_id ?? '',
       name: rule.name,
       priority: String(rule.priority ?? 100),
@@ -199,10 +213,15 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
         </>}
       >
         <TextField label="Name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} fullWidth required />
-        <TextField select label="Service scope" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} fullWidth>
-          <MenuItem value="">Global</MenuItem>
-          {services.map((service) => <MenuItem key={service.id} value={service.id}>{service.name}</MenuItem>)}
-        </TextField>
+        <Stack direction="row" spacing={1}>
+          <TextField select label="Scope" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value as ScopeType, service_id: '' })} fullWidth>
+            {scopeOptions.map((scope) => <MenuItem key={scope} value={scope}>{scopeTypeLabel(scope)}</MenuItem>)}
+          </TextField>
+          <TextField select label="Service" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} fullWidth disabled={form.scope_type !== 'service'}>
+            <MenuItem value="">Select service</MenuItem>
+            {services.map((service) => <MenuItem key={service.id} value={service.id}>{service.name}</MenuItem>)}
+          </TextField>
+        </Stack>
         <Stack direction="row" spacing={1}>
           <TextField select label="Action" value={form.action} onChange={(event) => setForm({ ...form, action: event.target.value })} fullWidth>
             <MenuItem value="observe">Observe</MenuItem>
@@ -238,7 +257,7 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
           <TextField label="Confidence" value={form.confidence} onChange={(event) => setForm({ ...form, confidence: event.target.value })} inputMode="decimal" fullWidth />
         </Stack>
         <TextField label="Expires at" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} placeholder="2026-05-29T12:00:00Z" fullWidth />
-        <TextField label="Owner" value={form.owner} onChange={(event) => setForm({ ...form, owner: event.target.value })} fullWidth required />
+        {mode === 'edit' ? <TextField label="Owner" value={form.owner} fullWidth disabled /> : null}
         <FormControlLabel control={<Checkbox checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />} label="Enabled" />
         <JsonTextField label="Match expression" value={form.match_expr} onChange={(value) => setForm({ ...form, match_expr: value })} />
         <JsonTextField label="Evidence" value={form.evidence} onChange={(value) => setForm({ ...form, evidence: value })} />
@@ -256,7 +275,8 @@ export function RulesAdminView({ services, canMutate }: { services: Service[]; c
 function ruleInputFromForm(form: RuleForm): RuleInput {
   return {
     reason: form.reason.trim(),
-    service_id: form.service_id.trim() || undefined,
+    scope_type: form.scope_type,
+    service_id: form.scope_type === 'service' ? form.service_id.trim() : undefined,
     name: form.name.trim(),
     priority: optionalNumber(form.priority),
     action: form.action,
@@ -272,10 +292,15 @@ function ruleInputFromForm(form: RuleForm): RuleInput {
     expires_at: form.expires_at.trim() || undefined,
     confidence: optionalFloat(form.confidence),
     enabled: form.enabled,
-    owner: form.owner.trim(),
     match_expr: parseJsonObject(form.match_expr),
     evidence: parseJsonObject(form.evidence)
   };
+}
+
+function scopeTypeLabel(value?: ScopeType): string {
+  if (value === 'admin_global') return 'Admin global';
+  if (value === 'service') return 'Service';
+  return 'User global';
 }
 
 function optionalNumber(value: string): number | undefined {

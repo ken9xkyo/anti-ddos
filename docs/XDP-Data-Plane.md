@@ -55,7 +55,9 @@ Agent load object qua `internal/agent/loader.go`, validate map/program contract 
 | `whitelist_v4_a/b` | `LPM_TRIE` | yes | `lpm_v4_key` | `cidr_policy_value` | 65536 | Agent | XDP |
 | `whitelist_service_v4_a/b` | `LPM_TRIE` | yes | `service_lpm_v4_key` | `cidr_policy_value` | 65536 | Agent | XDP |
 | `blacklist_v4_a/b` | `LPM_TRIE` | yes | `lpm_v4_key` | `cidr_policy_value` | 1000000 | Agent | XDP |
+| `blacklist_service_v4_a/b` | `LPM_TRIE` | yes | `service_lpm_v4_key` | `cidr_policy_value` | 65536 | Agent | XDP |
 | `udp_src_port_blocks_a/b` | `HASH` | yes | `u32` source port | `udp_src_port_block_value` | 4096 | Agent | XDP |
+| `udp_src_port_service_blocks_a/b` | `HASH` | yes | `service_udp_src_port_key` | `udp_src_port_block_value` | 16384 | Agent | XDP |
 | `service_allowlist_a/b` | `HASH` | yes | `service_key` | `service_value` | 16384 | Agent | XDP |
 | `rule_config_a/b` | `ARRAY` | yes | `u32 rule_id` | `rule_value` | 4096 | Agent | XDP |
 | `tx_devmap` | `DEVMAP` | no | `u32 devmap_key` | `u32 ifindex` | 128 | Agent | XDP redirect helper |
@@ -189,11 +191,11 @@ Whitelisted traffic is not automatically passed to the kernel stack. It is still
 
 ### Blacklist
 
-Blacklist uses `blacklist_v4_a/b`. It is checked only after service allowlist and only when whitelist does not apply. If the matched value has `ACTION_DROP`, XDP drops with `REASON_BLACKLIST` and copies the value `rule_id` into counters/events.
+Blacklist uses `blacklist_service_v4_a/b` and `blacklist_v4_a/b`. It is checked only after service allowlist and only when whitelist does not apply. XDP checks the service-scoped LPM first, then the global LPM. If the matched value has `ACTION_DROP`, XDP drops with `REASON_BLACKLIST` and copies the value `rule_id` into counters/events.
 
 ### UDP Source-Port Blocks
 
-`udp_src_port_blocks_a/b` are keyed by UDP source port. They are evaluated only for non-whitelisted UDP traffic. A hit drops with `REASON_UDP_AMP_SOURCE_PORT`.
+`udp_src_port_service_blocks_a/b` are keyed by `(service_id, source port)` and `udp_src_port_blocks_a/b` are keyed by UDP source port. They are evaluated only for non-whitelisted UDP traffic. XDP checks the service-scoped map first, then the global map. A hit drops with `REASON_UDP_AMP_SOURCE_PORT`.
 
 This catches common reflection/amplification source ports without requiring broad CIDR blacklist entries.
 
@@ -338,6 +340,8 @@ Control builds a signed `PolicySnapshot` from owner-scoped configuration. Featur
 - `tx_devmap`
 - `udp_src_port_block` when UDP source-port blocks exist
 - `service_scoped_whitelist_v4` when service-scoped whitelist entries exist
+- `service_scoped_blacklist_v4` when service-scoped blacklist entries exist
+- `service_scoped_udp_src_port_block` when service-scoped UDP source-port blocks exist
 
 Agent apply flow:
 
@@ -348,10 +352,11 @@ Agent apply flow:
 5. Select inactive slot: `1 - active_slot`.
 6. Clear inactive policy maps.
 7. Populate whitelist maps, splitting global and service-scoped entries.
-8. Populate blacklist, UDP source-port block, service allowlist and rule maps.
-9. Update `tx_devmap`.
-10. Flip `runtime_config.active_slot` and `policy_version`.
-11. Persist last-valid snapshot.
+8. Populate blacklist and UDP source-port block maps, splitting global and service-scoped entries.
+9. Populate service allowlist and rule maps.
+10. Update `tx_devmap`.
+11. Flip `runtime_config.active_slot` and `policy_version`.
+12. Persist last-valid snapshot.
 
 If any populate or devmap update fails before the flip, Agent clears inactive maps and leaves the old active slot in place.
 

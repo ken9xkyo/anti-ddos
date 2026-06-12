@@ -117,9 +117,9 @@ func seedDefaultUDPSourcePortBlocks(ctx context.Context, q dbQuerier, ownerUserI
 		if err != nil {
 			return err
 		}
-		if _, err := q.Exec(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, enabled)
-VALUES ($1, $2, $3, $4, $5, 'system', false)
-ON CONFLICT (owner_user_id, port) DO NOTHING`,
+		if _, err := q.Exec(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, scope_type, enabled)
+VALUES ($1, $2, $3, $4, $5, 'system', 'user_global', false)
+ON CONFLICT (id) DO NOTHING`,
 			id, ownerUserID, seed.port, seed.label, defaultUDPSourcePortSeedReason,
 		); err != nil {
 			return err

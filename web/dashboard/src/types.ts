@@ -1,4 +1,6 @@
 export type Role = 'admin' | 'user';
+export type ScopeType = 'admin_global' | 'user_global' | 'service';
+export type LegacyPolicyScope = 'global' | 'service';
 
 export interface ViewingUser {
   id: string;
@@ -139,6 +141,7 @@ export interface ServiceInput {
 export interface Rule {
   id: string;
   ebpf_id: number;
+  scope_type?: ScopeType;
   service_id?: string;
   name: string;
   action: string;
@@ -158,12 +161,14 @@ export interface Rule {
   evidence?: Record<string, unknown>;
   enabled: boolean;
   owner: string;
+  editable?: boolean;
   ttl_remaining_seconds?: number;
   counters?: Record<string, number>;
 }
 
 export interface RuleInput {
   reason: string;
+  scope_type?: ScopeType;
   service_id?: string;
   name: string;
   priority?: number;
@@ -182,16 +187,17 @@ export interface RuleInput {
   evidence?: Record<string, unknown>;
   confidence?: number;
   enabled?: boolean;
-  owner: string;
+  owner?: string;
 }
 
 export interface WhitelistInput {
   reason: string;
   cidr: string;
-  scope: string;
+  scope: LegacyPolicyScope;
+  scope_type?: ScopeType;
   service_id?: string;
   label?: string;
-  owner: string;
+  owner?: string;
   priority?: number;
   expires_at?: string;
   enabled?: boolean;
@@ -201,11 +207,13 @@ export interface WhitelistEntry {
   id: string;
   ebpf_id: number;
   cidr: string;
-  scope: string;
+  scope: LegacyPolicyScope;
+  scope_type?: ScopeType;
   service_id?: string;
   label?: string;
   reason?: string;
   owner: string;
+  editable?: boolean;
   priority: number;
   expires_at?: string;
   enabled: boolean;
@@ -215,7 +223,8 @@ export interface WhitelistEntry {
 
 export interface WhitelistFilters {
   q?: string;
-  scope?: 'all' | 'global' | 'service';
+  scope?: 'all' | LegacyPolicyScope;
+  scope_type?: 'all' | ScopeType;
   service_id?: string;
   state?: 'all' | 'enabled' | 'disabled';
   expiry?: 'all' | 'valid' | 'expired' | 'none';
@@ -224,6 +233,8 @@ export interface WhitelistFilters {
 export interface BlacklistInput {
   reason: string;
   cidr: string;
+  scope_type?: ScopeType;
+  service_id?: string;
   score?: number;
   action: string;
   source: string;
@@ -236,11 +247,15 @@ export interface BlacklistEntry {
   id: string;
   ebpf_id: number;
   cidr: string;
+  scope_type?: ScopeType;
+  service_id?: string;
   score?: number;
   action: string;
   source: string;
   rule_id?: string;
   reason: string;
+  owner?: string;
+  editable?: boolean;
   expires_at?: string;
   enabled: boolean;
   created_at: string;
@@ -257,6 +272,8 @@ export interface BlacklistEntryRow extends BlacklistEntry {
 export interface BlacklistFilters {
   q?: string;
   source?: string;
+  scope_type?: 'all' | ScopeType;
+  service_id?: string;
   origin?: 'all' | 'manual' | 'feed';
   state?: 'all' | 'enabled' | 'disabled';
   expiry?: 'all' | 'valid' | 'expired' | 'none';
@@ -272,8 +289,10 @@ export interface BlacklistEntriesPage {
 export interface UDPSourcePortBlockInput {
   reason: string;
   port: number;
+  scope_type?: ScopeType;
+  service_id?: string;
   label?: string;
-  owner: string;
+  owner?: string;
   expires_at?: string;
   enabled?: boolean;
 }
@@ -282,9 +301,12 @@ export interface UDPSourcePortBlock {
   id: string;
   ebpf_id: number;
   port: number;
+  scope_type?: ScopeType;
+  service_id?: string;
   label?: string;
   reason: string;
   owner: string;
+  editable?: boolean;
   expires_at?: string;
   enabled: boolean;
   created_at: string;
@@ -293,6 +315,8 @@ export interface UDPSourcePortBlock {
 
 export interface UDPSourcePortBlockFilters {
   q?: string;
+  scope_type?: 'all' | ScopeType;
+  service_id?: string;
   state?: 'all' | 'enabled' | 'disabled';
   expiry?: 'all' | 'valid' | 'expired' | 'none';
 }

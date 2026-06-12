@@ -97,7 +97,7 @@ func TestExpireTTLRulesDisablesExpiredManualRules(t *testing.T) {
 	if auditAfter < auditBefore+1 {
 		t.Fatalf("ttl expiry audit missing: before=%d after=%d", auditBefore, auditAfter)
 	}
-	rules, err := store.ListRules(ownerCtx)
+	rules, err := store.ListRules(ownerCtx, ownerActor)
 	if err != nil {
 		t.Fatal(err)
 	}

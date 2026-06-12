@@ -69,7 +69,14 @@ type CIDRPolicyValue struct {
 type UDPSourcePortBlockValue struct {
 	EntryID         uint32
 	Port            uint32
+	Scope           uint32
+	ServiceID       uint32
 	ExpiresAtUnixNS uint64
+}
+
+type ServiceUDPSourcePortKey struct {
+	ServiceID uint32
+	Port      uint32
 }
 
 type ServiceKey struct {

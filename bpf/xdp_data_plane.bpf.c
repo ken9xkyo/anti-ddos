@@ -81,6 +81,22 @@ struct {
 } blacklist_v4_b SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_BLACKLIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} blacklist_service_v4_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_BLACKLIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} blacklist_service_v4_b SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, ANTI_DDOS_MAX_UDP_SRC_PORT_BLOCKS);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
@@ -95,6 +111,22 @@ struct {
 	__type(key, __u32);
 	__type(value, struct udp_src_port_block_value);
 } udp_src_port_blocks_b SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_udp_src_port_key);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_service_blocks_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_udp_src_port_key);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_service_blocks_b SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -463,6 +495,21 @@ lookup_active_blacklist(__u32 active_slot, __u32 src_v4)
 	return bpf_map_lookup_elem(&blacklist_v4_b, &key);
 }
 
+static __always_inline struct cidr_policy_value *
+lookup_active_service_blacklist(__u32 active_slot, __u32 service_id, __u32 src_v4)
+{
+	struct service_lpm_v4_key key = {
+		.prefixlen = 64,
+		.service_id = service_id,
+		.addr = src_v4,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&blacklist_service_v4_a, &key);
+
+	return bpf_map_lookup_elem(&blacklist_service_v4_b, &key);
+}
+
 static __always_inline struct service_value *
 lookup_active_service(__u32 active_slot, const struct packet_meta *meta)
 {
@@ -487,6 +534,20 @@ lookup_active_udp_src_port_block(__u32 active_slot, __u16 src_port)
 		return bpf_map_lookup_elem(&udp_src_port_blocks_a, &key);
 
 	return bpf_map_lookup_elem(&udp_src_port_blocks_b, &key);
+}
+
+static __always_inline struct udp_src_port_block_value *
+lookup_active_service_udp_src_port_block(__u32 active_slot, __u32 service_id, __u16 src_port)
+{
+	struct service_udp_src_port_key key = {
+		.service_id = service_id,
+		.port = src_port,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&udp_src_port_service_blocks_a, &key);
+
+	return bpf_map_lookup_elem(&udp_src_port_service_blocks_b, &key);
 }
 
 static __always_inline struct rule_value *
@@ -869,7 +930,11 @@ int xdp_entry(struct xdp_md *ctx)
 			whitelist_applies = 1;
 	}
 
-	blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
+	blacklist = lookup_active_service_blacklist(cfg->active_slot,
+						    service->service_id,
+						    meta.src_v4);
+	if (!blacklist)
+		blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
 	if (!whitelist_applies && blacklist && blacklist->action == ACTION_DROP) {
 		meta.rule_id = blacklist->rule_id;
 		meta.action = ACTION_DROP;
@@ -880,7 +945,12 @@ int xdp_entry(struct xdp_md *ctx)
 	}
 
 	if (!whitelist_applies && meta.proto == L4_UDP) {
-		udp_src_port_block = lookup_active_udp_src_port_block(cfg->active_slot, meta.src_port);
+		udp_src_port_block = lookup_active_service_udp_src_port_block(cfg->active_slot,
+									       service->service_id,
+									       meta.src_port);
+		if (!udp_src_port_block)
+			udp_src_port_block = lookup_active_udp_src_port_block(cfg->active_slot,
+									      meta.src_port);
 		if (udp_src_port_block) {
 			meta.action = ACTION_DROP;
 			meta.reason = REASON_UDP_AMP_SOURCE_PORT;

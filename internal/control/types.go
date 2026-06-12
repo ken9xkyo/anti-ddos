@@ -22,6 +22,10 @@ const (
 	PolicyScopeGlobal  = 0
 	PolicyScopeService = 1
 
+	ScopeTypeAdminGlobal = "admin_global"
+	ScopeTypeUserGlobal  = "user_global"
+	ScopeTypeService     = "service"
+
 	NeighborResolved = 1
 )
 
@@ -152,6 +156,7 @@ type WhitelistInput struct {
 	Reason    string    `json:"reason"`
 	CIDR      string    `json:"cidr"`
 	Scope     string    `json:"scope"`
+	ScopeType string    `json:"scope_type,omitempty"`
 	ServiceID string    `json:"service_id,omitempty"`
 	Label     string    `json:"label,omitempty"`
 	Owner     string    `json:"owner"`
@@ -165,6 +170,7 @@ type WhitelistEntry struct {
 	EBPFID    uint32     `json:"ebpf_id"`
 	CIDR      string     `json:"cidr"`
 	Scope     string     `json:"scope"`
+	ScopeType string     `json:"scope_type"`
 	ServiceID string     `json:"service_id,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	Reason    string     `json:"reason"`
@@ -172,6 +178,7 @@ type WhitelistEntry struct {
 	Priority  uint32     `json:"priority"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -179,6 +186,7 @@ type WhitelistEntry struct {
 type WhitelistEntryQuery struct {
 	Search    string
 	Scope     string
+	ScopeType string
 	ServiceID string
 	State     string
 	Expiry    string
@@ -187,6 +195,7 @@ type WhitelistEntryQuery struct {
 type RuleInput struct {
 	Reason       string          `json:"reason"`
 	ServiceID    string          `json:"service_id,omitempty"`
+	ScopeType    string          `json:"scope_type,omitempty"`
 	Name         string          `json:"name"`
 	Priority     uint32          `json:"priority,omitempty"`
 	MatchExpr    json.RawMessage `json:"match_expr,omitempty"`
@@ -211,6 +220,7 @@ type Rule struct {
 	ID           string          `json:"id"`
 	EBPFID       uint32          `json:"ebpf_id"`
 	ServiceID    string          `json:"service_id,omitempty"`
+	ScopeType    string          `json:"scope_type"`
 	Name         string          `json:"name"`
 	Priority     uint32          `json:"priority"`
 	MatchExpr    json.RawMessage `json:"match_expr,omitempty"`
@@ -229,6 +239,7 @@ type Rule struct {
 	Confidence   float64         `json:"confidence,omitempty"`
 	Enabled      bool            `json:"enabled"`
 	Owner        string          `json:"owner"`
+	Editable     bool            `json:"editable"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 }
@@ -236,10 +247,13 @@ type Rule struct {
 type BlacklistInput struct {
 	Reason    string    `json:"reason"`
 	CIDR      string    `json:"cidr"`
+	ScopeType string    `json:"scope_type,omitempty"`
+	ServiceID string    `json:"service_id,omitempty"`
 	Score     uint32    `json:"score,omitempty"`
 	Action    string    `json:"action"`
 	Source    string    `json:"source"`
 	RuleID    string    `json:"rule_id,omitempty"`
+	Owner     string    `json:"owner,omitempty"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 	Enabled   *bool     `json:"enabled,omitempty"`
 }
@@ -248,44 +262,55 @@ type BlacklistEntry struct {
 	ID        string     `json:"id"`
 	EBPFID    uint32     `json:"ebpf_id"`
 	CIDR      string     `json:"cidr"`
+	ScopeType string     `json:"scope_type"`
+	ServiceID string     `json:"service_id,omitempty"`
 	Score     uint32     `json:"score,omitempty"`
 	Action    string     `json:"action"`
 	Source    string     `json:"source"`
 	RuleID    string     `json:"rule_id,omitempty"`
 	Reason    string     `json:"reason"`
+	Owner     string     `json:"owner"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type BlacklistEntryQuery struct {
-	Search string
-	Source string
-	State  string
-	Expiry string
+	Search    string
+	Source    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
 }
 
 type BlacklistEntriesQuery struct {
-	Search   string
-	Source   string
-	Origin   string
-	State    string
-	Expiry   string
-	Page     uint32
-	PageSize uint32
+	Search    string
+	Source    string
+	Origin    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
+	Page      uint32
+	PageSize  uint32
 }
 
 type BlacklistEntryRow struct {
 	ID         string     `json:"id"`
 	EBPFID     uint32     `json:"ebpf_id"`
 	CIDR       string     `json:"cidr"`
+	ScopeType  string     `json:"scope_type"`
+	ServiceID  string     `json:"service_id,omitempty"`
 	Score      uint32     `json:"score,omitempty"`
 	Action     string     `json:"action"`
 	Source     string     `json:"source"`
 	SourceName string     `json:"source_name,omitempty"`
 	RuleID     string     `json:"rule_id,omitempty"`
 	Reason     string     `json:"reason"`
+	Owner      string     `json:"owner"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	Enabled    bool       `json:"enabled"`
 	Status     string     `json:"status,omitempty"`
@@ -305,6 +330,8 @@ type BlacklistEntriesPage struct {
 type UDPSourcePortBlockInput struct {
 	Reason    string    `json:"reason"`
 	Port      uint16    `json:"port"`
+	ScopeType string    `json:"scope_type,omitempty"`
+	ServiceID string    `json:"service_id,omitempty"`
 	Label     string    `json:"label,omitempty"`
 	Owner     string    `json:"owner"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
@@ -315,19 +342,24 @@ type UDPSourcePortBlock struct {
 	ID        string     `json:"id"`
 	EBPFID    uint32     `json:"ebpf_id"`
 	Port      uint16     `json:"port"`
+	ScopeType string     `json:"scope_type"`
+	ServiceID string     `json:"service_id,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	Reason    string     `json:"reason"`
 	Owner     string     `json:"owner"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type UDPSourcePortBlockQuery struct {
-	Search string
-	State  string
-	Expiry string
+	Search    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
 }
 
 type FeedSourceInput struct {

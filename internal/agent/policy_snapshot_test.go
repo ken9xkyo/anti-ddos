@@ -121,7 +121,7 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 				snapshot = resignTestPolicySnapshot(t, snapshot)
 				return snapshot
 			},
-			want: "service-scoped whitelist requires service_id",
+			want: "service-scoped CIDR entry requires service_id",
 		},
 		{
 			name: "duplicate service scoped whitelist same service",
@@ -654,18 +654,22 @@ func newPolicyApplyTestRuntime(t *testing.T, brokenBlacklist bool) *Runtime {
 			ValueSize:  uint32(unsafe.Sizeof(RuntimeConfigValue{})),
 			MaxEntries: 1,
 		}),
-		"whitelist_v4_a":         newCIDRTestMap(t, "whitelist_v4_a", false),
-		"whitelist_v4_b":         newCIDRTestMap(t, "whitelist_v4_b", false),
-		"whitelist_service_v4_a": newServiceCIDRTestMap(t, "whitelist_service_v4_a"),
-		"whitelist_service_v4_b": newServiceCIDRTestMap(t, "whitelist_service_v4_b"),
-		"blacklist_v4_a":         newCIDRTestMap(t, "blacklist_v4_a", false),
-		"blacklist_v4_b":         newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
-		"udp_src_port_blocks_a":  newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_a"),
-		"udp_src_port_blocks_b":  newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_b"),
-		"service_allowlist_a":    newServiceTestMap(t, "service_allowlist_a"),
-		"service_allowlist_b":    newServiceTestMap(t, "service_allowlist_b"),
-		"rule_config_a":          newRuleTestMap(t, "rule_config_a"),
-		"rule_config_b":          newRuleTestMap(t, "rule_config_b"),
+		"whitelist_v4_a":                newCIDRTestMap(t, "whitelist_v4_a", false),
+		"whitelist_v4_b":                newCIDRTestMap(t, "whitelist_v4_b", false),
+		"whitelist_service_v4_a":        newServiceCIDRTestMap(t, "whitelist_service_v4_a"),
+		"whitelist_service_v4_b":        newServiceCIDRTestMap(t, "whitelist_service_v4_b"),
+		"blacklist_v4_a":                newCIDRTestMap(t, "blacklist_v4_a", false),
+		"blacklist_v4_b":                newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
+		"blacklist_service_v4_a":        newServiceCIDRTestMap(t, "blacklist_service_v4_a"),
+		"blacklist_service_v4_b":        newServiceCIDRTestMap(t, "blacklist_service_v4_b"),
+		"udp_src_port_blocks_a":         newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_a"),
+		"udp_src_port_blocks_b":         newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_b"),
+		"udp_src_port_service_blocks_a": newServiceUDPSourcePortBlockTestMap(t, "udp_src_port_service_blocks_a"),
+		"udp_src_port_service_blocks_b": newServiceUDPSourcePortBlockTestMap(t, "udp_src_port_service_blocks_b"),
+		"service_allowlist_a":           newServiceTestMap(t, "service_allowlist_a"),
+		"service_allowlist_b":           newServiceTestMap(t, "service_allowlist_b"),
+		"rule_config_a":                 newRuleTestMap(t, "rule_config_a"),
+		"rule_config_b":                 newRuleTestMap(t, "rule_config_b"),
 		"tx_devmap": newTestMap(t, &ebpf.MapSpec{
 			Name:       "tx_devmap_test",
 			Type:       ebpf.Hash,
@@ -743,6 +747,17 @@ func newUDPSourcePortBlockTestMap(t *testing.T, name string) *ebpf.Map {
 		Name:       name,
 		Type:       ebpf.Hash,
 		KeySize:    uint32(unsafe.Sizeof(uint32(0))),
+		ValueSize:  uint32(unsafe.Sizeof(UDPSourcePortBlockValue{})),
+		MaxEntries: 16,
+	})
+}
+
+func newServiceUDPSourcePortBlockTestMap(t *testing.T, name string) *ebpf.Map {
+	t.Helper()
+	return newTestMap(t, &ebpf.MapSpec{
+		Name:       name,
+		Type:       ebpf.Hash,
+		KeySize:    uint32(unsafe.Sizeof(ServiceUDPSourcePortKey{})),
 		ValueSize:  uint32(unsafe.Sizeof(UDPSourcePortBlockValue{})),
 		MaxEntries: 16,
 	})

@@ -26,16 +26,25 @@ Control API is the JSON HTTP API used by the Admin Dashboard, admin console, hos
 
 | Role | API behavior |
 |---|---|
-| `user` | Reads and mutates owner-scoped operational config. |
-| `admin` | Manages accounts and global feed sources; can open read-only user config context. |
+| `user` | Reads effective policy and mutates their own user-global/service-scoped policy plus user-owned services/forwarding/snapshots/alerts. |
+| `admin` | Manages accounts, global feed sources and admin-global policy; can open read-only user config context. |
 
 Mutation policy:
 
 - Account mutations: `admin` only.
 - Global feed mutations/sync: normal `admin` session only.
-- Operational config mutations: `user` only, and only in the user's own owner context.
+- Policy config mutations: normal `admin` sessions can mutate `scope_type="admin_global"` rows; `user` sessions can mutate their own `scope_type="user_global"` and `scope_type="service"` rows.
+- Services, forwarding policies, snapshots, Telegram and alerts remain user-owned operational config; normal admins do not mutate them.
 - Admin view-user context: read-only; operational mutations return `403`.
 - Telegram config: mutable only by `user` owner context; token values are masked in responses.
+
+Policy list APIs return the effective policy for the actor:
+
+- Normal admin: admin-global rows.
+- User: admin-global rows as read-only plus own user-global/service rows.
+- Admin view-user: effective policy for the viewed user, read-only.
+
+Policy mutation inputs may include `owner`, but the backend ignores it. Created rows store the creator as owner; updates preserve the existing owner.
 
 ## 3. Common Data Values
 
@@ -44,6 +53,7 @@ Mutation policy:
 | `role` | `admin`, `user` |
 | user `status` | `active`, `revoked` |
 | packet/action constants | `0` pass, `1` drop, `2` rate_limit, `3` observe, `4` sample, `6` redirect |
+| policy `scope_type` | `admin_global`, `user_global`, `service` |
 | policy scope constants | `0` global, `1` service |
 | neighbor status | `1` resolved |
 
@@ -152,7 +162,7 @@ Safety:
 
 ## 8. Services
 
-Authenticated read. `user` mutates own config; admin view-user context reads only.
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
@@ -191,7 +201,7 @@ Authenticated read. `user` mutates own config; admin view-user context reads onl
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/whitelist?q=&scope=&service_id=&state=&expiry=` | query | `WhitelistEntry[]` | List entries |
+| GET | `/v1/whitelist?q=&scope_type=&scope=&service_id=&state=&expiry=` | query | `WhitelistEntry[]` | List entries |
 | POST | `/v1/whitelist` | `WhitelistInput` | `WhitelistEntry` | Create entry and rebuild snapshot |
 | PATCH | `/v1/whitelist/{id}` | `WhitelistInput` | `WhitelistEntry` | Update entry and rebuild snapshot |
 | DELETE | `/v1/whitelist/{id}` | reason via header | `WhitelistEntry` | Disable entry and rebuild snapshot |
@@ -199,7 +209,8 @@ Authenticated read. `user` mutates own config; admin view-user context reads onl
 Filters:
 
 - `q`: CIDR, label, owner, reason or service text.
-- `scope`: `all`, `global`, `service`.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `scope`: legacy compatibility filter: `all`, `global`, `service`.
 - `service_id`: UUID for service-scoped entries.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
@@ -210,21 +221,21 @@ Filters:
 {
   "reason": "allow customer monitor",
   "cidr": "203.0.113.10/32",
+  "scope_type": "user_global",
   "scope": "global",
   "service_id": "",
   "label": "customer-monitor",
-  "owner": "sre",
   "priority": 100,
   "expires_at": "2026-06-12T00:00:00Z",
   "enabled": true
 }
 ```
 
-Service-scoped whitelist entries require `service_id`.
+Service-scoped whitelist entries require `service_id`. Responses include `owner` and `editable`; admin-global entries returned to users have `editable=false`.
 
 ## 11. Rules
 
-Authenticated read. `user` mutates own config; admin view-user context reads only.
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
@@ -236,24 +247,25 @@ Authenticated read. `user` mutates own config; admin view-user context reads onl
 `RuleInput` supports:
 
 - `reason`, `service_id`, `name`, `priority`
+- `scope_type`: `admin_global`, `user_global`, or `service`
 - `match_expr`, `evidence` as JSON objects
 - `action`: `observe`, `drop`, `rate_limit`, `sample`
 - `mode`: `observe`, `enforce`
 - thresholds: `threshold_pps`, `threshold_bps`, `threshold_cps`
 - burst and sample controls: `burst_packets`, `burst_bytes`, `sample_denom`
 - `dimension`: `source`, `service`, `source_service`
-- `ttl_seconds`, `expires_at`, `confidence`, `enabled`, `owner`
+- `ttl_seconds`, `expires_at`, `confidence`, `enabled`
 
-If `ttl_seconds` is set and `expires_at` is omitted, backend derives expiry from current time.
+If `scope_type="service"`, `service_id` is required. If `ttl_seconds` is set and `expires_at` is omitted, backend derives expiry from current time. Responses include `owner` and `editable`.
 
 ## 12. Blacklist
 
-Authenticated read. `user` mutates manual blacklist config; admin view-user context reads only.
+Authenticated read returns effective manual policy plus global feed-origin rows where supported. Normal admins mutate admin-global manual entries. Users mutate their own user-global/service manual entries. Admin view-user context reads only.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/blacklist?q=&source=&state=&expiry=` | query | `BlacklistEntry[]` | List manual blacklist entries |
-| GET | `/v1/blacklist/entries?q=&source=&origin=&state=&expiry=&page=&page_size=` | query | `BlacklistEntriesPage` | List manual plus feed-origin rows |
+| GET | `/v1/blacklist?q=&source=&scope_type=&service_id=&state=&expiry=` | query | `BlacklistEntry[]` | List manual blacklist entries |
+| GET | `/v1/blacklist/entries?q=&source=&scope_type=&service_id=&origin=&state=&expiry=&page=&page_size=` | query | `BlacklistEntriesPage` | List manual plus feed-origin rows |
 | POST | `/v1/blacklist` | `BlacklistInput` | `BlacklistEntry` | Create manual entry and rebuild snapshot |
 | PATCH | `/v1/blacklist/{id}` | `BlacklistInput` | `BlacklistEntry` | Update manual entry and rebuild snapshot |
 | DELETE | `/v1/blacklist/{id}` | reason via header | `BlacklistEntry` | Disable manual entry and rebuild snapshot |
@@ -262,6 +274,8 @@ Filters:
 
 - `q`: CIDR, source, reason, rule UUID or rule name.
 - `source`: exact source filter, case-insensitive.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `service_id`: UUID for service-scoped entries.
 - `origin`: `all`, `manual`, `feed` on `/v1/blacklist/entries`.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
@@ -277,11 +291,14 @@ Filters:
       "id": "uuid",
       "ebpf_id": 31,
       "cidr": "203.0.113.8/32",
+      "scope_type": "user_global",
+      "service_id": "",
       "score": 100,
       "action": "drop",
       "source": "manual",
       "source_name": "",
       "reason": "manual evidence",
+      "owner": "user",
       "enabled": true,
       "status": "enabled",
       "origin": "manual",
@@ -296,15 +313,15 @@ Filters:
 }
 ```
 
-Feed-origin rows are generated from global active reputation and have `editable=false`. Manual blacklist mutations accept only `action="drop"`.
+Feed-origin rows are generated from global active reputation and have `editable=false`. Manual blacklist mutations accept only `action="drop"`. Service-scoped manual entries require `service_id`.
 
 ## 13. UDP Source Port Blocks
 
-Authenticated read. `user` mutates own config; admin view-user context reads only.
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/udp-source-port-blocks?q=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List source-port blocks |
+| GET | `/v1/udp-source-port-blocks?q=&scope_type=&service_id=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List source-port blocks |
 | POST | `/v1/udp-source-port-blocks` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Create entry and rebuild snapshot |
 | PATCH | `/v1/udp-source-port-blocks/{id}` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Update entry and rebuild snapshot |
 | DELETE | `/v1/udp-source-port-blocks/{id}` | `X-Audit-Reason` | `UDPSourcePortBlock` | Disable entry and rebuild snapshot |
@@ -312,6 +329,8 @@ Authenticated read. `user` mutates own config; admin view-user context reads onl
 Filters:
 
 - `q`: port, label, reason or owner.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `service_id`: UUID for service-scoped entries.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
 
@@ -321,14 +340,15 @@ Filters:
 {
   "reason": "block NTP reflection source port",
   "port": 123,
+  "scope_type": "user_global",
+  "service_id": "",
   "label": "ntp",
-  "owner": "sre",
   "expires_at": "2026-06-12T00:00:00Z",
   "enabled": true
 }
 ```
 
-New user owners are seeded with disabled entries for common reflection/amplification source ports. Enabled, non-expired entries are included in owner snapshots as `udp_source_port_blocks`; whitelist bypasses this datapath check.
+New user owners are seeded with disabled user-global entries for common reflection/amplification source ports. Enabled, non-expired entries are included in owner snapshots as `udp_source_port_blocks`; service-scoped rows populate service source-port maps. Whitelist bypasses this datapath check.
 
 ## 14. Feeds And Reputation
 

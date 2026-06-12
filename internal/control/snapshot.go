@@ -341,6 +341,18 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 			break
 		}
 	}
+	for _, entry := range blacklist {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_blacklist_v4")
+			break
+		}
+	}
+	for _, entry := range udpSourcePortBlocks {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_udp_src_port_block")
+			break
+		}
+	}
 	return snapshot, nil
 }
 
@@ -499,55 +511,81 @@ func (s *Store) makePolicyService(req agent.ServiceResolveRequest, ifindex uint3
 }
 
 func snapshotWhitelist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {
-	rows, err := q.Query(ctx, `SELECT w.ebpf_id, w.ip_or_cidr::text, w.priority, w.scope, COALESCE(bs.ebpf_id, 0), w.expires_at
+	rows, err := q.Query(ctx, `SELECT w.ebpf_id, w.ip_or_cidr::text, w.priority, w.scope_type, COALESCE(bs.ebpf_id, 0), w.expires_at
 FROM whitelist_entries w
 LEFT JOIN backend_services bs ON bs.id = w.service_id
 WHERE w.enabled
-  AND w.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND (w.scope_type = 'admin_global' OR w.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
   AND (w.expires_at IS NULL OR w.expires_at > now())
 ORDER BY w.priority, w.ebpf_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]agent.PolicyCIDREntry, 0)
+	byKey := map[string]struct {
+		rank  int
+		entry agent.PolicyCIDREntry
+	}{}
 	for rows.Next() {
 		var entry agent.PolicyCIDREntry
-		var scope string
+		var scopeType string
 		var serviceID uint32
 		var expires *time.Time
-		if err := rows.Scan(&entry.EntryID, &entry.CIDR, &entry.Priority, &scope, &serviceID, &expires); err != nil {
+		if err := rows.Scan(&entry.EntryID, &entry.CIDR, &entry.Priority, &scopeType, &serviceID, &expires); err != nil {
 			return nil, err
 		}
+		prefix, err := parseCIDR(entry.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("whitelist entry %d: %w", entry.EntryID, err)
+		}
+		entry.CIDR = prefix.String()
 		entry.Action = ActionPass
 		entry.SourceType = 1
 		entry.Scope = PolicyScopeGlobal
-		if scope == "service" {
+		key := "global:" + entry.CIDR
+		if scopeType == ScopeTypeService {
 			entry.Scope = PolicyScopeService
 			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%s", serviceID, entry.CIDR)
 		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		out = append(out, entry)
+		next := struct {
+			rank  int
+			entry agent.PolicyCIDREntry
+		}{rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byKey[key]; !ok || cidrCandidatePreferred(next.rank, next.entry, current.rank, current.entry) {
+			byKey[key] = next
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]agent.PolicyCIDREntry, 0, len(byKey))
+	for _, candidate := range byKey {
+		out = append(out, candidate.entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return cidrEntrySnapshotLess(out[i], out[j]) })
+	return out, nil
 }
 
 type blacklistSnapshotCandidate struct {
 	manual bool
+	rank   int
 	entry  agent.PolicyCIDREntry
 }
 
 func snapshotBlacklist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {
-	rows, err := q.Query(ctx, `SELECT true, b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
+	rows, err := q.Query(ctx, `SELECT true, b.scope_type, COALESCE(bs.ebpf_id, 0), b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
+LEFT JOIN backend_services bs ON bs.id = b.service_id
 WHERE b.enabled
-  AND b.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND (b.scope_type = 'admin_global' OR b.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
   AND (b.expires_at IS NULL OR b.expires_at > now())
 UNION ALL
-SELECT false, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
+SELECT false, 'admin_global', 0, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
 FROM reputation_entries r
 JOIN feed_sources fs ON fs.id = r.source_id
 WHERE fs.enabled
@@ -564,9 +602,11 @@ ORDER BY 1`)
 	byCIDR := make(map[string]blacklistSnapshotCandidate)
 	for rows.Next() {
 		var manual bool
+		var scopeType string
+		var serviceID uint32
 		var entry agent.PolicyCIDREntry
 		var expires *time.Time
-		if err := rows.Scan(&manual, &entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
+		if err := rows.Scan(&manual, &scopeType, &serviceID, &entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
 			return nil, err
 		}
 		prefix, err := parseCIDR(entry.CIDR)
@@ -577,12 +617,18 @@ ORDER BY 1`)
 		entry.Action = ActionDrop
 		entry.SourceType = 1
 		entry.Scope = PolicyScopeGlobal
+		key := "global:" + entry.CIDR
+		if scopeType == ScopeTypeService {
+			entry.Scope = PolicyScopeService
+			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%s", serviceID, entry.CIDR)
+		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		next := blacklistSnapshotCandidate{manual: manual, entry: entry}
-		if current, ok := byCIDR[entry.CIDR]; !ok || blacklistCandidatePreferred(next, current) {
-			byCIDR[entry.CIDR] = next
+		next := blacklistSnapshotCandidate{manual: manual, rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byCIDR[key]; !ok || blacklistCandidatePreferred(next, current) {
+			byCIDR[key] = next
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -592,16 +638,14 @@ ORDER BY 1`)
 	for _, candidate := range byCIDR {
 		out = append(out, candidate.entry)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CIDR != out[j].CIDR {
-			return out[i].CIDR < out[j].CIDR
-		}
-		return out[i].EntryID < out[j].EntryID
-	})
+	sort.Slice(out, func(i, j int) bool { return cidrEntrySnapshotLess(out[i], out[j]) })
 	return out, nil
 }
 
 func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool {
+	if next.rank != current.rank {
+		return next.rank > current.rank
+	}
 	if next.manual != current.manual {
 		return next.manual
 	}
@@ -612,40 +656,78 @@ func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool 
 }
 
 func snapshotUDPSourcePortBlocks(ctx context.Context, q dbQuerier) ([]agent.PolicyUDPSourcePortBlock, error) {
-	rows, err := q.Query(ctx, `SELECT ebpf_id, port, expires_at
-FROM udp_source_port_blocks
-WHERE enabled
-  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+	rows, err := q.Query(ctx, `SELECT u.ebpf_id, u.port, u.scope_type, COALESCE(bs.ebpf_id, 0), u.expires_at
+FROM udp_source_port_blocks u
+LEFT JOIN backend_services bs ON bs.id = u.service_id
+WHERE u.enabled
+  AND (u.scope_type = 'admin_global' OR u.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
   AND (expires_at IS NULL OR expires_at > now())
-ORDER BY port, ebpf_id`)
+ORDER BY u.port, u.ebpf_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]agent.PolicyUDPSourcePortBlock, 0)
+	byKey := map[string]struct {
+		rank  int
+		entry agent.PolicyUDPSourcePortBlock
+	}{}
 	for rows.Next() {
 		var entry agent.PolicyUDPSourcePortBlock
 		var port int32
+		var scopeType string
+		var serviceID uint32
 		var expires *time.Time
-		if err := rows.Scan(&entry.EntryID, &port, &expires); err != nil {
+		if err := rows.Scan(&entry.EntryID, &port, &scopeType, &serviceID, &expires); err != nil {
 			return nil, err
 		}
 		entry.Port = uint16(port)
+		entry.Scope = PolicyScopeGlobal
+		key := fmt.Sprintf("global:%d", entry.Port)
+		if scopeType == ScopeTypeService {
+			entry.Scope = PolicyScopeService
+			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%d", serviceID, entry.Port)
+		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		out = append(out, entry)
+		next := struct {
+			rank  int
+			entry agent.PolicyUDPSourcePortBlock
+		}{rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byKey[key]; !ok || udpBlockCandidatePreferred(next.rank, next.entry, current.rank, current.entry) {
+			byKey[key] = next
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]agent.PolicyUDPSourcePortBlock, 0, len(byKey))
+	for _, candidate := range byKey {
+		out = append(out, candidate.entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		if out[i].ServiceID != out[j].ServiceID {
+			return out[i].ServiceID < out[j].ServiceID
+		}
+		return out[i].EntryID < out[j].EntryID
+	})
+	return out, nil
 }
 
 func snapshotRules(ctx context.Context, q dbQuerier) ([]agent.PolicyRule, error) {
-	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.priority, r.action, r.mode, r.dimension, r.threshold_pps,
+	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.scope_type, r.priority, r.action, r.mode, r.dimension, r.threshold_pps,
        r.threshold_bps, r.threshold_cps, r.burst_packets, r.burst_bytes, r.sample_denom, r.expires_at
 FROM rules r
 LEFT JOIN backend_services bs ON bs.id = r.service_id
 WHERE r.enabled
-  AND r.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND (r.scope_type = 'admin_global' OR r.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
   AND (r.expires_at IS NULL OR r.expires_at > now())
 ORDER BY r.priority, r.ebpf_id`)
 	if err != nil {
@@ -657,7 +739,7 @@ ORDER BY r.priority, r.ebpf_id`)
 		var rule agent.PolicyRule
 		var action, mode, dimension string
 		var expires *time.Time
-		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.Priority, &action, &mode, &dimension, &rule.ThresholdPPS,
+		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.ScopeType, &rule.Priority, &action, &mode, &dimension, &rule.ThresholdPPS,
 			&rule.ThresholdBPS, &rule.ThresholdCPS, &rule.BurstPackets, &rule.BurstBytes, &rule.SampleDenom, &expires); err != nil {
 			return nil, err
 		}
@@ -672,6 +754,36 @@ ORDER BY r.priority, r.ebpf_id`)
 	return out, rows.Err()
 }
 
+func cidrCandidatePreferred(nextRank int, next agent.PolicyCIDREntry, currentRank int, current agent.PolicyCIDREntry) bool {
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	if next.Priority != current.Priority {
+		return next.Priority < current.Priority
+	}
+	return next.EntryID < current.EntryID
+}
+
+func udpBlockCandidatePreferred(nextRank int, next agent.PolicyUDPSourcePortBlock, currentRank int, current agent.PolicyUDPSourcePortBlock) bool {
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.EntryID < current.EntryID
+}
+
+func cidrEntrySnapshotLess(left, right agent.PolicyCIDREntry) bool {
+	if left.CIDR != right.CIDR {
+		return left.CIDR < right.CIDR
+	}
+	if left.Scope != right.Scope {
+		return left.Scope < right.Scope
+	}
+	if left.ServiceID != right.ServiceID {
+		return left.ServiceID < right.ServiceID
+	}
+	return left.EntryID < right.EntryID
+}
+
 func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule) {
 	var global *agent.PolicyRule
 	serviceRules := map[uint32]agent.PolicyRule{}
@@ -680,16 +792,14 @@ func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule
 			continue
 		}
 		if rule.ServiceID == 0 {
-			if global == nil || rule.Priority < global.Priority ||
-				(rule.Priority == global.Priority && rule.RuleID < global.RuleID) {
+			if global == nil || rulePreferred(rule, *global) {
 				candidate := rule
 				global = &candidate
 			}
 			continue
 		}
 		current, ok := serviceRules[rule.ServiceID]
-		if !ok || rule.Priority < current.Priority ||
-			(rule.Priority == current.Priority && rule.RuleID < current.RuleID) {
+		if !ok || rulePreferred(rule, current) {
 			serviceRules[rule.ServiceID] = rule
 		}
 	}
@@ -700,6 +810,16 @@ func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule
 			services[i].DefaultRuleID = global.RuleID
 		}
 	}
+}
+
+func rulePreferred(next, current agent.PolicyRule) bool {
+	if scopeTypeRank(next.ScopeType) != scopeTypeRank(current.ScopeType) {
+		return scopeTypeRank(next.ScopeType) > scopeTypeRank(current.ScopeType)
+	}
+	if next.Priority != current.Priority {
+		return next.Priority < current.Priority
+	}
+	return next.RuleID < current.RuleID
 }
 
 func policyContentFingerprint(snapshot agent.PolicySnapshot) (string, error) {

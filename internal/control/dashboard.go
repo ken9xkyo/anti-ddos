@@ -189,8 +189,8 @@ func (s *Store) ListDashboardServices(ctx context.Context) ([]DashboardService, 
 	return out, nil
 }
 
-func (s *Store) ListDashboardRules(ctx context.Context) ([]DashboardRule, error) {
-	rules, err := s.ListRules(ctx)
+func (s *Store) ListDashboardRules(ctx context.Context, actor *Actor) ([]DashboardRule, error) {
+	rules, err := s.ListRules(ctx, actor)
 	if err != nil {
 		return nil, err
 	}

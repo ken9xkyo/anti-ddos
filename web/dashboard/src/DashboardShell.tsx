@@ -45,9 +45,11 @@ export function DashboardShell({
   onViewUserConfig?: (userID: string) => void | Promise<void>;
   onLogout: () => void;
 }) {
-  const canMutate = user.role === 'user' && !user.read_only;
   const isAdmin = user.role === 'admin';
+  const canMutateUserConfig = user.role === 'user' && !user.read_only;
+  const canMutatePolicy = !user.read_only && (user.role === 'user' || (isAdmin && !user.viewing_user));
   const canManageReputation = isAdmin && !user.read_only && !user.viewing_user;
+  const policyScopeOptions = isAdmin && !user.viewing_user ? ['admin_global' as const] : ['user_global' as const, 'service' as const];
   const visibleNavGroups = useMemo(() => navGroups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
@@ -124,11 +126,11 @@ export function DashboardShell({
         ) : null}
 
         {data && activeTab === 'overview' ? <OverviewView data={data} /> : null}
-        {data && activeTab === 'incidents' ? <IncidentsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={canMutate} onRefresh={onRefresh} /> : null}
-        {data && activeTab === 'services' ? <ServicesView services={data.services} agents={data.agents} applyStatuses={data.overview.latest_apply_status} canMutate={canMutate} onRefresh={onRefresh} /> : null}
-        {data && activeTab === 'rules' ? <RulesAdminView services={data.services} canMutate={canMutate} /> : null}
-        {data && activeTab === 'whitelist' ? <WhitelistAdminView services={data.services} canMutate={canMutate} /> : null}
-        {data && activeTab === 'blacklist' ? <BlacklistAdminView canMutate={canMutate} /> : null}
+        {data && activeTab === 'incidents' ? <IncidentsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={canMutateUserConfig} onRefresh={onRefresh} /> : null}
+        {data && activeTab === 'services' ? <ServicesView services={data.services} agents={data.agents} applyStatuses={data.overview.latest_apply_status} canMutate={canMutateUserConfig} onRefresh={onRefresh} /> : null}
+        {data && activeTab === 'rules' ? <RulesAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
+        {data && activeTab === 'whitelist' ? <WhitelistAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
+        {data && activeTab === 'blacklist' ? <BlacklistAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
         {data && activeTab === 'reputation' && canManageReputation ? (
           <ReputationView
             sources={data.feedSources}
@@ -138,8 +140,8 @@ export function DashboardShell({
             onRefresh={onRefresh}
           />
         ) : null}
-        {data && activeTab === 'udpPorts' ? <UDPPortsAdminView canMutate={canMutate} /> : null}
-        {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutate} /> : null}
+        {data && activeTab === 'udpPorts' ? <UDPPortsAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
+        {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutateUserConfig} /> : null}
         {data && activeTab === 'access' && isAdmin ? <AccessView currentUser={user} onViewUserConfig={onViewUserConfig} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}
         {data && activeTab === 'investigation' ? <InvestigationView events={data.events} /> : null}

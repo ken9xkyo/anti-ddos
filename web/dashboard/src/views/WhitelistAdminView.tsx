@@ -6,12 +6,12 @@ import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { DataToolbar, PanelHeader, SearchField, StatusPill } from '../components';
 import { formatDateTime } from '../format';
-import type { Service, WhitelistEntry, WhitelistFilters, WhitelistInput } from '../types';
+import type { LegacyPolicyScope, ScopeType, Service, WhitelistEntry, WhitelistFilters, WhitelistInput } from '../types';
 
 type WhitelistForm = {
   reason: string;
+  scope_type: ScopeType;
   cidr: string;
-  scope: string;
   service_id: string;
   label: string;
   owner: string;
@@ -22,8 +22,8 @@ type WhitelistForm = {
 
 const emptyForm: WhitelistForm = {
   reason: 'update whitelist entry',
+  scope_type: 'user_global',
   cidr: '',
-  scope: 'global',
   service_id: '',
   label: '',
   owner: '',
@@ -32,7 +32,15 @@ const emptyForm: WhitelistForm = {
   enabled: true
 };
 
-export function WhitelistAdminView({ services, canMutate }: { services: Service[]; canMutate: boolean }) {
+export function WhitelistAdminView({
+  services,
+  canMutate,
+  scopeOptions
+}: {
+  services: Service[];
+  canMutate: boolean;
+  scopeOptions: ScopeType[];
+}) {
   const [entries, setEntries] = useState<WhitelistEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
@@ -65,9 +73,11 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
     return () => window.clearTimeout(timer);
   }, [filters]);
 
+  const defaultScopeType = scopeOptions[0] ?? 'user_global';
   const serviceName = (id?: string) => services.find((service) => service.id === id)?.name || 'all services';
   const hasActiveFilters = Boolean(
     filters.q?.trim() ||
+    (filters.scope_type && filters.scope_type !== 'all') ||
     (filters.scope && filters.scope !== 'all') ||
     filters.service_id?.trim() ||
     (filters.state && filters.state !== 'all') ||
@@ -75,8 +85,8 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
   );
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'cidr', headerName: 'CIDR', flex: 1, minWidth: 155 },
-    { field: 'scope', headerName: 'Scope', width: 95 },
-    { field: 'service_id', headerName: 'Service', width: 120, valueGetter: (_, row) => row.scope === 'service' ? serviceName(row.service_id) : 'global' },
+    { field: 'scope_type', headerName: 'Scope', width: 135, valueGetter: (_, row) => scopeTypeLabel(row.scope_type) },
+    { field: 'service_id', headerName: 'Service', width: 130, valueGetter: (_, row) => effectiveScopeType(row) === 'service' ? serviceName(row.service_id) : 'all services' },
     { field: 'label', headerName: 'Label', width: 135 },
     { field: 'owner', headerName: 'Owner', width: 105 },
     { field: 'priority', headerName: 'Priority', width: 90 },
@@ -90,6 +100,7 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
       renderCell: (params) => {
         const row = params.row as WhitelistEntry;
         if (!canMutate) return <span className="muted">read only</span>;
+        if (row.editable === false) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
@@ -105,7 +116,7 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
 
   const openCreate = () => {
     setTarget(null);
-    setForm({ ...emptyForm, reason: 'create whitelist entry' });
+    setForm({ ...emptyForm, scope_type: defaultScopeType, reason: 'create whitelist entry' });
     setMode('create');
   };
 
@@ -113,8 +124,8 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
     setTarget(entry);
     setForm({
       reason: `update ${entry.cidr}`,
+      scope_type: effectiveScopeType(entry) as ScopeType,
       cidr: entry.cidr,
-      scope: entry.scope,
       service_id: entry.service_id ?? '',
       label: entry.label ?? '',
       owner: entry.owner,
@@ -167,9 +178,10 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
           <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => setFilters({ ...filters, q: value })} placeholder="cidr, label, owner, reason, service" />
           <label>
             Scope
-            <select value={filters.scope ?? 'all'} onChange={(event) => setFilters({ ...filters, scope: event.target.value as WhitelistFilters['scope'] })}>
+            <select value={filters.scope_type ?? 'all'} onChange={(event) => setFilters({ ...filters, scope_type: event.target.value as WhitelistFilters['scope_type'], scope: 'all' })}>
               <option value="all">All</option>
-              <option value="global">Global</option>
+              <option value="admin_global">Admin global</option>
+              <option value="user_global">User global</option>
               <option value="service">Service</option>
             </select>
           </label>
@@ -214,18 +226,17 @@ export function WhitelistAdminView({ services, canMutate }: { services: Service[
       >
         <TextField label="CIDR" value={form.cidr} onChange={(event) => setForm({ ...form, cidr: event.target.value })} fullWidth required />
         <Stack direction="row" spacing={1}>
-          <TextField select label="Scope" value={form.scope} onChange={(event) => setForm({ ...form, scope: event.target.value })} fullWidth>
-            <MenuItem value="global">Global</MenuItem>
-            <MenuItem value="service">Service</MenuItem>
+          <TextField select label="Scope" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value as ScopeType, service_id: '' })} fullWidth>
+            {scopeOptions.map((scope) => <MenuItem key={scope} value={scope}>{scopeTypeLabel(scope)}</MenuItem>)}
           </TextField>
-          <TextField select label="Service" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} fullWidth disabled={form.scope !== 'service'}>
+          <TextField select label="Service" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} fullWidth disabled={form.scope_type !== 'service'}>
             <MenuItem value="">Select service</MenuItem>
             {services.map((service) => <MenuItem key={service.id} value={service.id}>{service.name}</MenuItem>)}
           </TextField>
         </Stack>
         <Stack direction="row" spacing={1}>
           <TextField label="Label" value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} fullWidth />
-          <TextField label="Owner" value={form.owner} onChange={(event) => setForm({ ...form, owner: event.target.value })} fullWidth required />
+          {mode === 'edit' ? <TextField label="Owner" value={form.owner} fullWidth disabled /> : null}
         </Stack>
         <Stack direction="row" spacing={1}>
           <TextField label="Priority" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} inputMode="numeric" fullWidth />
@@ -247,14 +258,29 @@ function whitelistInputFromForm(form: WhitelistForm): WhitelistInput {
   return {
     reason: form.reason.trim(),
     cidr: form.cidr.trim(),
-    scope: form.scope,
-    service_id: form.scope === 'service' ? form.service_id.trim() : undefined,
+    scope: legacyScopeForScopeType(form.scope_type),
+    scope_type: form.scope_type,
+    service_id: form.scope_type === 'service' ? form.service_id.trim() : undefined,
     label: form.label.trim(),
-    owner: form.owner.trim(),
     priority: optionalNumber(form.priority),
     expires_at: form.expires_at.trim() || undefined,
     enabled: form.enabled
   };
+}
+
+function effectiveScopeType(entry: Pick<WhitelistEntry, 'scope_type' | 'scope'>): ScopeType {
+  if (entry.scope_type) return entry.scope_type;
+  return entry.scope === 'service' ? 'service' : 'user_global';
+}
+
+function legacyScopeForScopeType(scopeType: ScopeType): LegacyPolicyScope {
+  return scopeType === 'service' ? 'service' : 'global';
+}
+
+function scopeTypeLabel(value?: ScopeType): string {
+  if (value === 'admin_global') return 'Admin global';
+  if (value === 'service') return 'Service';
+  return 'User global';
 }
 
 function optionalNumber(value: string): number | undefined {
