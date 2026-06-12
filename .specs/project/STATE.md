@@ -75,3 +75,4 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 
 - 2026-06-12: `001-blacklist-entries-created-at` fixed `/v1/blacklist/entries` SQL by mapping feed row `created_at` from `reputation_entries.first_seen_at`; verified with Go tests and threat-feed PostgreSQL integration.
 - 2026-06-12: `002-agent-start-output-xdp-pass-failure` changed `agent-start` to preserve output `xdp_pass` after a failed Agent launch; verified with dry-run shell syntax checks and `make agent-build`.
+- 2026-06-12: `003-agent-start-explicit-control-sync` changed `agent-start` to keep Control sync disabled unless explicitly configured and to validate missing owner config before output XDP attach; verified with dry-run syntax, Agent tests, `make agent-build`, and a safe missing-owner guard run.

@@ -142,7 +142,7 @@ help:
 	@printf '  AGENT_OUTPUT_XDP_MODE             Output xdp_pass mode: native or generic, default follows AGENT_XDP_MODE\n'
 	@printf '  AGENT_TOKEN                       Host Agent token; falls back to .env values\n'
 	@printf '  AGENT_METRICS_ADDR                Host Agent metrics bind, default: 0.0.0.0:9091\n'
-	@printf '  AGENT_CONTROL_URL                 Control API URL, default: http://127.0.0.1:8080\n'
+	@printf '  AGENT_CONTROL_URL                 Control API URL; unset disables Control sync\n'
 	@printf '  AGENT_XDP_MODE                    XDP mode, default: native\n'
 	@printf '  AGENT_ALLOW_GENERIC_FALLBACK      Allow generic XDP fallback, default: false\n'
 	@printf '  AGENT_SAFE_DETACH_ON_EXIT         Detach XDP on Agent exit, default: false\n'
@@ -200,9 +200,11 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 	metrics_addr="$(AGENT_METRICS_ADDR)"; \
 	if [ -z "$$metrics_addr" ]; then metrics_addr="$${ANTI_DDOS_METRICS_ADDR:-0.0.0.0:9091}"; fi; \
 	control_url="$(AGENT_CONTROL_URL)"; \
-	if [ -z "$$control_url" ]; then control_url="$${ANTI_DDOS_CONTROL_URL:-http://127.0.0.1:8080}"; fi; \
+	if [ -z "$$control_url" ]; then control_url="$${ANTI_DDOS_CONTROL_URL:-}"; fi; \
 	token="$${AGENT_TOKEN:-}"; \
 	if [ -z "$$token" ]; then token="$${ANTI_DDOS_AGENT_TOKEN:-$${ANTI_DDOS_AGENT_SHARED_TOKEN:-}}"; fi; \
+	owner_user_id="$${ANTI_DDOS_OWNER_USER_ID:-}"; \
+	owner_username="$${ANTI_DDOS_OWNER_USERNAME:-}"; \
 	xdp_mode="$(AGENT_XDP_MODE)"; \
 	if [ -z "$$xdp_mode" ]; then xdp_mode="$${ANTI_DDOS_XDP_MODE:-native}"; fi; \
 	output_xdp_mode="$(AGENT_OUTPUT_XDP_MODE)"; \
@@ -227,6 +229,10 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 	pid_file="$(AGENT_PID_FILE)"; \
 	start_wait="$(AGENT_START_WAIT)"; \
 	mkdir -p "$$(dirname "$$log_file")" "$$(dirname "$$pid_file")"; \
+	if [ -n "$$control_url" ] && [ -z "$$owner_user_id" ] && [ -z "$$owner_username" ]; then \
+		echo "ANTI_DDOS_OWNER_USER_ID or ANTI_DDOS_OWNER_USERNAME is required when AGENT_CONTROL_URL/ANTI_DDOS_CONTROL_URL is set" >&2; \
+		exit 1; \
+	fi; \
 	if [ -n "$$control_url" ] && [ -z "$$token" ]; then \
 		echo "warning: ANTI_DDOS_AGENT_TOKEN is empty; Control API sync may be rejected" >&2; \
 	fi; \
@@ -267,6 +273,8 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 		ANTI_DDOS_BPF_PIN_DIR="$$pin_dir" \
 		ANTI_DDOS_CONTROL_URL="$$control_url" \
 		ANTI_DDOS_AGENT_TOKEN="$$token" \
+		ANTI_DDOS_OWNER_USER_ID="$$owner_user_id" \
+		ANTI_DDOS_OWNER_USERNAME="$$owner_username" \
 		ANTI_DDOS_SAFE_DETACH_ON_EXIT="$$safe_detach" \
 		"$(AGENT_BIN)" >> "$$log_file" 2>&1 & \
 	launcher_pid="$$!"; \
