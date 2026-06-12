@@ -1,17 +1,16 @@
 # Admin Dashboard
 
-Trang thai: cap nhat theo RBAC `admin`/`user` khong con tenant ngay 2026-06-11.
+Admin Dashboard is the React/Vite operations console for the Anti-DDoS Control Plane. It renders account management for admins, owner-scoped operational views for users, read-only user config views for admin support, and global reputation management for normal admin sessions.
 
-Admin Dashboard la ops console cho Control Plane Anti-DDoS. Dashboard khong con tenant switcher, Tenants navigation, `operator`, `viewer` hay `platform_admin`. Threat Feed/Reputation ton tai lai duoi dang admin-only global.
+## Role Behavior
 
-## Role behavior
-
-| Role | UI behavior |
+| Role/session | UI behavior |
 |---|---|
-| `user` | Thay dashboard va duoc mutation config cua chinh minh: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots va Telegram. |
-| `admin` | Thay Accounts de quan ly users va Reputation de quan ly global threat feeds. Co nut `View config` de mo dashboard read-only cua mot user. Khong co mutation controls cho config cua user. |
+| `user` | Can view and mutate own Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots and Telegram config. |
+| `admin` normal session | Can manage Accounts and Reputation feed sources/runs/conflicts. Can open `View config` for an active user. |
+| `admin` view-user session | Can read target user dashboard/config data. Mutation controls are hidden and backend mutations return `403`. |
 
-Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `viewing <username>` va `read only`.
+The topbar shows `username · role`. When admin is viewing user config, it also shows `viewing <username>` and `read only`.
 
 ## Navigation
 
@@ -21,34 +20,30 @@ Topbar hien `username · role`. Khi admin dang xem config user, chip hien them `
 | Configuration | Services, Rules, Whitelist, Blacklist, Reputation, UDP Ports |
 | Setting | Snapshots, Accounts, Nodes |
 
-`Accounts` chi hien voi `admin`. `Reputation` chi hien voi admin normal session; user va admin view-user context khong thay tab nay. `Tenants` khong con trong navigation.
+`Accounts` is shown for admins. `Reputation` is shown only for normal admin sessions. Navigation is organized around owner-user operations.
 
-## Main workflows
+## Main Workflows
 
-- `POST /v1/auth/login` dang nhap bang `username`/`password`, response khong co tenant fields.
-- Dashboard polling goi overview, agents, services, rules, events, Telegram config va alerts. Chi admin normal session moi goi `/v1/feed-*`; user va admin view-user context khong goi feed endpoints. Dashboard khong goi `/v1/tenants*`.
-- Services/Rules/Whitelist/Manual Blacklist/UDP Ports/Snapshots chi render mutation controls khi `user.role === "user"` va `read_only` khong bat.
-- Telegram config/test chi cho `user` trong owner context cua chinh minh.
-- Accounts cho `admin` create/update/revoke/reset password/revoke sessions va `View config`.
-- `View config` goi `POST /v1/admin/view-user` voi `{ "user_id": "..." }`, sau do dashboard reload trong context read-only cua target user.
-- Reputation cho `admin` create/update/disable/sync global feed source, xem run history va whitelist conflicts.
-- Blacklist cua user hien ca manual rows va feed-origin rows; feed-origin rows read-only va khong co action edit/disable.
+- Login calls `POST /v1/auth/login` with `username` and `password`.
+- Dashboard polling loads overview, agents, services, rules, recent security events, Telegram config and alerts.
+- Feed endpoints are loaded only when `user.role === "admin"` and the session is not read-only and not viewing another user.
+- Services/Rules/Whitelist/Manual Blacklist/UDP Ports/Snapshots render mutation controls only when `user.role === "user"` and `read_only` is false.
+- Incidents can configure/test Telegram only for a mutable user owner context.
+- Accounts lets admins create/update/revoke users, reset passwords, revoke sessions and open read-only user config context.
+- Reputation lets normal admins create/update/disable/sync global feed sources and review feed runs/conflicts.
+- Blacklist displays manual rows and feed-origin rows; feed-origin rows have `editable=false`.
 
-## Backend API contracts
+## Backend API Contracts
 
-| Domain | Method/path | Role | Semantics |
+| Domain | Method/path | Role/session | Semantics |
 |---|---|---|---|
-| Auth | `POST /v1/auth/login` | Public | Dang nhap user |
-| Admin view | `POST /v1/admin/view-user` | `admin` | Mo read-only config context cua target user |
-| Users | `GET /v1/users` | `admin` | List accounts |
-| Users | `POST /v1/users` | `admin` | Create account |
-| Users | `PATCH /v1/users/{id}` | `admin` | Update role/status/password-change flag |
-| Users | `DELETE /v1/users/{id}` | `admin` | Revoke account |
-| Users | `POST /v1/users/{id}/password-reset` | `admin` | Reset password va revoke sessions |
-| Users | `POST /v1/users/{id}/sessions/revoke` | `admin` | Revoke sessions |
-| Config | Services/Rules/Whitelist/Blacklist/UDP Ports/Snapshots/Telegram | `user` owner only | Mutation own config; admin read-only context bi `403` |
-| Reputation | `/v1/feed-sources*`, `/v1/feed-runs`, `/v1/feed-conflicts` | `admin` normal session only | Quan ly global threat feeds; user va admin view-user bi `403` |
-| Dashboard read | Overview/Agents/Services/Rules/Events/Alerts | Authenticated | Read owner-scoped data |
+| Auth | `POST /v1/auth/login` | Public | Login |
+| Current user | `GET /v1/me`, `POST /v1/me/password` | Authenticated | Load user or change own password |
+| Admin view | `POST /v1/admin/view-user` | `admin` | Open read-only config context for active user |
+| Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, password/session subroutes | `admin` | Account lifecycle |
+| Config | Services, Rules, Whitelist, Blacklist, UDP Ports, Snapshots, Telegram | `user` owner only for mutation | Mutate own config; read-only admin context can read |
+| Reputation | `/v1/feed-sources*`, `/v1/feed-runs`, `/v1/feed-conflicts` | normal `admin` session | Manage global threat feeds |
+| Dashboard read | Overview, Agents, Services, Rules, Events, Alerts | Authenticated owner context | Poll dashboard data |
 
 ## Verification
 

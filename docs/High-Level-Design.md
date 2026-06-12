@@ -1,45 +1,48 @@
 # High-Level Design
 
-Trang thai: cap nhat theo RBAC `admin`/`user` khong con tenant ngay 2026-06-11.
+Anti-DDoS Scrubbing Gateway protects L3/L4 services with an XDP/eBPF data plane on a scrubbing host. The management stack provides a Control API, PostgreSQL state, an Admin Dashboard, Prometheus/Grafana observability and a host Node Agent that applies signed policy snapshots.
 
-Anti-DDoS Scrubbing Gateway gom Data Plane XDP/eBPF, Node Agent, Control API, PostgreSQL va Admin Dashboard. Control Plane quan ly policy snapshot va operational config theo owner user.
+The current system is IPv4-focused, owner-scoped by `owner_user_id`, and exposes two public user roles: `admin` and `user`. It does not terminate TLS, proxy HTTP, inspect L7 payloads or replace a WAF.
 
 ## Actors
 
-| Actor | Muc tieu | Quyen |
+| Actor | Goal | Permissions |
 |---|---|---|
-| `user` | Van hanh config Anti-DDoS cua chinh minh | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, agents/events/alerts va Telegram |
-| `admin` | Quan ly tai khoan, global threat feeds va ho tro user | User lifecycle mutations; global feed management; read-only view config cua tung user qua Accounts |
+| `user` | Operate Anti-DDoS configuration for their own account | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, agents/events/alerts and Telegram config |
+| `admin` | Manage accounts and global threat feeds; assist users | Mutate account lifecycle, manage global feed sources/runs/conflicts, and open read-only dashboard context for a user |
+| Node Agent | Apply dataplane policy for one owner account | Register with owner identity, fetch snapshots, apply eBPF maps, report heartbeat/apply status/events |
 
 ## Architecture
 
-- Data Plane: XDP/eBPF drop/rate-limit/redirect va counters/events.
-- Node Agent: attach/rollback XDP, sync snapshot, forward sampled events, expose metrics.
-- Control API: auth/session, owner-scoped config APIs, account admin APIs, admin-only global feed APIs, agent APIs.
-- PostgreSQL: identity/session tables va operational tables co `owner_user_id`.
-- Dashboard: React/Vite ops console khong tenant switcher; Reputation chi hien voi admin normal session.
+- Data Plane: `xdp_entry` parses Ethernet/IPv4/L4 traffic, applies service allowlist, whitelist, blacklist, UDP source-port blocks and rule decisions, then counts and samples events.
+- Forwarding Plane: valid service traffic is L2-rewritten and redirected through `tx_devmap`; unresolved forwarding metadata fails closed.
+- Node Plane: the Go Agent attaches XDP, maintains pinned maps, resolves forwarding metadata, persists last-valid snapshots, exposes `/metrics` and forwards sampled events.
+- Control Plane: Go HTTP API handles auth/session, owner isolation, account admin, policy CRUD, snapshot build/diff/rollback, global feeds, alerts and agent APIs.
+- Management Plane: React/Vite dashboard, Prometheus and Grafana provide operations UI, polling views, metrics and investigation workflows.
 
 ## Data Isolation
 
-Operational records belong to one `owner_user_id`. Request handling sets owner context from actor:
+Operational records are keyed by `owner_user_id`.
 
-- `user`: owner is actor ID.
-- `admin` view-user: owner is target user ID and session is read-only.
-- `admin` account management: unscoped account lifecycle only.
+- A `user` request uses the actor's own user ID as owner context.
+- An `admin` normal session is unscoped for account/global-feed administration.
+- An `admin` view-user session sets owner context to the target user and marks the session read-only.
 
-Tenant tables, tenant memberships, `active_tenant_id`, tenant RLS and `platform_role` are removed by destructive migration. Old operational data is not migrated.
+Current sessions, API payloads and dashboard navigation use owner-user context only.
 
 ## Policy Flow
 
-1. User mutates owner config with reason.
-2. Store validates role/owner and writes audit.
-3. Control builds owner policy snapshot.
-4. Agent registered to that owner fetches newer snapshot and applies XDP map updates.
-5. Agent reports apply status and security events back to owner context.
+1. A user mutates owner-scoped config with an audit reason.
+2. Store guards validate role, owner context and input.
+3. Control rebuilds a signed `PolicySnapshot` for that owner when effective content changes.
+4. An owner-bound Agent reports heartbeat and desired policy version.
+5. The Agent fetches a newer snapshot, verifies checksum/object compatibility, resolves forwarding metadata and fills the inactive A/B map slot.
+6. The Agent flips `runtime_config.active_slot`, persists the last-valid snapshot and reports apply status.
 
 ## Safety
 
-- Admin read-only config context cannot mutate operational config.
-- Manual blacklist and UDP source-port blocks are owner-scoped and audited.
-- Global active reputation from admin-managed feeds is included in every active user's policy snapshot; users see feed-origin blacklist rows read-only.
-- Telegram token is write-only/masked.
+- Operational mutations require `role=user` in the user's own owner context.
+- Admin view-user sessions can read target config but config mutations return `403`.
+- Global active reputation from admin-managed feeds is unioned into every active user's snapshot; feed-origin blacklist rows are read-only in user views.
+- Telegram bot tokens and feed credentials are write-only/masked in API responses and audit payloads.
+- Compose starts the management/control stack only. Host Agent execution and XDP attachment require explicit interface selection.

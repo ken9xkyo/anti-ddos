@@ -1,60 +1,67 @@
 # Low-Level Design
 
-Trang thai: cap nhat theo RBAC `admin`/`user` khong con tenant ngay 2026-06-11.
+## Backend Modules
 
-## Backend modules
+- `internal/control/server.go`: HTTP route table, auth middleware, request decoding and endpoint handlers.
+- `internal/control/store.go`: users, sessions, bootstrap, audit helpers and shared store dependencies.
+- `internal/control/owner.go`: owner context, owner-scoped transactions and role guards.
+- `internal/control/admin_view.go`: `POST /v1/admin/view-user` read-only admin context.
+- `internal/control/policy_store.go`: services, forwarding policies, whitelist, rules, manual blacklist, UDP source-port blocks and validation.
+- `internal/control/snapshot.go`: owner policy snapshot build, signing, content diff, rollback and agent fetch.
+- `internal/control/feed.go`: admin-only global feed source CRUD/sync, reputation rows, conflicts and snapshot rebuild for active users.
+- `internal/control/alert.go`: Telegram config, alert creation/delivery, ISP escalation payloads.
+- `internal/control/agent_store.go`: owner-bound agent register, heartbeat, snapshot apply and event ingest storage.
+- `internal/control/migrations.go`: ordered SQL migrations and current owner-user schema.
 
-- `internal/control/store.go`: auth/session, actor construction, account lifecycle.
-- `internal/control/owner.go`: owner context, owner transactions, role guards.
-- `internal/control/admin_view.go`: `POST /v1/admin/view-user` read-only session context.
-- `internal/control/policy_store.go`: owner-scoped services, rules, whitelist, manual blacklist, UDP ports.
-- `internal/control/feed.go`: admin-only global feed sync, global reputation rows and per-user snapshot rebuild.
-- `internal/control/snapshot.go`: owner-scoped snapshot build/diff/rollback.
-- `internal/control/agent_store.go`: agent register with owner headers and owner resolution by `agent_id`.
-- `internal/control/migrations.go`: destructive tenant removal and `owner_user_id` migration.
+## Authorization Rules
 
-## Authorization rules
+- `RoleAdmin = "admin"` and `RoleUser = "user"`.
+- `requireAdmin` gates account lifecycle and normal admin-only operations.
+- `requireGlobalFeedAdmin` requires `admin` plus a normal non-read-only session.
+- `requireConfigMutation` requires `role=user` and `actorOwnerUserID(actor) == actor.ID`.
+- Admin view-user sessions set `ViewingUser` and `ReadOnly`; they can read owner-scoped data but cannot mutate config.
+- Agent endpoints use the configured shared token and resolve owner from register headers or stored `agent_id`.
 
-- `RoleAdmin = "admin"`, `RoleUser = "user"`.
-- `user` may read/mutate config only when `owner_user_id = actor.ID`.
-- `admin` may mutate accounts only.
-- `admin` normal session may mutate global feed sources and run feed sync.
-- `admin` view-user may read target user's config but `requireConfigMutation` returns `403`.
-- `admin` view-user cannot call feed endpoints; `requireGlobalFeedAdmin` returns `403`.
-- `/v1/tenants*` routes are retired.
+## Schema Rules
 
-## Schema rules
+Operational tables use `owner_user_id` and are queried with:
 
-Operational tables use `owner_user_id` foreign key to `app_users`. Feed global tables use nullable ownership:
+```sql
+owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+```
+
+Owner-scoped transactions set `anti_ddos.owner_user_id` at transaction start. Unscoped transactions clear it for account/global-feed management.
+
+Global feed tables are the exception:
 
 - `feed_sources.owner_user_id = NULL`
 - `feed_runs.owner_user_id = NULL`
 - `reputation_entries.owner_user_id = NULL`
-- `feed_conflicts.owner_user_id` remains the user owner of the conflicting whitelist.
+- `feed_conflicts.owner_user_id` remains the owner of the conflicting whitelist entry
 
-Removed from current schema after migration:
+`policy_snapshots` and `telegram_configs` use composite primary keys with `owner_user_id`. Owner-level uniqueness is used for agents, services, UDP source-port blocks and alert policies.
 
-- `tenants`
-- `tenant_memberships`
-- `user_sessions.active_tenant_id`
-- `app_users.platform_role`
-- tenant RLS policy based on `anti_ddos.tenant_id`
+## Policy Snapshot Contract
 
-Operational data from the old tenant model is truncated by migration instead of migrated.
+- Snapshot schema is `policy_snapshot_v1` in `internal/agent/policy_snapshot.go`.
+- Feature flags include `policy_snapshot_v1`, `ipv4`, `ab_policy_maps`, `tx_devmap`, and `udp_src_port_block` when UDP source-port entries are active.
+- Checksums are computed over canonical JSON excluding the mutable checksum field.
+- Control verifies snapshots with `AllowUnresolvedServices=true`; the Agent resolves forwarding metadata before applying maps.
+- Applying a snapshot populates inactive A/B maps, updates `tx_devmap`, then flips `runtime_config.active_slot`.
 
-## Agent ownership
+## Datapath Rules
 
-Agent register requires one owner identity header:
+- Non-IPv4 traffic passes.
+- Malformed IPv4 and fragments are dropped.
+- IPv4 traffic must match a service allowlist entry before threat checks.
+- Whitelist takes precedence over blacklist and UDP source-port blocks.
+- UDP source-port blocks drop matching non-whitelisted UDP packets with reason `REASON_UDP_AMP_SOURCE_PORT`.
+- Resolved services are MAC-rewritten and redirected through `tx_devmap`; unresolved forwarding drops fail closed.
 
-- `X-Owner-User-ID`
-- `X-Owner-Username`
-
-Heartbeat, snapshot, apply and event ingestion resolve owner from stored `agent_id`.
-
-## Frontend rules
+## Frontend Rules
 
 - `canMutate = user.role === "user" && !user.read_only`.
-- `Accounts` is admin-only.
-- `Reputation` is shown only for normal admin sessions.
-- `View config` calls `/v1/admin/view-user` and reloads dashboard read-only.
-- `Tenants` is not rendered.
+- `Accounts` navigation is visible to admins.
+- `Reputation` navigation is visible only to normal admin sessions.
+- `View config` calls `/v1/admin/view-user` and reloads dashboard data in read-only context.
+- Dashboard polling loads feed endpoints only for normal admin sessions.

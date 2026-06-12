@@ -1,3 +1,4 @@
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','labelTextColor':'#000000'}}}%%
 erDiagram
     APP_USERS ||--o{ USER_SESSIONS : owns
     APP_USERS ||--o{ AGENTS : owns
@@ -10,7 +11,9 @@ erDiagram
     APP_USERS ||--o{ SECURITY_EVENTS : owns
     APP_USERS ||--o{ TELEGRAM_CONFIGS : owns
     APP_USERS ||--o{ ALERTS : owns
-    APP_USERS ||--o{ AUDIT_EVENTS : owns
+    FEED_SOURCES ||--o{ REPUTATION_ENTRIES : publishes
+    REPUTATION_ENTRIES ||--o{ FEED_CONFLICTS : conflicts
+    WHITELIST_ENTRIES ||--o{ FEED_CONFLICTS : overlaps
 
     APP_USERS {
         uuid id PK
@@ -31,12 +34,31 @@ erDiagram
         uuid owner_user_id FK
         text name
         inet backend_cidr
+        text protocol
     }
     RULES {
         uuid id PK
         uuid owner_user_id FK
         uuid service_id FK
         text action
+        text mode
+    }
+    WHITELIST_ENTRIES {
+        uuid id PK
+        uuid owner_user_id FK
+        inet ip_or_cidr
+        text scope
+    }
+    MANUAL_BLACKLIST_ENTRIES {
+        uuid id PK
+        uuid owner_user_id FK
+        inet ip_or_cidr
+        text action
+    }
+    UDP_SOURCE_PORT_BLOCKS {
+        uuid id PK
+        uuid owner_user_id FK
+        int port
     }
     POLICY_SNAPSHOTS {
         uuid owner_user_id PK
@@ -47,4 +69,39 @@ erDiagram
         uuid id PK
         uuid owner_user_id FK
         text hostname
+    }
+    SECURITY_EVENTS {
+        uuid id PK
+        uuid owner_user_id FK
+        inet src_ip
+        int action
+    }
+    TELEGRAM_CONFIGS {
+        uuid owner_user_id PK
+        text chat_id
+        boolean enabled
+    }
+    ALERTS {
+        uuid id PK
+        uuid owner_user_id FK
+        text severity
+        text type
+    }
+    FEED_SOURCES {
+        uuid id PK
+        uuid owner_user_id "NULL for global"
+        text name
+        text type
+    }
+    REPUTATION_ENTRIES {
+        uuid id PK
+        uuid source_id FK
+        inet ip_or_cidr
+        text status
+    }
+    FEED_CONFLICTS {
+        uuid id PK
+        uuid owner_user_id FK
+        uuid whitelist_id FK
+        uuid reputation_id FK
     }

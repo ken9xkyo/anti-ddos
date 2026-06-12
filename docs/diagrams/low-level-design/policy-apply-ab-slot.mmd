@@ -20,4 +20,4 @@ sequenceDiagram
     Agent->>Runtime: Flip active_slot and policy_version
     Agent->>Agent: Persist last-valid snapshot
     Agent->>Control: Ack apply status and stats
-    Note over Agent,Runtime: Any failure before flip keeps old active slot
+    Note over Agent,Runtime: Any failure before flip keeps current active slot

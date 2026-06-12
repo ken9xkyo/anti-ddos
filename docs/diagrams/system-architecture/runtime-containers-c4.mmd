@@ -16,7 +16,7 @@ C4Container
     Rel(dashboard, api, "Gọi Control API", "JSON/HTTPS")
     Rel(api, db, "Đọc và ghi state", "SQL")
     Rel(agent, api, "Register, heartbeat, fetch snapshot, post event", "JSON/HTTP")
-    Rel(agent, xdp, "Load program và cập nhật pinned maps", "cilium/ebpf")
+    Rel(agent, xdp, "Load program and refresh pinned maps", "cilium/ebpf")
     Rel(xdp, protected, "Redirect packet hợp lệ", "DEVMAP")
     Rel(monitoring, api, "Scrape và query metrics", "Prometheus HTTP")
 

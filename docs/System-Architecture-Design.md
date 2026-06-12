@@ -1,51 +1,53 @@
 # System Architecture Design
 
-Trang thai: cap nhat theo RBAC `admin`/`user` khong con tenant ngay 2026-06-11.
-
 ## Context
 
-Anti-DDoS Scrubbing Gateway bao ve L3/L4 services bang XDP/eBPF tren host scrubbing. Control Plane va Dashboard quan ly config owner-scoped; Node Agent sync snapshot va apply vao eBPF maps.
+Anti-DDoS Scrubbing Gateway protects backend services by enforcing L3/L4 policy at XDP on a scrubbing host. Users manage policy through the Admin Dashboard and Control API. A host Node Agent owns XDP lifecycle and applies policy snapshots to eBPF maps.
 
 ## Components
 
 | Component | Tech | Responsibility |
 |---|---|---|
-| Admin Dashboard | React/Vite | Ops UI cho user config va admin account management |
-| Control API | Go HTTP | Auth, RBAC, owner isolation, policy APIs, agent APIs |
-| PostgreSQL | PostgreSQL | Identity/session, owner-scoped operational data, snapshots, audit |
-| Node Agent | Go | Register owner agent, sync/apply snapshots, forward events |
-| XDP Data Plane | eBPF | Packet filtering, counters, sampled events, redirect |
-| Prometheus/Grafana | Observability | Metrics and dashboards |
+| Admin Dashboard | React, Vite, Nginx | Operations UI for account management, user-owned config, incidents, events, snapshots and feed management |
+| Control API | Go HTTP JSON API | Auth, RBAC, owner isolation, policy CRUD, snapshots, agent API, alerts, metrics |
+| PostgreSQL | PostgreSQL | Users, sessions, owner-scoped operational data, snapshots, events, alerts and audit |
+| Node Agent | Go host process | Attach XDP, register with owner identity, sync/apply snapshots, resolve forwarding metadata, expose metrics |
+| XDP Data Plane | eBPF maps/programs | Parse packets, enforce policy, emit counters/events and redirect clean traffic |
+| Prometheus/Grafana | Compose services | Scrape metrics and render operations dashboards |
 
-## RBAC
+## RBAC And Ownership
 
-- `user`: owns and mutates operational config.
-- `admin`: manages accounts and can view a user's config read-only.
+- `user`: reads and mutates operational config where `owner_user_id` is the actor ID.
+- `admin`: manages accounts and global feeds.
+- `admin` view-user session: reads target user config with `read_only=true`; config mutation guards return `403`.
+- Agent registration requires `X-Owner-User-ID` or `X-Owner-Username`; later heartbeat/snapshot/apply/events resolve owner from stored `agent_id`.
 
-No tenant switcher, tenant memberships, `platform_role`, `operator`, `viewer`, `X-Tenant-*` headers, or tenant RLS are part of the current architecture.
+Current sessions, API payloads and dashboard navigation are owner-user based.
 
-## Data model
+## Data Model
 
 Core identity/session:
 
-- `app_users`
-- `user_sessions` with optional `view_owner_user_id`
+- `app_users`: `role` is `admin` or `user`; `status` is `active` or `revoked`.
+- `user_sessions`: bearer/cookie sessions with optional `view_owner_user_id` for admin read-only context.
 
-Operational tables use `owner_user_id`, including agents, services, forwarding policies, rules, whitelist, manual blacklist, UDP ports, snapshots, apply status, events, Telegram config, alerts and audit.
+Owner-scoped operational tables include agents, interfaces, services, forwarding policies, rules, whitelist, manual blacklist, UDP source-port blocks, policy snapshots, apply status, security events, Telegram config, alerts, alert deliveries and audit events.
 
-## Runtime flow
+Global feed tables use `owner_user_id = NULL` for `feed_sources`, `feed_runs` and `reputation_entries`. `feed_conflicts.owner_user_id` points at the user whose whitelist conflicts with a global reputation entry.
 
-1. User logs in.
-2. Control API sets owner context from actor or admin view-user session.
-3. User mutates owner config with reason.
-4. Snapshot is rebuilt for that owner.
-5. Agent registered to the owner fetches and applies snapshot.
-6. Agent reports apply status/events; dashboard reads owner-scoped data.
+## Runtime Flow
 
-## Retired surfaces
+1. User logs in with `username` and `password`.
+2. Control API builds actor and owner context from the active session.
+3. User changes policy config; Control writes audit and rebuilds snapshot for the owner.
+4. Agent registered for that owner polls heartbeat, fetches newer snapshot and applies it.
+5. XDP enforces the active map slot and records counters/events.
+6. Dashboard polls owner-scoped read APIs plus Prometheus-backed overview data.
 
-- `/v1/tenants*`
-- Tenant switcher and Tenants page
-- `operator`/`viewer` role model
+## API Boundaries
 
-Threat Feed/Reputation is restored as admin-only global feed management and is not tenant/user-owned.
+- User/session API: `/v1/auth/*`, `/v1/me`, `/v1/users*`, `/v1/admin/view-user`.
+- Policy API: `/v1/services*`, `/v1/forwarding-policies`, `/v1/whitelist*`, `/v1/rules*`, `/v1/blacklist*`, `/v1/udp-source-port-blocks*`.
+- Global feed API: `/v1/feed-sources*`, `/v1/feed-runs`, `/v1/feed-conflicts`.
+- Observability/API views: `/v1/dashboard/*`, `/v1/security-events*`, `/v1/audit`, `/v1/alerts*`, `/v1/telegram/*`.
+- Agent API: `/v1/agents/register`, `/v1/agents/{id}/heartbeat`, `/v1/agents/{id}/snapshot`, `/v1/agents/{id}/apply`, `/v1/agents/{id}/events`.

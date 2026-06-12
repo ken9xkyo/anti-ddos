@@ -1,57 +1,53 @@
 # RBAC Admin/User
 
-Trạng thái: cập nhật ngày 2026-06-12 theo mô hình không còn tenant và không còn Detections baselines/anomalies.
-
-Control Plane chỉ còn hai role public: `admin` và `user`. Tenant, tenant memberships, tenant switcher, `platform_role`, `operator` và `viewer` đã retired khỏi API/UI/session mới.
+Control Plane exposes two user roles: `admin` and `user`. Operational data isolation is enforced by owner context.
 
 ## Role Model
 
-| Role | Quyền chính |
+| Role | Main permissions |
 |---|---|
-| `user` | Đọc và mutation config vận hành thuộc chính mình: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Agents/Events/Alerts và Telegram Channel. |
-| `admin` | Quản lý account lifecycle: create/update/revoke/reset password/revoke sessions. Admin có thể mở dashboard read-only của một user qua Accounts nhưng không được mutation config của user đó. |
+| `user` | Read and mutate their own operational config: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Agents/Events/Alerts and Telegram Channel. |
+| `admin` | Manage account lifecycle, manage global threat feeds, and open a read-only dashboard context for a user through Accounts. |
 
-## Auth Và Session
+## Auth And Session
 
-- `POST /v1/auth/login` chỉ nhận `username` và `password`.
-- `User.role` chỉ là `admin` hoặc `user`.
-- Response không có `tenants`, `active_tenant` hoặc `platform_role`.
-- `POST /v1/admin/view-user` dành cho `admin`, nhận `{ "user_id": "..." }`, trả session/context đang xem user. User response có `viewing_user` và `read_only=true`.
-- `/v1/tenants*` đã retired.
+- `POST /v1/auth/login` accepts `username` and `password`.
+- Returned `User.role` is `admin` or `user`.
+- Returned sessions include token, expiry and user object.
+- `POST /v1/admin/view-user` accepts `{ "user_id": "..." }` for admins and returns the same session token with `viewing_user` and `read_only=true`.
+- The current user/session response includes the user object and optional read-only view context.
 
 ## Data Ownership
 
-Operational data được cô lập bằng `owner_user_id`:
+Operational data is scoped by `owner_user_id`:
 
-- User request dùng `owner_user_id = actor.ID`.
-- Admin view-user request dùng `owner_user_id = target user`.
-- Mutation config gọi guard `requireConfigMutation`; admin view-user bị `403`.
-- Admin-only mutations chỉ áp dụng cho account lifecycle.
+- User request: `owner_user_id = actor.ID`.
+- Admin view-user request: `owner_user_id = target user`.
+- Config mutation requests call `requireConfigMutation`; admin view-user sessions receive `403`.
+- Admin account/global-feed operations use unscoped transactions where needed.
 
-Migration `owner_user_rbac_no_tenant` là destructive: map `operator/viewer -> user`, giữ `admin`, drop `platform_role`, revoke sessions cũ, xóa operational data cũ, drop tenant tables/session tenant field/RLS tenant policy và chuyển các bảng nghiệp vụ sang `owner_user_id`.
+The current schema uses owner-scoped indexes and composite keys for operational data. Global threat feed rows use `owner_user_id = NULL`, while feed conflicts point to the user owner affected by a whitelist overlap.
 
-## Agent
+## Agent Ownership
 
-Agent register không dùng `X-Tenant-ID` hoặc `X-Tenant-Slug` nữa. Request register phải truyền một trong hai header:
+Agent registration must identify the config owner with one of:
 
 - `X-Owner-User-ID`
 - `X-Owner-Username`
 
-Heartbeat, snapshot, apply và events resolve owner từ `agent_id` sau khi register.
+After registration, heartbeat, snapshot fetch, apply status and event ingest resolve owner from `agent_id`.
 
 ## Dashboard
 
-- Không còn tenant switcher hoặc Tenants navigation.
-- Accounts chỉ hiện với `admin`.
-- Accounts có `View config` để admin mở dashboard read-only của user.
-- User thấy đầy đủ controls mutation config/Telegram của chính mình.
-- Admin trong view-user context chỉ thấy dữ liệu và không thấy/nút mutation config.
-- `Reputation` chỉ hiện với admin normal session, không hiện với user hoặc admin view-user context.
-- Threat Feed/Reputation là global admin-only: admin quản lý feed sources/runs/conflicts; user không gọi feed endpoints nhưng thấy feed-origin rows trong Blacklist ở chế độ read-only.
+- Accounts is visible to `admin`.
+- Reputation is visible only to normal admin sessions.
+- Users see mutation controls for their own config.
+- Admin view-user context shows the target user's config without mutation controls.
+- User dashboards do not call feed management endpoints, but Blacklist can display feed-origin rows as read-only entries.
 
 ## Verification
 
-Các gate chính:
+Primary gates for RBAC and owner isolation:
 
 ```bash
 go test ./internal/control -run 'RBAC|Migration|DashboardAPIIntegration|ControlCoreIntegration|Server'

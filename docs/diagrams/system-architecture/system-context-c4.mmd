@@ -1,13 +1,24 @@
+%%{init: {'theme':'base','themeVariables': {'textColor':'#000000','titleColor':'#000000'}}}%%
 C4Context
     title Anti-DDoS System Context
 
-    Person(user, "User", "Vận hành config Anti-DDoS của chính mình")
-    Person(admin, "Admin", "Quản lý accounts và xem read-only config của user")
+    Person(user, "User", "Operates owner-scoped Anti-DDoS config")
+    Person(admin, "Admin", "Manages accounts, global feeds and read-only user views")
     System_Boundary(system, "Anti-DDoS Scrubbing Gateway") {
-        System(gateway, "Scrubbing Gateway", "XDP/eBPF dataplane, Control API, Dashboard, Agent")
+        System(gateway, "Scrubbing Gateway", "XDP/eBPF dataplane, Control API, Dashboard and Agent")
     }
-    System_Ext(prom, "Prometheus/Grafana", "Metrics and dashboards")
+    System_Ext(prom, "Prometheus / Grafana", "Metrics and operations dashboards")
 
-    Rel(user, gateway, "Quản lý owner-scoped config", "HTTPS")
-    Rel(admin, gateway, "Quản lý accounts / view config read-only", "HTTPS")
-    Rel(gateway, prom, "Expose/scrape metrics", "HTTP")
+    Rel(user, gateway, "Manages own services and policy", "HTTPS")
+    Rel(admin, gateway, "Manages accounts and feed sources", "HTTPS")
+    Rel(gateway, prom, "Exposes and scrapes metrics", "HTTP")
+
+    UpdateElementStyle(user, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(admin, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(gateway, $fontColor="#000000", $bgColor="#e0f2fe", $borderColor="#0284c7")
+    UpdateElementStyle(prom, $fontColor="#000000", $bgColor="#f1f5f9", $borderColor="#64748b")
+
+    UpdateRelStyle(user, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(admin, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(gateway, prom, $textColor="#000000", $lineColor="#64748b")
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
