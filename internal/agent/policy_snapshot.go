@@ -126,11 +126,12 @@ type canonicalPolicySnapshot struct {
 }
 
 var supportedPolicyFeatureFlags = map[string]struct{}{
-	"policy_snapshot_v1": {},
-	"ipv4":               {},
-	"ab_policy_maps":     {},
-	"tx_devmap":          {},
-	"udp_src_port_block": {},
+	"policy_snapshot_v1":          {},
+	"ipv4":                        {},
+	"ab_policy_maps":              {},
+	"tx_devmap":                   {},
+	"udp_src_port_block":          {},
+	"service_scoped_whitelist_v4": {},
 }
 
 func LoadPolicySnapshot(path string) (PolicySnapshot, error) {
@@ -324,6 +325,8 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 		switch name {
 		case "whitelist_v4":
 			return ExpectedMaps["whitelist_v4_a"].MaxEntries
+		case "whitelist_service_v4":
+			return ExpectedMaps["whitelist_service_v4_a"].MaxEntries
 		case "blacklist_v4":
 			return ExpectedMaps["blacklist_v4_a"].MaxEntries
 		case "udp_source_port_blocks":
@@ -357,23 +360,45 @@ func validatePolicyEntries(snapshot PolicySnapshot, options PolicySnapshotVerify
 	}
 
 	nowNS := uint64(options.Now.UnixNano())
-	whitelistKeys := make(map[string]struct{}, len(snapshot.WhitelistV4))
+	whitelistGlobalKeys := make(map[string]struct{}, len(snapshot.WhitelistV4))
+	whitelistServiceKeys := make(map[string]struct{}, len(snapshot.WhitelistV4))
+	var whitelistGlobalEntries uint32
+	var whitelistServiceEntries uint32
 	for _, entry := range snapshot.WhitelistV4 {
-		key, err := cidrPolicyKey(entry)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("whitelist_v4 entry %d: %w", entry.EntryID, err))
-			continue
-		}
 		if entry.ExpiresAtUnixNS != 0 && entry.ExpiresAtUnixNS <= nowNS {
 			errs = append(errs, fmt.Errorf("whitelist_v4 entry %d is expired", entry.EntryID))
 		}
-		mapKey := fmt.Sprintf("%d:%d", key.PrefixLen, key.Addr)
-		if _, ok := whitelistKeys[mapKey]; ok {
-			errs = append(errs, fmt.Errorf("duplicate whitelist_v4 key %s", entry.CIDR))
+		switch entry.Scope {
+		case policyScopeGlobal:
+			key, err := cidrPolicyKey(entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("whitelist_v4 entry %d: %w", entry.EntryID, err))
+				continue
+			}
+			mapKey := fmt.Sprintf("%d:%d", key.PrefixLen, key.Addr)
+			if _, ok := whitelistGlobalKeys[mapKey]; ok {
+				errs = append(errs, fmt.Errorf("duplicate whitelist_v4 key %s", entry.CIDR))
+			}
+			whitelistGlobalKeys[mapKey] = struct{}{}
+			whitelistGlobalEntries++
+		case policyScopeService:
+			key, err := serviceCIDRPolicyKey(entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("whitelist_service_v4 entry %d: %w", entry.EntryID, err))
+				continue
+			}
+			mapKey := fmt.Sprintf("%d:%d:%d", key.ServiceID, key.PrefixLen, key.Addr)
+			if _, ok := whitelistServiceKeys[mapKey]; ok {
+				errs = append(errs, fmt.Errorf("duplicate whitelist_service_v4 key service_id=%d cidr=%s", entry.ServiceID, entry.CIDR))
+			}
+			whitelistServiceKeys[mapKey] = struct{}{}
+			whitelistServiceEntries++
+		default:
+			errs = append(errs, fmt.Errorf("whitelist_v4 entry %d has unsupported scope %d", entry.EntryID, entry.Scope))
 		}
-		whitelistKeys[mapKey] = struct{}{}
 	}
-	addStat("whitelist_v4", uint32(len(snapshot.WhitelistV4)), unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
+	addStat("whitelist_v4", whitelistGlobalEntries, unsafe.Sizeof(LPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
+	addStat("whitelist_service_v4", whitelistServiceEntries, unsafe.Sizeof(ServiceLPMV4Key{}), unsafe.Sizeof(CIDRPolicyValue{}))
 
 	blacklistKeys := make(map[string]struct{}, len(snapshot.BlacklistV4))
 	for _, entry := range snapshot.BlacklistV4 {
@@ -484,6 +509,22 @@ func cidrPolicyKey(entry PolicyCIDREntry) (LPMV4Key, error) {
 	addr := prefix.Masked().Addr().As4()
 	return LPMV4Key{
 		PrefixLen: uint32(prefix.Bits()),
+		Addr:      binary.LittleEndian.Uint32(addr[:]),
+	}, nil
+}
+
+func serviceCIDRPolicyKey(entry PolicyCIDREntry) (ServiceLPMV4Key, error) {
+	if entry.ServiceID == 0 {
+		return ServiceLPMV4Key{}, errors.New("service-scoped whitelist requires service_id")
+	}
+	prefix, err := parseV4Prefix(entry.CIDR)
+	if err != nil {
+		return ServiceLPMV4Key{}, err
+	}
+	addr := prefix.Masked().Addr().As4()
+	return ServiceLPMV4Key{
+		PrefixLen: uint32(32 + prefix.Bits()),
+		ServiceID: entry.ServiceID,
 		Addr:      binary.LittleEndian.Uint32(addr[:]),
 	}, nil
 }

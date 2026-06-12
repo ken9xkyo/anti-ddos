@@ -48,6 +48,12 @@ type LPMV4Key struct {
 	Addr      uint32
 }
 
+type ServiceLPMV4Key struct {
+	PrefixLen uint32
+	ServiceID uint32
+	Addr      uint32
+}
+
 type CIDRPolicyValue struct {
 	EntryID         uint32
 	Priority        uint32
@@ -104,6 +110,30 @@ type RuleValue struct {
 	Pad             uint32
 	TailPad         uint32
 	ExpiresAtUnixNS uint64
+}
+
+type RateKey struct {
+	SrcV4     uint32
+	ServiceID uint32
+	RuleID    uint32
+	Proto     uint8
+	Dimension uint8
+	Pad       uint16
+}
+
+type RateValueV2 struct {
+	Lock              uint32
+	Pad               uint32
+	LastRefillNS      uint64
+	TokensPackets     uint64
+	TokensBytes       uint64
+	TokensSyn         uint64
+	PacketRemainderNS uint64
+	ByteRemainderNS   uint64
+	SynRemainderNS    uint64
+	SynSeen           uint64
+	PacketsSeen       uint64
+	BytesSeen         uint64
 }
 
 type CounterKey struct {

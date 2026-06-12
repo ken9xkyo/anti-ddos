@@ -335,6 +335,12 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 	if len(udpSourcePortBlocks) > 0 {
 		snapshot.FeatureFlags = append(snapshot.FeatureFlags, "udp_src_port_block")
 	}
+	for _, entry := range whitelist {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+			break
+		}
+	}
 	return snapshot, nil
 }
 

@@ -4,6 +4,7 @@
 Last updated: 2026-06-12
 
 - [admin-console-vnext](admin-console-vnext.md) - Admin console CRUD/access/snapshot/blacklist implementation map | flow | dashboard, mui, control-api
+- [xdp-hardening-whitelist-rate-state](xdp-hardening-whitelist-rate-state.md) - XDP parser hardening, service whitelist split, and locked rate state v2 | gotcha | xdp, ebpf, verifier, whitelist, rate-limit
 - [multi-tenant-rbac](multi-tenant-rbac.md) - Tenant membership RBAC, RLS transaction helpers, and agent tenant binding | flow | auth, tenant, rls, agents, dashboard
 - [detections-alert-only](detections-alert-only.md) - Detections baselines/anomalies were removed; alerting remains under Incidents | flow | detection, alerts, dashboard
 - [agent-neighbor-probe](agent-neighbor-probe.md) - Agent probes neighbor with NTF_USE before fail-closed | flow | agent, forwarding, neighbor

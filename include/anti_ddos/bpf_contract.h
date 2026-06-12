@@ -93,6 +93,12 @@ struct lpm_v4_key {
 	__u32 addr;
 };
 
+struct service_lpm_v4_key {
+	__u32 prefixlen;
+	__u32 service_id;
+	__u32 addr;
+};
+
 struct cidr_policy_value {
 	__u32 entry_id;
 	__u32 priority;
@@ -160,6 +166,21 @@ struct rate_key {
 };
 
 struct rate_value {
+	__u64 last_refill_ns;
+	__u64 tokens_packets;
+	__u64 tokens_bytes;
+	__u64 tokens_syn;
+	__u64 packet_remainder_ns;
+	__u64 byte_remainder_ns;
+	__u64 syn_remainder_ns;
+	__u64 syn_seen;
+	__u64 packets_seen;
+	__u64 bytes_seen;
+};
+
+struct rate_value_v2 {
+	struct bpf_spin_lock lock;
+	__u32 pad;
 	__u64 last_refill_ns;
 	__u64 tokens_packets;
 	__u64 tokens_bytes;

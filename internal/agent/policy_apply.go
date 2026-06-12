@@ -116,7 +116,11 @@ func ApplyPolicySnapshot(runtime *Runtime, snapshot PolicySnapshot, options Poli
 		_ = clearInactivePolicySlot(runtime.Collection.Maps, inactiveSlot)
 	}
 
-	if err := populateCIDRPolicyMap(policySlotMap(runtime.Collection.Maps, "whitelist_v4", inactiveSlot), snapshot.WhitelistV4); err != nil {
+	if err := populateWhitelistMaps(
+		policySlotMap(runtime.Collection.Maps, "whitelist_v4", inactiveSlot),
+		policySlotMap(runtime.Collection.Maps, "whitelist_service_v4", inactiveSlot),
+		snapshot.WhitelistV4,
+	); err != nil {
 		rollbackInactive()
 		return failPolicyApply(result, "populate_whitelist", err)
 	}
@@ -238,6 +242,9 @@ func clearInactivePolicySlot(maps map[string]*ebpf.Map, slot uint32) error {
 	if err := clearCIDRPolicyMap(policySlotMap(maps, "whitelist_v4", slot)); err != nil {
 		return fmt.Errorf("clear whitelist_v4 slot %d: %w", slot, err)
 	}
+	if err := clearServiceCIDRPolicyMap(policySlotMap(maps, "whitelist_service_v4", slot)); err != nil {
+		return fmt.Errorf("clear whitelist_service_v4 slot %d: %w", slot, err)
+	}
 	if err := clearCIDRPolicyMap(policySlotMap(maps, "blacklist_v4", slot)); err != nil {
 		return fmt.Errorf("clear blacklist_v4 slot %d: %w", slot, err)
 	}
@@ -267,6 +274,28 @@ func clearCIDRPolicyMap(m *ebpf.Map) error {
 	}
 	var keys []LPMV4Key
 	var key LPMV4Key
+	var value CIDRPolicyValue
+	iter := m.Iterate()
+	for iter.Next(&key, &value) {
+		keys = append(keys, key)
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := m.Delete(&key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func clearServiceCIDRPolicyMap(m *ebpf.Map) error {
+	if m == nil {
+		return errors.New("map not loaded")
+	}
+	var keys []ServiceLPMV4Key
+	var key ServiceLPMV4Key
 	var value CIDRPolicyValue
 	iter := m.Iterate()
 	for iter.Next(&key, &value) {
@@ -335,6 +364,36 @@ func clearRulePolicyMap(m *ebpf.Map) error {
 	for key := uint32(0); key < m.MaxEntries(); key++ {
 		if err := m.Update(&key, &zero, ebpf.UpdateAny); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func populateWhitelistMaps(globalMap, serviceMap *ebpf.Map, entries []PolicyCIDREntry) error {
+	if globalMap == nil {
+		return errors.New("global whitelist map not loaded")
+	}
+	if serviceMap == nil {
+		return errors.New("service whitelist map not loaded")
+	}
+	for _, entry := range entries {
+		value := cidrPolicyValue(entry)
+		if entry.Scope == policyScopeService {
+			key, err := serviceCIDRPolicyKey(entry)
+			if err != nil {
+				return err
+			}
+			if err := serviceMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+				return fmt.Errorf("update service whitelist cidr %s service_id=%d: %w", entry.CIDR, entry.ServiceID, err)
+			}
+			continue
+		}
+		key, err := cidrPolicyKey(entry)
+		if err != nil {
+			return err
+		}
+		if err := globalMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("update whitelist cidr %s: %w", entry.CIDR, err)
 		}
 	}
 	return nil
