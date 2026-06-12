@@ -81,6 +81,7 @@ func agentJSON(t *testing.T, method, url, token string, body any) *testHTTPRespo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Owner-Username", "user")
 	return doTestHTTP(t, req)
 }
 

@@ -30,25 +30,20 @@ def run_browser_suite(
         try:
             page = browser.new_context(viewport=DESKTOP_VIEWPORT).new_page()
             login(page, base_url, seed.admin_username, seed.admin_password)
-            assert_shell_navigation(page)
-            assert_overview(page, seed)
+            assert_admin_shell_navigation(page)
             assert_admin_only_visibility(page)
-            logout(page)
+            assert_admin_view_user_read_only(page, seed)
             page.context.close()
 
             page = browser.new_context(viewport=DESKTOP_VIEWPORT).new_page()
-            login(page, base_url, seed.viewer_username, seed.viewer_password)
-            assert_viewer_read_only(page, seed)
-            page.context.close()
-
-            page = browser.new_context(viewport=DESKTOP_VIEWPORT).new_page()
-            login(page, base_url, seed.operator_username, seed.operator_password)
-            assert_incidents_operator_actions(page)
+            login(page, base_url, seed.user_username, seed.user_password)
+            assert_user_shell_navigation(page)
+            assert_overview(page, seed)
+            assert_incidents_user_actions(page)
+            assert_user_telegram_config(page)
             assert_services_workflow(page, seed)
             assert_rules_workflow(page, seed)
             assert_whitelist_workflow(page, seed)
-            assert_detection(page, seed)
-            assert_reputation_operator_workflow(page, seed, feed_url)
             assert_snapshots_workflow(page)
             assert_fleet(page)
             assert_investigation(page)
@@ -56,7 +51,7 @@ def run_browser_suite(
 
             page = browser.new_context(viewport=DESKTOP_VIEWPORT).new_page()
             login(page, base_url, seed.admin_username, seed.admin_password)
-            assert_admin_telegram_config(page)
+            assert_admin_reputation_workflow(page, seed, feed_url)
             assert_admin_reputation_credentials(page, seed, feed_url)
             assert_access_workflow(page, seed)
             assert_responsive_smoke(browser, base_url, seed)
@@ -91,17 +86,17 @@ def goto_tab(page: Page, label: str) -> None:
     expect(page.locator(".topbar h1")).to_have_text(label, timeout=15000)
 
 
-def assert_shell_navigation(page: Page) -> None:
+def assert_admin_shell_navigation(page: Page) -> None:
     for tab in [
         "Dashboard",
         "Incidents",
-        "Detections",
         "Events",
         "Services",
         "Rules",
         "Whitelist",
         "Blacklist",
         "Reputation",
+        "UDP Ports",
         "Snapshots",
         "Accounts",
         "Nodes",
@@ -112,11 +107,30 @@ def assert_shell_navigation(page: Page) -> None:
     expect(page.get_by_text("Packets/s", exact=True)).to_be_visible(timeout=15000)
 
 
+def assert_user_shell_navigation(page: Page) -> None:
+    for tab in [
+        "Dashboard",
+        "Incidents",
+        "Events",
+        "Services",
+        "Rules",
+        "Whitelist",
+        "Blacklist",
+        "UDP Ports",
+        "Snapshots",
+        "Nodes",
+    ]:
+        goto_tab(page, tab)
+    expect(page.get_by_role("button", name=re.compile(r"^Reputation\b", re.I))).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile(r"^Accounts\b", re.I))).to_have_count(0)
+    goto_tab(page, "Dashboard")
+
+
 def assert_overview(page: Page, seed: SeedData) -> None:
     goto_tab(page, "Dashboard")
     expect_visible_text(page, "prometheus healthy")
     expect_visible_text(page, "198.51.100.0/24")
-    expect_visible_text(page, seed.service["name"])
+    expect_visible_text(page, "auto-admin-dashboard-node-a")
     expect_visible_text(page, re.compile(r"isp_escalation_needed|test_alert"))
     page.wait_for_function("document.querySelectorAll('.chart-panel svg').length >= 2")
 
@@ -125,7 +139,8 @@ def assert_admin_only_visibility(page: Page) -> None:
     goto_tab(page, "Accounts")
     expect(page.get_by_role("button", name=re.compile(r"Add user", re.I))).to_be_visible(timeout=15000)
     goto_tab(page, "Incidents")
-    expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_disabled()
+    expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_have_count(0)
     goto_tab(page, "Reputation")
     page.get_by_role("button", name=re.compile(r"Add feed", re.I)).click()
     drawer = page.locator(".admin-drawer")
@@ -133,7 +148,15 @@ def assert_admin_only_visibility(page: Page) -> None:
     drawer.get_by_role("button", name=re.compile(r"Cancel", re.I)).click()
 
 
-def assert_viewer_read_only(page: Page, seed: SeedData) -> None:
+def assert_admin_view_user_read_only(page: Page, seed: SeedData) -> None:
+    goto_tab(page, "Accounts")
+    data_grid_row(page, seed.user_username).get_by_role("button", name=re.compile(r"View config", re.I)).click()
+    expect(page.locator(".user-chip")).to_contain_text(f"viewing {seed.user_username}", timeout=20000)
+    expect(page.locator(".user-chip")).to_contain_text("read only", timeout=20000)
+    expect(page.get_by_role("button", name=re.compile(r"^Reputation\b", re.I))).to_have_count(0)
+
+    assert_overview(page, seed)
+
     goto_tab(page, "Services")
     expect_visible_text(page, seed.service["name"])
     expect(page.get_by_role("button", name=re.compile(r"Add service", re.I))).to_have_count(0)
@@ -148,12 +171,8 @@ def assert_viewer_read_only(page: Page, seed: SeedData) -> None:
     expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_disabled()
     expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_have_count(0)
 
-    goto_tab(page, "Accounts")
-    expect(page.get_by_role("button", name=re.compile(r"Add user", re.I))).to_have_count(0)
-    expect(page.get_by_role("button", name=re.compile(r"^Reset$", re.I))).to_have_count(0)
 
-
-def assert_incidents_operator_actions(page: Page) -> None:
+def assert_incidents_user_actions(page: Page) -> None:
     goto_tab(page, "Incidents")
     page.get_by_role("button", name=re.compile(r"Test alert", re.I)).click()
     expect_visible_text(page, re.compile(r"test_alert: sent", re.I), timeout=20000)
@@ -258,36 +277,28 @@ def assert_whitelist_workflow(page: Page, seed: SeedData) -> None:
     expect(data_grid_row(page, cidr)).to_contain_text("disabled", timeout=20000)
 
 
-def assert_detection(page: Page, seed: SeedData) -> None:
-    goto_tab(page, "Detections")
-    expect_visible_text(page, seed.service["name"], timeout=20000)
-    expect_visible_text(page, "approved")
-    expect_visible_text(page, re.compile(r"pps_spike|alert_only", re.I))
-    expect_visible_text(page, "Active Rules")
-
-
-def assert_reputation_operator_workflow(page: Page, seed: SeedData, feed_url: str) -> None:
+def assert_admin_reputation_workflow(page: Page, seed: SeedData, feed_url: str) -> None:
     goto_tab(page, "Reputation")
     expect_visible_text(page, seed.feed["name"], timeout=20000)
     page.get_by_role("button", name=re.compile(r"Add feed", re.I)).click()
     drawer = page.locator(".admin-drawer")
-    expect(drawer.get_by_label(re.compile(r"Credential ref", re.I))).to_be_disabled()
-    name = f"{seed.prefix}-operator-feed"
+    expect(drawer.get_by_label(re.compile(r"Credential ref", re.I))).to_be_enabled()
+    name = f"{seed.prefix}-admin-global-feed"
     drawer.get_by_label(re.compile(r"^Name", re.I)).fill(name)
     drawer.get_by_label(re.compile(r"^URL", re.I)).fill(feed_url)
-    drawer.get_by_label(re.compile(r"^Reason", re.I)).fill("automation operator create feed")
+    drawer.get_by_label(re.compile(r"^Reason", re.I)).fill("automation admin create feed")
     drawer.get_by_role("button", name=re.compile(r"Save feed", re.I)).click()
     data_grid_row(page, name)
 
     row = data_grid_row(page, seed.feed["name"])
     row.get_by_role("button", name=re.compile(r"^Sync$", re.I)).click()
-    page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation operator sync feed")
+    page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation admin sync feed")
     page.get_by_role("button", name=re.compile(r"Sync feed", re.I)).click()
     expect_visible_text(page, "Feed Run History")
     expect_visible_text(page, "Whitelist Conflicts")
 
     data_grid_row(page, name).get_by_role("button", name=re.compile(r"^Disable$", re.I)).click()
-    page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation operator disable feed")
+    page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation admin disable feed")
     page.get_by_role("button", name=re.compile(r"Disable feed", re.I)).click()
     expect(data_grid_row(page, name)).to_contain_text("disabled", timeout=20000)
 
@@ -321,7 +332,7 @@ def assert_investigation(page: Page) -> None:
     expect_visible_text(page, "198.51.100.10")
 
 
-def assert_admin_telegram_config(page: Page) -> None:
+def assert_user_telegram_config(page: Page) -> None:
     goto_tab(page, "Incidents")
     page.get_by_label(re.compile(r"Bot token", re.I)).fill("123456:abcdefghijklmnopqrstuvwxyzABCDEF")
     page.get_by_label(re.compile(r"Chat ID", re.I)).fill("5678")
@@ -350,7 +361,7 @@ def assert_admin_reputation_credentials(page: Page, seed: SeedData, feed_url: st
 def assert_access_workflow(page: Page, seed: SeedData) -> None:
     goto_tab(page, "Accounts")
     username = f"{seed.prefix}-managed"
-    expect_visible_text(page, seed.operator_username, timeout=20000)
+    expect_visible_text(page, seed.user_username, timeout=20000)
     page.get_by_role("button", name=re.compile(r"Add user", re.I)).click()
     drawer = page.locator(".admin-drawer")
     drawer.get_by_label(re.compile(r"^Username", re.I)).fill(username)
@@ -360,11 +371,11 @@ def assert_access_workflow(page: Page, seed: SeedData) -> None:
     data_grid_row(page, username)
 
     data_grid_row(page, username).get_by_role("button", name=re.compile(r"^Edit$", re.I)).click()
-    select_mui_option(page, drawer, "Role", "Operator")
+    select_mui_option(page, drawer, "Role", "User")
     select_mui_option(page, drawer, "Status", "Active")
     drawer.get_by_label(re.compile(r"^Reason", re.I)).fill("automation update managed user")
     drawer.get_by_role("button", name=re.compile(r"^Save$", re.I)).click()
-    expect(data_grid_row(page, username)).to_contain_text("operator", timeout=20000)
+    expect(data_grid_row(page, username)).to_contain_text("user", timeout=20000)
 
     data_grid_row(page, username).get_by_role("button", name=re.compile(r"^Reset$", re.I)).click()
     drawer.get_by_label(re.compile(r"Temporary password", re.I)).fill("Replacement password phrase 1")
@@ -383,7 +394,7 @@ def assert_responsive_smoke(browser, base_url: str, seed: SeedData) -> None:
         context = browser.new_context(viewport=viewport)
         page = context.new_page()
         try:
-            login(page, base_url, seed.viewer_username, seed.viewer_password)
+            login(page, base_url, seed.user_username, seed.user_password)
             for tab in ("Dashboard", "Services", "Nodes"):
                 goto_tab(page, tab)
                 expect(page.locator(".topbar h1")).to_be_visible()

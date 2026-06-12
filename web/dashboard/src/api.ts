@@ -1,9 +1,7 @@
 import type {
   Agent,
   Alert,
-  AnomalyEvaluation,
   AuditEvent,
-  BaselineProfile,
   BlacklistEntriesPage,
   BlacklistEntry,
   BlacklistEntryRow,
@@ -51,9 +49,10 @@ export class ApiClient {
   }
 
   async login(username: string, password: string): Promise<Session> {
+    const body = { username, password };
     const session = await this.request<Session>('/v1/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify(body)
     }, false);
     this.setToken(session.token);
     return session;
@@ -70,20 +69,23 @@ export class ApiClient {
     });
   }
 
-  async dashboard(): Promise<DashboardData> {
-    const [overview, agents, services, rules, events, baselines, anomalies, feedSources, feedRuns, feedConflicts, telegramConfig, alerts] = await Promise.all([
+  async dashboard(user?: User): Promise<DashboardData> {
+    const canLoadFeed = user?.role === 'admin' && !user.read_only && !user.viewing_user;
+    const baseRequests = Promise.all([
       this.request<DashboardOverview>('/v1/dashboard/overview'),
       this.request<Agent[] | null>('/v1/dashboard/agents'),
       this.request<Service[] | null>('/v1/dashboard/services'),
       this.request<Rule[] | null>('/v1/dashboard/rules'),
       this.request<SecurityEvent[] | null>('/v1/security-events?limit=50'),
-      this.request<BaselineProfile[] | null>('/v1/baselines'),
-      this.request<AnomalyEvaluation[] | null>('/v1/anomalies?limit=30'),
-      this.request<FeedSource[] | null>('/v1/feed-sources'),
-      this.request<FeedRun[] | null>('/v1/feed-runs?limit=20'),
-      this.request<FeedConflict[] | null>('/v1/feed-conflicts'),
       this.request<TelegramConfig>('/v1/telegram/config'),
       this.request<Alert[] | null>('/v1/alerts?limit=30')
+    ]);
+    const feedRequests = canLoadFeed
+      ? Promise.all([this.feedSources(), this.feedRuns(), this.feedConflicts()])
+      : Promise.resolve<[FeedSource[], FeedRun[], FeedConflict[]]>([[], [], []]);
+    const [[overview, agents, services, rules, events, telegramConfig, alerts], [feedSources, feedRuns, feedConflicts]] = await Promise.all([
+      baseRequests,
+      feedRequests
     ]);
     return {
       overview: normalizeOverview(overview),
@@ -91,13 +93,11 @@ export class ApiClient {
       services: asArray(services),
       rules: asArray(rules),
       events: asArray(events),
-      baselines: asArray(baselines),
-      anomalies: asArray(anomalies),
-      feedSources: asArray(feedSources),
-      feedRuns: asArray(feedRuns),
-      feedConflicts: asArray(feedConflicts),
       telegramConfig,
-      alerts: asArray(alerts)
+      alerts: asArray(alerts),
+      feedSources,
+      feedRuns,
+      feedConflicts
     };
   }
 
@@ -107,6 +107,15 @@ export class ApiClient {
 
   async users(): Promise<User[]> {
     return asArray(await this.request<User[] | null>('/v1/users'));
+  }
+
+  async viewUserConfig(userID: string): Promise<Session> {
+    const session = await this.request<Session>('/v1/admin/view-user', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userID })
+    });
+    this.setToken(session.token);
+    return session;
   }
 
   async createUser(input: { reason: string; username: string; password: string; role: string }): Promise<User> {
@@ -294,6 +303,14 @@ export class ApiClient {
     });
   }
 
+  async feedRuns(limit = 50): Promise<FeedRun[]> {
+    return asArray(await this.request<FeedRun[] | null>(`/v1/feed-runs?limit=${encodeURIComponent(String(limit))}`));
+  }
+
+  async feedConflicts(): Promise<FeedConflict[]> {
+    return asArray(await this.request<FeedConflict[] | null>('/v1/feed-conflicts'));
+  }
+
   async snapshots(includeSnapshot = false): Promise<SnapshotMetadata[]> {
     return asArray(await this.request<SnapshotMetadata[] | null>(`/v1/snapshots?include_snapshot=${includeSnapshot ? 'true' : 'false'}`));
   }
@@ -363,6 +380,7 @@ function whitelistFilterQuery(filters: WhitelistFilters): string {
   const params = new URLSearchParams();
   const q = filters.q?.trim();
   if (q) params.set('q', q);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
   if (filters.scope && filters.scope !== 'all') params.set('scope', filters.scope);
   const serviceID = filters.service_id?.trim();
   if (serviceID) params.set('service_id', serviceID);
@@ -378,6 +396,10 @@ function blacklistFilterQuery(filters: BlacklistFilters): string {
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
+  if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();
@@ -390,6 +412,9 @@ function blacklistEntriesQuery(filters: BlacklistFilters, page: number, pageSize
   if (q) params.set('q', q);
   const source = filters.source?.trim();
   if (source) params.set('source', source);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
   if (filters.origin && filters.origin !== 'all') params.set('origin', filters.origin);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
@@ -403,6 +428,9 @@ function udpSourcePortBlockQuery(filters: UDPSourcePortBlockFilters): string {
   const params = new URLSearchParams();
   const q = filters.q?.trim();
   if (q) params.set('q', q);
+  if (filters.scope_type && filters.scope_type !== 'all') params.set('scope_type', filters.scope_type);
+  const serviceID = filters.service_id?.trim();
+  if (serviceID) params.set('service_id', serviceID);
   if (filters.state && filters.state !== 'all') params.set('state', filters.state);
   if (filters.expiry && filters.expiry !== 'all') params.set('expiry', filters.expiry);
   const encoded = params.toString();

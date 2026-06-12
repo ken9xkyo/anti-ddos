@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, FormControlLabel, Stack, TextField } from '@mui/material';
+import { Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField } from '@mui/material';
 import { GridColDef } from '@mui/x-data-grid';
 import { Ban, Plus, Save, Trash2 } from 'lucide-react';
 import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { DataToolbar, PanelHeader, SearchField, StatusPill } from '../components';
 import { formatDateTime } from '../format';
-import type { UDPSourcePortBlock, UDPSourcePortBlockFilters, UDPSourcePortBlockInput } from '../types';
+import type { ScopeType, Service, UDPSourcePortBlock, UDPSourcePortBlockFilters, UDPSourcePortBlockInput } from '../types';
 
 type UDPPortForm = {
   reason: string;
+  scope_type: ScopeType;
+  service_id: string;
   port: string;
   label: string;
   owner: string;
@@ -19,6 +21,8 @@ type UDPPortForm = {
 
 const emptyForm: UDPPortForm = {
   reason: 'update UDP source port block',
+  scope_type: 'user_global',
+  service_id: '',
   port: '',
   label: '',
   owner: '',
@@ -26,7 +30,15 @@ const emptyForm: UDPPortForm = {
   enabled: true
 };
 
-export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
+export function UDPPortsAdminView({
+  services,
+  canMutate,
+  scopeOptions
+}: {
+  services: Service[];
+  canMutate: boolean;
+  scopeOptions: ScopeType[];
+}) {
   const [entries, setEntries] = useState<UDPSourcePortBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
@@ -37,6 +49,8 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
   const [disableTarget, setDisableTarget] = useState<UDPSourcePortBlock | null>(null);
   const [reason, setReason] = useState('disable UDP source port block');
   const firstLoad = useRef(true);
+  const defaultScopeType = scopeOptions[0] ?? 'user_global';
+  const serviceName = (id?: string) => services.find((service) => service.id === id)?.name || 'all services';
 
   const load = async (nextFilters: UDPSourcePortBlockFilters) => {
     try {
@@ -61,12 +75,16 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
 
   const hasActiveFilters = Boolean(
     filters.q?.trim() ||
+    (filters.scope_type && filters.scope_type !== 'all') ||
+    filters.service_id?.trim() ||
     (filters.state && filters.state !== 'all') ||
     (filters.expiry && filters.expiry !== 'all')
   );
 
   const columns = useMemo<GridColDef[]>(() => [
     { field: 'port', headerName: 'Port', width: 95 },
+    { field: 'scope_type', headerName: 'Scope', width: 135, valueGetter: (_, row) => scopeTypeLabel(row.scope_type) },
+    { field: 'service_id', headerName: 'Service', width: 130, valueGetter: (_, row) => row.scope_type === 'service' ? serviceName(row.service_id) : 'all services' },
     { field: 'label', headerName: 'Label', flex: 1, minWidth: 155 },
     { field: 'owner', headerName: 'Owner', width: 115 },
     { field: 'expires_at', headerName: 'Expires', width: 150, valueFormatter: (value) => formatDateTime(value as string | undefined) },
@@ -80,6 +98,7 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
       renderCell: (params) => {
         const row = params.row as UDPSourcePortBlock;
         if (!canMutate) return <span className="muted">read only</span>;
+        if (row.editable === false) return <span className="muted">read only</span>;
         return (
           <Stack direction="row" spacing={0.75}>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
@@ -91,11 +110,11 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
         );
       }
     }
-  ], [canMutate]);
+  ], [canMutate, services]);
 
   const openCreate = () => {
     setTarget(null);
-    setForm({ ...emptyForm, reason: 'create UDP source port block' });
+    setForm({ ...emptyForm, scope_type: defaultScopeType, reason: 'create UDP source port block' });
     setMode('create');
   };
 
@@ -103,6 +122,8 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
     setTarget(entry);
     setForm({
       reason: `update UDP source port ${entry.port}`,
+      scope_type: entry.scope_type ?? defaultScopeType,
+      service_id: entry.service_id ?? '',
       port: String(entry.port),
       label: entry.label ?? '',
       owner: entry.owner,
@@ -153,6 +174,22 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
         <DataToolbar className="whitelist-toolbar">
           <SearchField label="Search" value={filters.q ?? ''} onChange={(value) => setFilters({ ...filters, q: value })} placeholder="port, label, owner, reason" />
           <label>
+            Scope
+            <select value={filters.scope_type ?? 'all'} onChange={(event) => setFilters({ ...filters, scope_type: event.target.value as UDPSourcePortBlockFilters['scope_type'] })}>
+              <option value="all">All</option>
+              <option value="admin_global">Admin global</option>
+              <option value="user_global">User global</option>
+              <option value="service">Service</option>
+            </select>
+          </label>
+          <label>
+            Service
+            <select value={filters.service_id ?? ''} onChange={(event) => setFilters({ ...filters, service_id: event.target.value })}>
+              <option value="">All services</option>
+              {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+            </select>
+          </label>
+          <label>
             State
             <select value={filters.state ?? 'all'} onChange={(event) => setFilters({ ...filters, state: event.target.value as UDPSourcePortBlockFilters['state'] })}>
               <option value="all">All</option>
@@ -189,7 +226,16 @@ export function UDPPortsAdminView({ canMutate }: { canMutate: boolean }) {
           <TextField label="Label" value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} fullWidth />
         </Stack>
         <Stack direction="row" spacing={1}>
-          <TextField label="Owner" value={form.owner} onChange={(event) => setForm({ ...form, owner: event.target.value })} fullWidth required />
+          <TextField select label="Scope" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value as ScopeType, service_id: '' })} fullWidth>
+            {scopeOptions.map((scope) => <MenuItem key={scope} value={scope}>{scopeTypeLabel(scope)}</MenuItem>)}
+          </TextField>
+          <TextField select label="Service" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} fullWidth disabled={form.scope_type !== 'service'}>
+            <MenuItem value="">Select service</MenuItem>
+            {services.map((service) => <MenuItem key={service.id} value={service.id}>{service.name}</MenuItem>)}
+          </TextField>
+        </Stack>
+        <Stack direction="row" spacing={1}>
+          {mode === 'edit' ? <TextField label="Owner" value={form.owner} fullWidth disabled /> : null}
           <TextField label="Expires at" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} placeholder="2026-06-03T00:00:00Z" fullWidth />
         </Stack>
         <FormControlLabel control={<Checkbox checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />} label="Enabled" />
@@ -208,11 +254,18 @@ function udpPortInputFromForm(form: UDPPortForm): UDPSourcePortBlockInput {
   return {
     reason: form.reason.trim(),
     port: parsePort(form.port),
+    scope_type: form.scope_type,
+    service_id: form.scope_type === 'service' ? form.service_id.trim() : undefined,
     label: form.label.trim(),
-    owner: form.owner.trim(),
     expires_at: form.expires_at.trim() || undefined,
     enabled: form.enabled
   };
+}
+
+function scopeTypeLabel(value?: ScopeType): string {
+  if (value === 'admin_global') return 'Admin global';
+  if (value === 'service') return 'Service';
+  return 'User global';
 }
 
 function parsePort(value: string): number {

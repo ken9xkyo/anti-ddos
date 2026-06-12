@@ -181,12 +181,19 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 
 	cfg := Config{Addr: "127.0.0.1:0", DBDSN: dsn, SessionTTL: time.Hour, XDPObject: "missing-ok.o", AgentSharedToken: "agent-secret"}
 	store := NewStore(pool, cfg, nil)
-	if _, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+	admin, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminActor := &Actor{User: admin}
+	adminCtx := contextWithOwner(ctx, admin.ID)
+	if _, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user"); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
+	userToken := login(t, server.URL, "user", "user password phrase")
 
 	rawKey := "raw-abuseipdb-key"
 	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/feed-sources", adminToken, FeedSourceInput{
@@ -219,7 +226,7 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		t.Fatalf("store credential was not preserved raw: %#v", rawSource)
 	}
 
-	events, err := store.ListAuditEvents(ctx, 20)
+	events, err := store.ListAuditEvents(adminCtx, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +279,7 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		t.Fatalf("sync did not use raw key: %#v", seenKeys)
 	}
 
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist", adminToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist", userToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var manualOnly []BlacklistEntry
 	decodeTestBody(t, resp, &manualOnly)
@@ -280,7 +287,7 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		t.Fatalf("manual blacklist endpoint should not include feed rows: %#v", manualOnly)
 	}
 
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist/entries?origin=feed&source=abuseipdb&q=203.0.113.8&state=enabled&expiry=valid&page=0&page_size=1", adminToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist/entries?origin=feed&source=abuseipdb&q=203.0.113.8&state=enabled&expiry=valid&page=0&page_size=1", userToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var blacklistPage BlacklistEntriesPage
 	decodeTestBody(t, resp, &blacklistPage)
@@ -292,7 +299,7 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		t.Fatalf("unexpected abuseipdb blacklist row: %#v", feedRow)
 	}
 
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+feedRow.ID, adminToken, BlacklistInput{
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+feedRow.ID, userToken, BlacklistInput{
 		Reason:  "should not mutate feed row",
 		CIDR:    feedRow.CIDR,
 		Source:  "manual",
@@ -300,12 +307,12 @@ func TestFeedSourceCredentialMaskingAndPatchSemantics(t *testing.T) {
 		Score:   feedRow.Score,
 		Enabled: boolPtr(true),
 	})
-	requireHTTPStatus(t, resp, http.StatusBadRequest)
+	requireHTTPStatus(t, resp, http.StatusNotFound)
 	deleteReq, _ := http.NewRequest(http.MethodDelete, server.URL+"/v1/blacklist/"+feedRow.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	deleteReq.Header.Set("X-Audit-Reason", "should not disable feed row")
 	resp = doTestHTTP(t, deleteReq)
-	requireHTTPStatus(t, resp, http.StatusBadRequest)
+	requireHTTPStatus(t, resp, http.StatusNotFound)
 
 	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/feed-sources/"+source.ID, adminToken, FeedSourceInput{
 		Reason:                "clear credential",
@@ -356,19 +363,24 @@ func TestFeedSyncIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	viewer, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleUser, "create viewer")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleOperator, "create operator"); err != nil {
+	operator, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleUser, "create operator")
+	if err != nil {
 		t.Fatal(err)
 	}
+	operatorActor := &Actor{User: operator}
+	operatorCtx := contextWithOwner(ctx, operator.ID)
+	viewerCtx := contextWithOwner(ctx, viewer.ID)
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
 	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
 	operatorToken := login(t, server.URL, "operator", "operator password phrase")
 
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", operatorToken, WhitelistInput{
 		Reason: "trusted customer source",
 		CIDR:   "198.51.100.10/32",
 		Scope:  "global",
@@ -436,12 +448,14 @@ func TestFeedSyncIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.ActiveEntries != 2 || source.ConflictCount != 1 || source.Status != feedStatusHealthy {
+	if source.ActiveEntries != 3 || source.ConflictCount != 1 || source.Status != feedStatusHealthy {
 		t.Fatalf("source status not updated: %#v", source)
 	}
-	assertLatestSnapshotBlacklist(t, store, ctx, []string{"198.51.100.128/25", "203.0.113.0/24"}, []string{"198.51.100.0/25"})
+	wantGlobalFeedCIDRs := []string{"198.51.100.0/25", "198.51.100.128/25", "203.0.113.0/24"}
+	assertLatestSnapshotBlacklist(t, store, operatorCtx, wantGlobalFeedCIDRs, nil)
+	assertLatestSnapshotBlacklist(t, store, viewerCtx, wantGlobalFeedCIDRs, nil)
 
-	manualDuplicate, err := store.CreateBlacklistEntry(ctx, adminActor, BlacklistInput{
+	manualDuplicate, err := store.CreateBlacklistEntry(operatorCtx, operatorActor, BlacklistInput{
 		Reason: "manual override duplicate feed cidr",
 		CIDR:   "203.0.113.0/24",
 		Source: "manual",
@@ -451,13 +465,14 @@ func TestFeedSyncIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertLatestSnapshotBlacklistEntry(t, store, ctx, "203.0.113.0/24", manualDuplicate.EBPFID, 99, 1)
-	if _, err := store.DisableBlacklistEntry(ctx, adminActor, manualDuplicate.ID, "return duplicate to feed"); err != nil {
+	assertLatestSnapshotBlacklistEntry(t, store, operatorCtx, "203.0.113.0/24", manualDuplicate.EBPFID, 99, 1)
+	assertLatestSnapshotBlacklistEntry(t, store, viewerCtx, "203.0.113.0/24", 0, 80, 1)
+	if _, err := store.DisableBlacklistEntry(operatorCtx, operatorActor, manualDuplicate.ID, "return duplicate to feed"); err != nil {
 		t.Fatal(err)
 	}
-	assertLatestSnapshotBlacklistEntry(t, store, ctx, "203.0.113.0/24", 0, 80, 1)
+	assertLatestSnapshotBlacklistEntry(t, store, operatorCtx, "203.0.113.0/24", 0, 80, 1)
 
-	beforeVersion, err := store.LatestPolicyVersion(ctx)
+	beforeVersion, err := store.LatestPolicyVersion(operatorCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +480,7 @@ func TestFeedSyncIntegration(t *testing.T) {
 	if _, err := store.SyncFeedSource(ctx, source.ID, adminActor, "failure retention check"); err == nil {
 		t.Fatal("expected feed sync failure")
 	}
-	afterVersion, err := store.LatestPolicyVersion(ctx)
+	afterVersion, err := store.LatestPolicyVersion(operatorCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +494,7 @@ func TestFeedSyncIntegration(t *testing.T) {
 	if source.Status != feedStatusError || !strings.Contains(source.LastError, "status 500") {
 		t.Fatalf("failure status not recorded safely: %#v", source)
 	}
-	assertLatestSnapshotBlacklist(t, store, ctx, []string{"198.51.100.128/25", "203.0.113.0/24"}, []string{"198.51.100.0/25"})
+	assertLatestSnapshotBlacklist(t, store, operatorCtx, wantGlobalFeedCIDRs, nil)
 }
 
 func assertLatestSnapshotBlacklist(t *testing.T, store *Store, ctx context.Context, want, absent []string) {

@@ -6,11 +6,14 @@
 #include "anti_ddos/bpf_contract.h"
 
 #define ETH_P_IP 0x0800
+#define ETH_P_8021Q 0x8100
+#define ETH_P_8021AD 0x88a8
 #define IPPROTO_ICMP 1
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 #define IPV4_MF 0x2000
 #define IPV4_OFFSET 0x1fff
+#define TCP_DOFF_OFFSET 12
 #define TCP_FLAGS_OFFSET 13
 #define TCP_FLAG_SYN 0x02
 #define TCP_FLAG_ACK 0x10
@@ -22,6 +25,11 @@ enum parse_result {
 	PARSE_OK = 0,
 	PARSE_MALFORMED = 1,
 	PARSE_NON_IPV4 = 2,
+};
+
+struct vlan_hdr_simple {
+	__u16 h_vlan_TCI;
+	__u16 h_vlan_encapsulated_proto;
 };
 
 struct {
@@ -42,6 +50,22 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_WHITELIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} whitelist_service_v4_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_WHITELIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} whitelist_service_v4_b SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
 	__uint(max_entries, ANTI_DDOS_MAX_BLACKLIST_V4);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, struct lpm_v4_key);
@@ -55,6 +79,22 @@ struct {
 	__type(key, struct lpm_v4_key);
 	__type(value, struct cidr_policy_value);
 } blacklist_v4_b SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_BLACKLIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} blacklist_service_v4_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LPM_TRIE);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_BLACKLIST_V4);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_lpm_v4_key);
+	__type(value, struct cidr_policy_value);
+} blacklist_service_v4_b SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -71,6 +111,22 @@ struct {
 	__type(key, __u32);
 	__type(value, struct udp_src_port_block_value);
 } udp_src_port_blocks_b SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_udp_src_port_key);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_service_blocks_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_SERVICE_UDP_SRC_PORT_BLOCKS);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct service_udp_src_port_key);
+	__type(value, struct udp_src_port_block_value);
+} udp_src_port_service_blocks_b SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -101,6 +157,14 @@ struct {
 	__type(key, struct rate_key);
 	__type(value, struct rate_value);
 } rate_state SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, ANTI_DDOS_MAX_RATE_STATE);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+	__type(key, struct rate_key);
+	__type(value, struct rate_value_v2);
+} rate_state_v2 SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -234,14 +298,29 @@ static __always_inline void maybe_sample(const struct packet_meta *meta,
 	maybe_sample_with_denom(meta, cfg, cfg->sample_denom);
 }
 
+static __always_inline __u8 is_vlan_proto(__u16 proto)
+{
+	return proto == ETH_P_8021Q || proto == ETH_P_8021AD;
+}
+
 static __always_inline int parse_l4(void *l4, void *data_end,
+				    __u32 ip_payload_len,
 				    struct packet_meta *meta)
 {
 	if (meta->proto == L4_TCP) {
 		struct tcphdr *tcp = l4;
+		__u8 *tcp_doff = l4 + TCP_DOFF_OFFSET;
 		__u8 *tcp_flags = l4 + TCP_FLAGS_OFFSET;
+		__u32 tcp_header_len;
 
+		if (ip_payload_len < sizeof(*tcp))
+			return PARSE_MALFORMED;
 		if ((void *)(tcp + 1) > data_end)
+			return PARSE_MALFORMED;
+		tcp_header_len = (__u32)(*tcp_doff >> 4) * 4;
+		if (tcp_header_len < sizeof(*tcp))
+			return PARSE_MALFORMED;
+		if (tcp_header_len > ip_payload_len)
 			return PARSE_MALFORMED;
 
 		meta->src_port = bpf_ntohs(tcp->source);
@@ -252,8 +331,16 @@ static __always_inline int parse_l4(void *l4, void *data_end,
 
 	if (meta->proto == L4_UDP) {
 		struct udphdr *udp = l4;
+		__u16 udp_len;
 
+		if (ip_payload_len < sizeof(*udp))
+			return PARSE_MALFORMED;
 		if ((void *)(udp + 1) > data_end)
+			return PARSE_MALFORMED;
+		udp_len = bpf_ntohs(udp->len);
+		if (udp_len < sizeof(*udp))
+			return PARSE_MALFORMED;
+		if (udp_len > ip_payload_len)
 			return PARSE_MALFORMED;
 
 		meta->src_port = bpf_ntohs(udp->source);
@@ -264,6 +351,8 @@ static __always_inline int parse_l4(void *l4, void *data_end,
 	if (meta->proto == L4_ICMP) {
 		struct icmphdr *icmp = l4;
 
+		if (ip_payload_len < sizeof(*icmp))
+			return PARSE_MALFORMED;
 		if ((void *)(icmp + 1) > data_end)
 			return PARSE_MALFORMED;
 
@@ -280,12 +369,16 @@ static __always_inline int parse_packet(struct xdp_md *ctx,
 	void *data_end = (void *)(long)ctx->data_end;
 	struct ethhdr *eth = data;
 	struct iphdr *ip;
+	void *nh;
 	void *l4;
+	__u16 eth_proto;
 	__u8 version_ihl;
 	__u8 version;
 	__u8 ihl;
 	__u32 ip_header_len;
-	__u16 total_len;
+	__u64 frame_ip_len;
+	__u32 total_len;
+	__u32 ip_payload_len;
 	__u16 frag_off;
 
 	meta->pkt_len = packet_len(data, data_end);
@@ -293,10 +386,29 @@ static __always_inline int parse_packet(struct xdp_md *ctx,
 	if ((void *)(eth + 1) > data_end)
 		return PARSE_MALFORMED;
 
-	if (bpf_ntohs(eth->h_proto) != ETH_P_IP)
+	eth_proto = bpf_ntohs(eth->h_proto);
+	nh = (void *)(eth + 1);
+	if (is_vlan_proto(eth_proto)) {
+		struct vlan_hdr_simple *vlan = nh;
+
+		if ((void *)(vlan + 1) > data_end)
+			return PARSE_MALFORMED;
+		eth_proto = bpf_ntohs(vlan->h_vlan_encapsulated_proto);
+		nh = (void *)(vlan + 1);
+	}
+	if (is_vlan_proto(eth_proto)) {
+		struct vlan_hdr_simple *vlan = nh;
+
+		if ((void *)(vlan + 1) > data_end)
+			return PARSE_MALFORMED;
+		eth_proto = bpf_ntohs(vlan->h_vlan_encapsulated_proto);
+		nh = (void *)(vlan + 1);
+	}
+
+	if (eth_proto != ETH_P_IP)
 		return PARSE_NON_IPV4;
 
-	ip = (void *)(eth + 1);
+	ip = nh;
 	if ((void *)(ip + 1) > data_end)
 		return PARSE_MALFORMED;
 
@@ -310,9 +422,13 @@ static __always_inline int parse_packet(struct xdp_md *ctx,
 	if ((void *)ip + ip_header_len > data_end)
 		return PARSE_MALFORMED;
 
-	total_len = bpf_ntohs(ip->tot_len);
+	total_len = bpf_ntohs(ip->tot_len) & 0xffff;
 	if (total_len < ip_header_len)
 		return PARSE_MALFORMED;
+	frame_ip_len = data_end - (void *)ip;
+	if ((__u64)total_len > frame_ip_len)
+		return PARSE_MALFORMED;
+	ip_payload_len = total_len - ip_header_len;
 
 	meta->src_v4 = ip->saddr;
 	meta->dst_v4 = ip->daddr;
@@ -333,7 +449,7 @@ static __always_inline int parse_packet(struct xdp_md *ctx,
 	}
 
 	l4 = (void *)ip + ip_header_len;
-	return parse_l4(l4, data_end, meta);
+	return parse_l4(l4, data_end, ip_payload_len, meta);
 }
 
 static __always_inline struct cidr_policy_value *
@@ -351,6 +467,21 @@ lookup_active_whitelist(__u32 active_slot, __u32 src_v4)
 }
 
 static __always_inline struct cidr_policy_value *
+lookup_active_service_whitelist(__u32 active_slot, __u32 service_id, __u32 src_v4)
+{
+	struct service_lpm_v4_key key = {
+		.prefixlen = 64,
+		.service_id = service_id,
+		.addr = src_v4,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&whitelist_service_v4_a, &key);
+
+	return bpf_map_lookup_elem(&whitelist_service_v4_b, &key);
+}
+
+static __always_inline struct cidr_policy_value *
 lookup_active_blacklist(__u32 active_slot, __u32 src_v4)
 {
 	struct lpm_v4_key key = {
@@ -362,6 +493,21 @@ lookup_active_blacklist(__u32 active_slot, __u32 src_v4)
 		return bpf_map_lookup_elem(&blacklist_v4_a, &key);
 
 	return bpf_map_lookup_elem(&blacklist_v4_b, &key);
+}
+
+static __always_inline struct cidr_policy_value *
+lookup_active_service_blacklist(__u32 active_slot, __u32 service_id, __u32 src_v4)
+{
+	struct service_lpm_v4_key key = {
+		.prefixlen = 64,
+		.service_id = service_id,
+		.addr = src_v4,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&blacklist_service_v4_a, &key);
+
+	return bpf_map_lookup_elem(&blacklist_service_v4_b, &key);
 }
 
 static __always_inline struct service_value *
@@ -390,6 +536,20 @@ lookup_active_udp_src_port_block(__u32 active_slot, __u16 src_port)
 	return bpf_map_lookup_elem(&udp_src_port_blocks_b, &key);
 }
 
+static __always_inline struct udp_src_port_block_value *
+lookup_active_service_udp_src_port_block(__u32 active_slot, __u32 service_id, __u16 src_port)
+{
+	struct service_udp_src_port_key key = {
+		.service_id = service_id,
+		.port = src_port,
+	};
+
+	if (active_slot == 0)
+		return bpf_map_lookup_elem(&udp_src_port_service_blocks_a, &key);
+
+	return bpf_map_lookup_elem(&udp_src_port_service_blocks_b, &key);
+}
+
 static __always_inline struct rule_value *
 lookup_active_rule(__u32 active_slot, __u32 rule_id)
 {
@@ -416,6 +576,11 @@ static __always_inline __u64 nonzero_u64(__u64 preferred, __u64 fallback)
 	if (fallback != 0)
 		return fallback;
 	return 1;
+}
+
+static __always_inline __u64 bps_to_bytes_per_sec(__u32 bps)
+{
+	return ((__u64)bps + 7ULL) / 8ULL;
 }
 
 static __always_inline void refill_bucket(__u64 *tokens,
@@ -493,34 +658,42 @@ static __always_inline int apply_token_bucket(const struct rule_value *rule,
 					      const struct packet_meta *meta)
 {
 	struct rate_key key = {};
-	struct rate_value init = {};
-	struct rate_value *state;
+	struct rate_value_v2 init = {};
+	struct rate_value_v2 *state;
 	__u64 now = bpf_ktime_get_ns();
 	__u64 elapsed;
 	__u64 packet_burst = nonzero_u64(rule->burst_packets, rule->threshold_pps);
 	__u64 byte_burst = rule->burst_bytes;
+	__u64 byte_rate = bps_to_bytes_per_sec(rule->threshold_bps);
 	__u64 syn_burst = nonzero_u64(rule->burst_packets, rule->threshold_cps);
 	__u8 tcp_syn = is_tcp_syn_without_ack(meta);
 	__u8 over_limit = 0;
 
-	if (byte_burst == 0 && rule->threshold_bps != 0)
-		byte_burst = (__u64)rule->threshold_bps / 8;
+	if (byte_burst == 0 && rule->threshold_bps != 0) {
+		byte_burst = byte_rate;
+		if (byte_burst < meta->pkt_len)
+			byte_burst = meta->pkt_len;
+	}
 	byte_burst = nonzero_u64(byte_burst, meta->pkt_len);
 
 	build_rate_key(&key, rule, meta);
-	state = bpf_map_lookup_elem(&rate_state, &key);
+	state = bpf_map_lookup_elem(&rate_state_v2, &key);
 	if (!state) {
 		init.last_refill_ns = now;
 		init.tokens_packets = packet_burst;
 		init.tokens_bytes = byte_burst;
 		init.tokens_syn = syn_burst;
-		if (bpf_map_update_elem(&rate_state, &key, &init, BPF_NOEXIST) != 0)
-			return 1;
-		state = bpf_map_lookup_elem(&rate_state, &key);
+		if (bpf_map_update_elem(&rate_state_v2, &key, &init, BPF_NOEXIST) != 0) {
+			state = bpf_map_lookup_elem(&rate_state_v2, &key);
+			if (!state)
+				return 1;
+		}
+		state = bpf_map_lookup_elem(&rate_state_v2, &key);
 		if (!state)
 			return 1;
 	}
 
+	bpf_spin_lock(&state->lock);
 	elapsed = now - state->last_refill_ns;
 	if (elapsed > NSEC_PER_SEC)
 		elapsed = NSEC_PER_SEC;
@@ -537,7 +710,7 @@ static __always_inline int apply_token_bucket(const struct rule_value *rule,
 			refill_bucket(&state->tokens_bytes,
 				      &state->byte_remainder_ns,
 				      byte_burst,
-				      (__u64)rule->threshold_bps / 8ULL,
+				      byte_rate,
 				      elapsed);
 		}
 		if (rule->threshold_cps != 0) {
@@ -563,7 +736,7 @@ static __always_inline int apply_token_bucket(const struct rule_value *rule,
 		over_limit = 1;
 
 	if (over_limit)
-		return 1;
+		goto unlock;
 
 	if (rule->threshold_pps != 0)
 		state->tokens_packets -= 1;
@@ -572,7 +745,9 @@ static __always_inline int apply_token_bucket(const struct rule_value *rule,
 	if (rule->threshold_cps != 0 && tcp_syn)
 		state->tokens_syn -= 1;
 
-	return 0;
+unlock:
+	bpf_spin_unlock(&state->lock);
+	return over_limit;
 }
 
 static __always_inline int apply_rule(const struct rule_value *rule,
@@ -744,12 +919,22 @@ int xdp_entry(struct xdp_md *ctx)
 	meta.rule_id = service->default_rule_id;
 
 	whitelist = lookup_active_whitelist(cfg->active_slot, meta.src_v4);
-	if (whitelist && (whitelist->scope == POLICY_SCOPE_GLOBAL ||
-			  (whitelist->scope == POLICY_SCOPE_SERVICE &&
-			   whitelist->service_id == service->service_id)))
+	if (whitelist && whitelist->scope == POLICY_SCOPE_GLOBAL)
 		whitelist_applies = 1;
+	if (!whitelist_applies) {
+		whitelist = lookup_active_service_whitelist(cfg->active_slot,
+							    service->service_id,
+							    meta.src_v4);
+		if (whitelist && whitelist->scope == POLICY_SCOPE_SERVICE &&
+		    whitelist->service_id == service->service_id)
+			whitelist_applies = 1;
+	}
 
-	blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
+	blacklist = lookup_active_service_blacklist(cfg->active_slot,
+						    service->service_id,
+						    meta.src_v4);
+	if (!blacklist)
+		blacklist = lookup_active_blacklist(cfg->active_slot, meta.src_v4);
 	if (!whitelist_applies && blacklist && blacklist->action == ACTION_DROP) {
 		meta.rule_id = blacklist->rule_id;
 		meta.action = ACTION_DROP;
@@ -760,7 +945,12 @@ int xdp_entry(struct xdp_md *ctx)
 	}
 
 	if (!whitelist_applies && meta.proto == L4_UDP) {
-		udp_src_port_block = lookup_active_udp_src_port_block(cfg->active_slot, meta.src_port);
+		udp_src_port_block = lookup_active_service_udp_src_port_block(cfg->active_slot,
+									       service->service_id,
+									       meta.src_port);
+		if (!udp_src_port_block)
+			udp_src_port_block = lookup_active_udp_src_port_block(cfg->active_slot,
+									      meta.src_port);
 		if (udp_src_port_block) {
 			meta.action = ACTION_DROP;
 			meta.reason = REASON_UDP_AMP_SOURCE_PORT;

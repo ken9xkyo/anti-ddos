@@ -24,9 +24,10 @@ export default function App() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      const next = await api.dashboard();
+      const next = await api.dashboard(user);
       setData(next);
       setLastRefresh(new Date().toISOString());
       setError('');
@@ -35,7 +36,13 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    if (activeTab === 'reputation' && user && (user.role !== 'admin' || user.read_only || user.viewing_user)) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -45,6 +52,21 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [loadDashboard, user]);
+
+  const viewUserConfig = async (userID: string) => {
+    try {
+      setLoading(true);
+      const session = await api.viewUserConfig(userID);
+      setUser(session.user);
+      setData(null);
+      setLastRefresh('');
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'view user failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!user) {
     return (
@@ -67,6 +89,7 @@ export default function App() {
         error={error}
         lastRefresh={lastRefresh}
         onRefresh={loadDashboard}
+        onViewUserConfig={viewUserConfig}
         onLogout={() => {
           api.clearToken();
           setUser(null);

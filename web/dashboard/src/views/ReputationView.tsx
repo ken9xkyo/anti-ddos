@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField } from '@mui/material';
 import { GridColDef } from '@mui/x-data-grid';
-import { AlertTriangle, Ban, Clock, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, Clock, Plus, RadioTower, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, JsonTextField, parseJsonObject, ReasonField } from '../adminUi';
 import { EmptyTableRow, PanelHeader, StatusPill, TablePanel } from '../components';
 import { formatDateTime, numberValue } from '../format';
-import type { FeedConflict, FeedRun, FeedSource, FeedSourceInput, User } from '../types';
+import type { FeedConflict, FeedRun, FeedSource, FeedSourceInput } from '../types';
 
 type FeedForm = {
   reason: string;
@@ -40,14 +40,12 @@ export function ReputationView({
   sources,
   runs,
   conflicts,
-  user,
   canMutate,
   onRefresh
 }: {
   sources: FeedSource[];
   runs: FeedRun[];
   conflicts: FeedConflict[];
-  user: User;
   canMutate: boolean;
   onRefresh: () => void | Promise<void>;
 }) {
@@ -59,7 +57,6 @@ export function ReputationView({
   const [form, setForm] = useState<FeedForm>(emptyFeedForm);
   const [confirm, setConfirm] = useState<{ type: 'disable' | 'sync'; source: FeedSource } | null>(null);
   const [reason, setReason] = useState('update feed source');
-  const canConfigureCredential = user.role === 'admin';
 
   useEffect(() => {
     setLocalSources(sources);
@@ -86,7 +83,8 @@ export function ReputationView({
       width: 145,
       renderCell: (params) => {
         const row = params.row as FeedSource;
-        return <StatusPill state={row.enabled ? row.status === 'healthy' ? 'ok' : row.status === 'error' ? 'warn' : 'info' : 'off'} text={row.enabled ? row.status : 'disabled'} />;
+        const state = row.enabled ? row.status === 'healthy' ? 'ok' : row.status === 'error' ? 'warn' : 'info' : 'off';
+        return <StatusPill state={state} text={row.enabled ? row.status : 'disabled'} />;
       }
     },
     { field: 'active_entries', headerName: 'Active', width: 100 },
@@ -145,7 +143,7 @@ export function ReputationView({
 
   const submit = async () => {
     try {
-      const input = feedInputFromForm(form, canConfigureCredential);
+      const input = feedInputFromForm(form);
       if (mode === 'edit' && target) {
         await api.updateFeedSource(target.id, input);
         setResult(`${input.name} updated`);
@@ -166,7 +164,7 @@ export function ReputationView({
     try {
       if (confirm.type === 'sync') {
         await api.syncFeedSource(confirm.source.id, reason);
-        setResult(`${confirm.source.name} sync started`);
+        setResult(`${confirm.source.name} synced`);
       } else {
         await api.disableFeedSource(confirm.source.id, reason);
         setResult(`${confirm.source.name} disabled`);
@@ -183,7 +181,7 @@ export function ReputationView({
     <section className="content-stack">
       <section className="wide-panel">
         <PanelHeader
-          icon={<Ban size={18} />}
+          icon={<RadioTower size={18} />}
           title="Threat Feed Management"
           eyebrow={`${localSources.length} sources`}
           actions={canMutate ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add feed</button> : null}
@@ -246,7 +244,7 @@ export function ReputationView({
           <TextField label="Interval seconds" value={form.interval_seconds} onChange={(event) => setForm({ ...form, interval_seconds: event.target.value })} inputMode="numeric" fullWidth />
         </Stack>
         <TextField label="URL" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} fullWidth />
-        <TextField label="Credential ref" value={form.credential_ref} onChange={(event) => setForm({ ...form, credential_ref: event.target.value })} fullWidth disabled={!canConfigureCredential} />
+        <TextField label="Credential ref" value={form.credential_ref} onChange={(event) => setForm({ ...form, credential_ref: event.target.value })} fullWidth />
         <Stack direction="row" spacing={1}>
           <TextField label="Status" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} fullWidth />
           <TextField label="License note" value={form.license_note} onChange={(event) => setForm({ ...form, license_note: event.target.value })} fullWidth />
@@ -275,13 +273,13 @@ export function ReputationView({
   );
 }
 
-function feedInputFromForm(form: FeedForm, includeCredential: boolean): FeedSourceInput {
+function feedInputFromForm(form: FeedForm): FeedSourceInput {
   return {
     reason: form.reason.trim(),
     name: form.name.trim(),
     type: form.type,
     url: form.url.trim(),
-    credential_ref: includeCredential ? form.credential_ref.trim() : undefined,
+    credential_ref: form.credential_ref.trim() || undefined,
     required_for_production: form.required_for_production,
     enabled: form.enabled,
     interval_seconds: optionalNumber(form.interval_seconds),

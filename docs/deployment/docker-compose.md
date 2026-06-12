@@ -5,24 +5,25 @@ Tai lieu nay huong dan chay lab stack cho Anti-DDoS management/control plane. St
 ## Kien Truc Runtime
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart LR
-    Dashboard["Admin Dashboard :8088"] --> API["Control API :8080"]
-    API --> DB["PostgreSQL :5432"]
-    API --> Prom["Prometheus :9090"]
-    Grafana["Grafana :3000"] --> Prom
+    Dashboard["Admin Dashboard 0.0.0.0:8088"] --> API["Control API 127.0.0.1:8080"]
+    API --> DB["PostgreSQL 127.0.0.1:5432"]
+    API --> Prom["Prometheus 127.0.0.1:9090"]
+    Grafana["Grafana 127.0.0.1:3000"] --> Prom
     Prom --> API
     Prom -. scrape host.docker.internal:9091 .-> Agent["Node Agent on host"]
     Agent -. sync .-> API
 ```
 
-Tat ca port public mac dinh bind ve `127.0.0.1`. Cac service noi bo noi chuyen qua Docker network `anti-ddos-mgmt`.
+PostgreSQL, Control API, Prometheus va Grafana bind ve `127.0.0.1` theo mac dinh. Admin Dashboard publish `0.0.0.0:${ADMIN_DASHBOARD_PORT:-8088}` theo `docker-compose.yml`; doi bind/port trong compose hoac firewall host neu can gioi han truy cap. Cac service noi bo noi chuyen qua Docker network `anti-ddos-mgmt`.
 
 ## File Lien Quan
 
 | File | Muc dich |
 |---|---|
 | `Makefile` | Entry point cho dev, test va deploy lab stack |
-| `docker-compose.yml` | Dinh nghia full lab stack, healthcheck, init va log rotation |
+| `docker-compose.yml` | Dinh nghia lab stack, healthcheck, init, port publish va log rotation |
 | `.env.example` | Mau bien moi truong, chi chua placeholder |
 | `deploy/README.md` | Index ngan cho Docker, Prometheus va Grafana assets |
 | `deploy/docker/control-api.Dockerfile` | Multi-stage build cho `control-api` va `control-admin` |
@@ -47,7 +48,7 @@ make env-init
 make compose-config
 ```
 
-Mac dinh compose mount read-only `${ANTI_DDOS_XDP_OBJECT_HOST:-./build/bpf/xdp_data_plane.bpf.o}` vao `/run/anti-ddos/xdp_data_plane.bpf.o` trong Control API container. `make deploy` tu build BPF object truoc khi start stack de tranh Agent reject snapshot vi `object_checksum mismatch`.
+Compose mount read-only `${ANTI_DDOS_XDP_OBJECT_HOST:-./build/bpf/xdp_data_plane.bpf.o}` vao `/run/anti-ddos/xdp_data_plane.bpf.o` trong Control API container. `make deploy` build BPF object truoc khi start stack de tranh Agent reject snapshot vi `object_checksum mismatch`.
 
 Khong commit `.env`. Repo chi track `.env.example`.
 
@@ -125,10 +126,11 @@ sudo env \
   ANTI_DDOS_METRICS_ADDR=0.0.0.0:9091 \
   ANTI_DDOS_CONTROL_URL=http://127.0.0.1:8080 \
   ANTI_DDOS_AGENT_TOKEN=<same-value-as-ANTI_DDOS_AGENT_SHARED_TOKEN> \
+  ANTI_DDOS_OWNER_USERNAME=<config-owner-username> \
   build/agent/anti-ddos-agent
 ```
 
-`ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync.
+`ANTI_DDOS_AGENT_TOKEN` tren host phai khop voi `ANTI_DDOS_AGENT_SHARED_TOKEN` trong `.env` de Control API chap nhan Agent register, heartbeat, event forward va snapshot sync. Agent register cung can `ANTI_DDOS_OWNER_USERNAME` hoac `ANTI_DDOS_OWNER_USER_ID` de gan node vao config cua user so huu.
 
 ### Native DEVMAP Output Interface
 
@@ -172,7 +174,7 @@ Doi port bang `.env` neu host da co service dung port tuong ung. `make dev-healt
 ## Bao Mat Va Gioi Han Lab
 
 - Compose phuc vu lab/dev, khong phai HA production deployment.
-- Cac port bind loopback de tranh expose ra mang ngoai mac dinh.
+- PostgreSQL, Control API, Prometheus va Grafana bind loopback mac dinh. Admin Dashboard publish tren tat ca interface theo compose hien tai; gioi han bang firewall hoac sua publish address neu host khong nam trong lab rieng.
 - Khong dua raw token, DSN, password that vao repo.
 - Control API va Dashboard container chay non-root, drop capabilities va dung `no-new-privileges`.
 - Tat ca service dung `init: true` de reap process con va logging driver `json-file` voi rotation cau hinh bang `DOCKER_LOG_MAX_SIZE`/`DOCKER_LOG_MAX_FILE`.
@@ -200,11 +202,11 @@ make compose-config
 make compose-build
 ```
 
-## Phase 4 Services / Forwarding UI E2E
+## Services / Forwarding UI E2E
 
 E2E nay tao mot protected service tam thoi dang disabled, sua, roi xoa qua dashboard. Test khong enable service va khong attach XDP vao NIC that. Neu can xac thuc mot host interface cu the trong dropdown, dat `ANTI_DDOS_E2E_OUTPUT_INTERFACE=<iface>` va `ANTI_DDOS_E2E_REQUIRE_OUTPUT_INTERFACE=1`.
 
-Dashboard mac dinh tao service disabled. Khi enable service live, form chi yeu cau `resolved_ifindex` va `resolved_src_mac` tu Agent-reported interface; `resolved_next_hop_mac` khong con la truong nhap tay. Neu next-hop chua co san, Control API se publish unresolved forwarding intent trong snapshot va host Agent se resolve output ifindex/source MAC/next-hop MAC truoc khi apply XDP maps. Neu Agent khong thay host NIC/route/neighbor thi apply fail-closed voi loi `resolve_forwarding` de operator sua route/ARP/interface thay vi nhap MAC thu cong.
+Dashboard mac dinh tao service disabled. Khi enable service live, form yeu cau `resolved_ifindex` va `resolved_src_mac` tu Agent-reported interface; next-hop MAC duoc Agent resolve truoc khi apply XDP maps. Neu next-hop chua co san, Control API se publish unresolved forwarding intent trong snapshot. Neu Agent khong thay host NIC/route/neighbor thi apply fail-closed voi loi `resolve_forwarding` de user sua route/ARP/interface thay vi nhap MAC thu cong.
 
 ```bash
 python3 -m venv .venv-e2e

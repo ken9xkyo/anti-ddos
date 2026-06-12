@@ -167,13 +167,20 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 	}
 	metrics.dbUp.Set(1)
 
-	version, err := s.LatestPolicyVersion(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var version uint32
+	err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&version)
 	if err == nil {
 		metrics.snapshotVersion.Set(float64(version))
 	}
 
 	metrics.applyStatus.Reset()
-	rows, err := s.pool.Query(ctx, `SELECT status, count(*) FROM policy_apply_status GROUP BY status`)
+	rows, err := tx.Query(ctx, `SELECT status, count(*) FROM policy_apply_status GROUP BY status`)
 	if err == nil {
 		for rows.Next() {
 			var status string
@@ -187,7 +194,7 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 
 	metrics.agentHealth.Reset()
 	metrics.agentStale.Reset()
-	rows, err = s.pool.Query(ctx, `SELECT status, COALESCE(NULLIF(xdp_mode, ''), 'unknown'), last_seen_at FROM agents`)
+	rows, err = tx.Query(ctx, `SELECT status, COALESCE(NULLIF(xdp_mode, ''), 'unknown'), last_seen_at FROM agents`)
 	if err != nil {
 		return err
 	}
@@ -212,7 +219,7 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 
 	metrics.feedEntries.Reset()
 	metrics.feedConflicts.Reset()
-	rows, err = s.pool.Query(ctx, `SELECT name, active_entries, conflict_count FROM feed_sources`)
+	rows, err = tx.Query(ctx, `SELECT name, active_entries, conflict_count FROM feed_sources`)
 	if err != nil {
 		return err
 	}
@@ -231,7 +238,7 @@ func (s *Store) RefreshControlMetrics(ctx context.Context, metrics *ControlMetri
 		return err
 	}
 
-	return nil
+	return tx.Commit(ctx)
 }
 
 func boundedMetricValue(value string) string {

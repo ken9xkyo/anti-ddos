@@ -130,28 +130,34 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	owner, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleOperator, "create operator"); err != nil {
-		t.Fatal(err)
-	}
+	ownerCtx := contextWithOwner(ctx, owner.ID)
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
-	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
-	operatorToken := login(t, server.URL, "operator", "operator password phrase")
+	userToken := login(t, server.URL, "user", "user password phrase")
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
+	readOnlyToken := viewSession.Token
 
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", operatorToken, TelegramConfigInput{
-		Reason:      "operator should not set token",
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
+		Reason:      "user configures Telegram",
 		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
-	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {
-		t.Fatalf("operator token config should fail status=%d body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("user Telegram config status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) || strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("user Telegram config masking failed: %s", resp.Body.String())
+	}
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
 		Reason:      "configure Telegram",
 		BotTokenRef: telegramToken,
 		ChatID:      "1234",
@@ -166,7 +172,7 @@ func TestAlertingIntegration(t *testing.T) {
 	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("telegram token leaked in config response: %s", resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
 		Reason:      "keep Telegram token",
 		BotTokenRef: "*****",
 		ChatID:      "1234",
@@ -178,11 +184,11 @@ func TestAlertingIntegration(t *testing.T) {
 	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("telegram token leaked in masked config response: %s", resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", viewerToken, map[string]string{"reason": "viewer"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", readOnlyToken, map[string]string{"reason": "read-only"})
 	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {
-		t.Fatalf("viewer test alert should fail status=%d body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("read-only test alert should fail status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", operatorToken, map[string]string{"reason": "operator test"})
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", userToken, map[string]string{"reason": "user test"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("test alert status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -194,9 +200,9 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("test alert not sent: %#v", testAlert)
 	}
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", operatorToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:          "warning",
-		Type:              "anomaly",
+		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
 		AffectedService:   "api",
 		Vector:            "udp_flood",
@@ -207,9 +213,9 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("create alert status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	before := calls.Load()
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", operatorToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:          "warning",
-		Type:              "anomaly",
+		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
 		AffectedService:   "api",
 		Vector:            "udp_flood",
@@ -227,7 +233,7 @@ func TestAlertingIntegration(t *testing.T) {
 	}
 
 	mode.Store("retry")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", operatorToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:          "critical",
 		Type:              "redirect_failure",
 		DedupeKey:         "retry:redirect",
@@ -247,7 +253,7 @@ func TestAlertingIntegration(t *testing.T) {
 	}
 
 	mode.Store("auth")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", operatorToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
 		Severity:        "critical",
 		Type:            "neighbor_unresolved",
 		DedupeKey:       "auth:neighbor",
@@ -284,15 +290,15 @@ func TestAlertingIntegration(t *testing.T) {
 	if _, err := store.SyncFeedSource(ctx, source.ID, adminActor, "trigger feed failure"); err == nil {
 		t.Fatal("expected feed sync failure")
 	}
-	agentResp, err := store.RegisterAgent(ctx, AgentRegisterRequest{Hostname: "node-a", XDPMode: "native", DevmapSupport: true})
+	agentResp, err := store.RegisterAgent(ownerCtx, AgentRegisterRequest{Hostname: "node-a", XDPMode: "native", DevmapSupport: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordAgentApply(ctx, agentResp.AgentID, AgentApplyRequest{PolicyVersion: 1, Status: "failed", ErrorStage: "neighbor", ErrorReason: "neighbor unresolved"}); err != nil {
+	if err := store.RecordAgentApply(ownerCtx, agentResp.AgentID, AgentApplyRequest{PolicyVersion: 1, Status: "failed", ErrorStage: "neighbor", ErrorReason: "neighbor unresolved"}); err != nil {
 		t.Fatal(err)
 	}
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts/evaluate-isp-escalation", operatorToken, ISPEscalationInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts/evaluate-isp-escalation", userToken, ISPEscalationInput{
 		Reason:          "manual escalation fixture",
 		Target:          "203.0.113.10/32",
 		Vector:          "udp_flood",
@@ -311,7 +317,7 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("bad isp alert: %#v", isp)
 	}
 
-	alerts, err := store.ListAlerts(ctx, 100)
+	alerts, err := store.ListAlerts(ownerCtx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,12 +325,12 @@ func TestAlertingIntegration(t *testing.T) {
 	for _, alert := range alerts {
 		seen[alert.Type] = true
 	}
-	for _, typ := range []string{"test_alert", "anomaly", "feed_failure", "neighbor_unresolved", "isp_escalation_needed"} {
+	for _, typ := range []string{"test_alert", "operator_notice", "feed_failure", "neighbor_unresolved", "isp_escalation_needed"} {
 		if !seen[typ] {
 			t.Fatalf("missing alert type %s in %#v", typ, seen)
 		}
 	}
-	audits, err := store.ListAuditEvents(ctx, 50)
+	audits, err := store.ListAuditEvents(ownerCtx, 50)
 	if err != nil {
 		t.Fatal(err)
 	}

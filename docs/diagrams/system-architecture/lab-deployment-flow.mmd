@@ -1,14 +1,14 @@
 %%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart LR
-    browser[Trình duyệt Operator]
+    browser[Trình duyệt User]
 
     subgraph compose["Docker Compose lab stack"]
         direction LR
-        dashboard[Admin Dashboard<br/>Nginx :8088]
-        api[Control API<br/>Go :8080]
-        db[(PostgreSQL :5432)]
-        prometheus[Prometheus :9090]
-        grafana[Grafana :3000]
+        dashboard[Admin Dashboard<br/>Nginx 0.0.0.0:8088]
+        api[Control API<br/>Go 127.0.0.1:8080]
+        db[(PostgreSQL 127.0.0.1:5432)]
+        prometheus[Prometheus 127.0.0.1:9090]
+        grafana[Grafana 127.0.0.1:3000]
     end
 
     subgraph host["Data plane trên host"]

@@ -1,120 +1,107 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','entityTextColor':'#000000','entityBkg':'#f8fafc','attributeBkg':'#ffffff','attributeTextColor':'#000000','relationshipLabelColor':'#000000'}}}%%
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','labelTextColor':'#000000'}}}%%
 erDiagram
-    APP_USERS ||--|| POLICY_SNAPSHOTS : "tạo"
-    APP_USERS ||--|| AUDIT_EVENTS : "thực hiện"
-    APP_USERS ||--|| ALERTS : "tạo"
-    AGENTS ||--|| AGENT_INTERFACES : "báo cáo"
-    AGENTS ||--|| POLICY_APPLY_STATUS : "báo cáo"
-    AGENTS ||--|| SECURITY_EVENTS : "gửi"
-    BACKEND_SERVICES ||--|| FORWARDING_POLICIES : "có"
-    BACKEND_SERVICES ||--|| RULES : "scope"
-    BACKEND_SERVICES ||--|| WHITELIST_ENTRIES : "scope"
-    BACKEND_SERVICES ||--|| ALERTS : "ảnh hưởng"
-    RULES ||--|| MANUAL_BLACKLIST_ENTRIES : "giải thích"
-    FEED_SOURCES ||--|| REPUTATION_ENTRIES : "import"
+    APP_USERS ||--o{ USER_SESSIONS : owns
+    APP_USERS ||--o{ AGENTS : owns
+    APP_USERS ||--o{ BACKEND_SERVICES : owns
+    APP_USERS ||--o{ RULES : owns
+    APP_USERS ||--o{ WHITELIST_ENTRIES : owns
+    APP_USERS ||--o{ MANUAL_BLACKLIST_ENTRIES : owns
+    APP_USERS ||--o{ UDP_SOURCE_PORT_BLOCKS : owns
+    APP_USERS ||--o{ POLICY_SNAPSHOTS : owns
+    APP_USERS ||--o{ SECURITY_EVENTS : owns
+    APP_USERS ||--o{ TELEGRAM_CONFIGS : owns
+    APP_USERS ||--o{ ALERTS : owns
+    FEED_SOURCES ||--o{ REPUTATION_ENTRIES : publishes
+    REPUTATION_ENTRIES ||--o{ FEED_CONFLICTS : conflicts
+    WHITELIST_ENTRIES ||--o{ FEED_CONFLICTS : overlaps
 
     APP_USERS {
         uuid id PK
         text username UK
-        text role
+        text role "admin|user"
         text status
-        timestamptz created_at
+        boolean force_password_change
     }
-    AGENTS {
+    USER_SESSIONS {
         uuid id PK
-        text hostname UK
-        text status
-        bigint active_policy_version
-        timestamptz last_seen_at
-    }
-    AGENT_INTERFACES {
-        uuid id PK
-        uuid agent_id FK
-        text name
-        integer ifindex
-        text mac
+        uuid user_id FK
+        uuid view_owner_user_id FK
+        text token_hash
+        timestamptz expires_at
     }
     BACKEND_SERVICES {
         uuid id PK
-        bigint ebpf_id UK
+        uuid owner_user_id FK
+        text name
         inet backend_cidr
         text protocol
-        boolean enabled
-    }
-    FORWARDING_POLICIES {
-        uuid id PK
-        uuid service_id FK
-        inet backend_target
-        text output_interface
-        integer devmap_key
     }
     RULES {
         uuid id PK
+        uuid owner_user_id FK
         uuid service_id FK
-        bigint ebpf_id UK
         text action
         text mode
     }
     WHITELIST_ENTRIES {
         uuid id PK
-        uuid service_id FK
+        uuid owner_user_id FK
         inet ip_or_cidr
         text scope
-        boolean enabled
     }
     MANUAL_BLACKLIST_ENTRIES {
         uuid id PK
-        uuid rule_id FK
+        uuid owner_user_id FK
         inet ip_or_cidr
-        integer score
+        text action
+    }
+    UDP_SOURCE_PORT_BLOCKS {
+        uuid id PK
+        uuid owner_user_id FK
+        int port
+    }
+    POLICY_SNAPSHOTS {
+        uuid owner_user_id PK
+        int version PK
+        jsonb snapshot
+    }
+    AGENTS {
+        uuid id PK
+        uuid owner_user_id FK
+        text hostname
+    }
+    SECURITY_EVENTS {
+        uuid id PK
+        uuid owner_user_id FK
+        inet src_ip
+        int action
+    }
+    TELEGRAM_CONFIGS {
+        uuid owner_user_id PK
+        text chat_id
         boolean enabled
+    }
+    ALERTS {
+        uuid id PK
+        uuid owner_user_id FK
+        text severity
+        text type
     }
     FEED_SOURCES {
         uuid id PK
-        text name UK
-        text status
-        boolean enabled
-        integer interval_seconds
+        uuid owner_user_id "NULL for global"
+        text name
+        text type
     }
     REPUTATION_ENTRIES {
         uuid id PK
         uuid source_id FK
         inet ip_or_cidr
-        integer score
         text status
     }
-    POLICY_SNAPSHOTS {
-        bigint version PK
-        text checksum
-        text object_checksum
-        bigint rollback_from FK
-        uuid created_by FK
-    }
-    POLICY_APPLY_STATUS {
+    FEED_CONFLICTS {
         uuid id PK
-        uuid agent_id FK
-        bigint policy_version
-        text status
-        text error_stage
-    }
-    SECURITY_EVENTS {
-        uuid id PK
-        uuid agent_id FK
-        bigint policy_version
-        inet src_ip
-        integer action
-    }
-    ALERTS {
-        uuid id PK
-        uuid service_id FK
-        uuid created_by FK
-        text severity
-        text status
-    }
-    AUDIT_EVENTS {
-        uuid id PK
-        uuid actor_id FK
-        text action
-        text entity_type
-        timestamptz created_at
+        uuid owner_user_id FK
+        uuid whitelist_id FK
+        uuid reputation_id FK
     }

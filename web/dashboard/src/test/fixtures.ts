@@ -1,7 +1,18 @@
 import type { DashboardData, User } from '../types';
 
-export const viewerUser: User = { id: 'u1', username: 'viewer', role: 'viewer' };
-export const operatorUser: User = { id: 'u2', username: 'operator', role: 'operator' };
+export const normalUser: User = {
+  id: 'u2',
+  username: 'user',
+  role: 'user',
+  status: 'active'
+};
+
+export const adminUser: User = {
+  id: 'u0',
+  username: 'admin',
+  role: 'admin',
+  status: 'active'
+};
 
 export function dashboardFixture(): DashboardData {
   const now = new Date('2026-05-28T11:00:00Z').toISOString();
@@ -80,80 +91,6 @@ export function dashboardFixture(): DashboardData {
       reason: 4,
       sample_rate: 10
     }],
-    baselines: [{
-      id: 'b1',
-      service_id: 's1',
-      service_ebpf_id: 1,
-      service_name: 'api-https',
-      interface: 'wan0',
-      protocol: 'tcp',
-      port: 443,
-      window: '5m',
-      expected_pps: 1000,
-      expected_bps: 1000000,
-      expected_cps: 100,
-      history_hours: 24,
-      confidence: 0.95,
-      approved: true,
-      status: 'approved'
-    }],
-    anomalies: [{
-      id: 'an1',
-      service_id: 's1',
-      service_ebpf_id: 1,
-      service_name: 'api-https',
-      baseline_id: 'b1',
-      evaluated_at: now,
-      window: '5m',
-      pps: 300000,
-      bps: 3000000000,
-      cps: 30000,
-      drop_ratio: 0.1,
-      score: 95,
-      confidence: 0.95,
-      signals: ['pps_spike', 'bps_spike', 'syn_spike'],
-      recommendation: 'manual_mitigation',
-      recommended_action: 'rate_limit',
-      auto_enforced: false,
-      status: 'alert_only',
-      source: '198.51.100.10'
-    }],
-    feedSources: [{
-      id: 'f1',
-      name: 'spamhaus-drop',
-      type: 'spamhaus_drop',
-      required_for_production: true,
-      enabled: true,
-      interval_seconds: 3600,
-      status: 'healthy',
-      active_entries: 128,
-      conflict_count: 1,
-      parse_error_count: 0,
-      license_note: 'fair use',
-      next_run_at: now
-    }],
-    feedRuns: [{
-      id: 'fr1',
-      source_id: 'f1',
-      source_name: 'spamhaus-drop',
-      started_at: now,
-      status: 'success',
-      items_fetched: 130,
-      items_valid: 128,
-      parse_errors: 0,
-      snapshot_version: 8
-    }],
-    feedConflicts: [{
-      id: 'fc1',
-      source_id: 'f1',
-      source_name: 'spamhaus-drop',
-      reputation_id: 'rep1',
-      whitelist_id: 'w1',
-      reputation_cidr: '198.51.100.0/24',
-      whitelist_cidr: '198.51.100.10/32',
-      status: 'active',
-      detected_at: now
-    }],
     telegramConfig: {
       bot_token_ref: '*****',
       bot_token_present: true,
@@ -174,6 +111,9 @@ export function dashboardFixture(): DashboardData {
       status: 'sent',
       created_at: now,
       deliveries: [{ id: 'd1', alert_id: 'al1', channel: 'telegram', status: 'sent', attempt: 1, created_at: now }]
-    }]
+    }],
+    feedSources: [],
+    feedRuns: [],
+    feedConflicts: []
   };
 }

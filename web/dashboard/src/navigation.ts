@@ -1,10 +1,10 @@
 import {
-  Activity,
   AlertTriangle,
   Ban,
   DatabaseBackup,
   Gauge,
   ListChecks,
+  RadioTower,
   Router,
   Search,
   Server,
@@ -18,7 +18,6 @@ export const navGroups = [
     items: [
       { id: 'overview', label: 'Dashboard', icon: Gauge },
       { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
-      { id: 'detection', label: 'Detections', icon: Activity },
       { id: 'investigation', label: 'Events', icon: Search }
     ]
   },
@@ -29,13 +28,8 @@ export const navGroups = [
       { id: 'rules', label: 'Rules', icon: ListChecks },
       { id: 'whitelist', label: 'Whitelist', icon: ShieldCheck },
       { id: 'blacklist', label: 'Blacklist', icon: Ban },
+      { id: 'reputation', label: 'Reputation', icon: RadioTower },
       { id: 'udpPorts', label: 'UDP Ports', icon: Ban }
-    ]
-  },
-  {
-    label: 'Threat Intelligence',
-    items: [
-      { id: 'reputation', label: 'Reputation', icon: Ban }
     ]
   },
   {

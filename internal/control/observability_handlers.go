@@ -46,14 +46,15 @@ func (s *Server) handleSecurityEventSummary(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleSecurityEventInvestigate(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
 	}
-	result, err := s.store.InvestigateSecurityEvents(r.Context(), r.URL.Query().Get("target"), int(parseUint32Query(r.URL.Query(), "limit")))
+	result, err := s.store.InvestigateSecurityEvents(r.Context(), actor, r.URL.Query().Get("target"), int(parseUint32Query(r.URL.Query(), "limit")))
 	writeResult(w, result, err)
 }
 
@@ -94,13 +95,14 @@ func (s *Server) handleDashboardServices(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleDashboardRules(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
 		return
 	}
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
 	}
-	rules, err := s.store.ListDashboardRules(r.Context())
+	rules, err := s.store.ListDashboardRules(r.Context(), actor)
 	writeResult(w, rules, err)
 }

@@ -55,7 +55,7 @@ COMPOSE_LOG_SERVICES := postgres control-api prometheus grafana admin-dashboard
 
 .PHONY: help usage
 .PHONY: bpf-build bpf-test policygen-build agent-build agent-start agent-stop agent-remove go-build ui-build build
-.PHONY: go-test go-vet go-race ui-test lint integration-test control-postgres-test control-core-postgres-test observability-postgres-test anomaly-alert-only-postgres-test anomaly-auto-enforce-postgres-test threat-feed-postgres-test alerting-postgres-test dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e agent-lifecycle-veth-test devmap-forwarding-veth-test test test-all
+.PHONY: go-test go-vet go-race ui-test lint integration-test control-postgres-test control-core-postgres-test observability-postgres-test threat-feed-postgres-test alerting-postgres-test dashboard-postgres-test admin-dashboard-ui-test admin-dashboard-test services-ui-e2e agent-lifecycle-veth-test devmap-forwarding-veth-test test test-all
 .PHONY: env-init compose-config compose-build dev-up dev-down dev-reset dev-ps dev-logs dev-health admin-bootstrap
 .PHONY: deploy deploy-down deploy-logs clean
 
@@ -109,8 +109,6 @@ help:
 	@printf '  make integration-test             Run all Control Plane PostgreSQL integration tests\n'
 	@printf '  make control-core-postgres-test   Run Control Core PostgreSQL integration test\n'
 	@printf '  make observability-postgres-test  Run Observability PostgreSQL integration test\n'
-	@printf '  make anomaly-alert-only-postgres-test Run anomaly alert-only PostgreSQL integration test\n'
-	@printf '  make anomaly-auto-enforce-postgres-test Legacy alias for anomaly alert-only test\n'
 	@printf '  make threat-feed-postgres-test    Run Threat Feed PostgreSQL integration test\n'
 	@printf '  make alerting-postgres-test       Run Alerting PostgreSQL integration test\n'
 	@printf '  make dashboard-postgres-test      Run Dashboard API PostgreSQL integration test\n'
@@ -144,7 +142,7 @@ help:
 	@printf '  AGENT_OUTPUT_XDP_MODE             Output xdp_pass mode: native or generic, default follows AGENT_XDP_MODE\n'
 	@printf '  AGENT_TOKEN                       Host Agent token; falls back to .env values\n'
 	@printf '  AGENT_METRICS_ADDR                Host Agent metrics bind, default: 0.0.0.0:9091\n'
-	@printf '  AGENT_CONTROL_URL                 Control API URL, default: http://127.0.0.1:8080\n'
+	@printf '  AGENT_CONTROL_URL                 Control API URL; unset disables Control sync\n'
 	@printf '  AGENT_XDP_MODE                    XDP mode, default: native\n'
 	@printf '  AGENT_ALLOW_GENERIC_FALLBACK      Allow generic XDP fallback, default: false\n'
 	@printf '  AGENT_SAFE_DETACH_ON_EXIT         Detach XDP on Agent exit, default: false\n'
@@ -157,6 +155,7 @@ help:
 	@printf 'Safety notes:\n'
 	@printf '  - Compose starts management/control services only; the Node Agent runs on host.\n'
 	@printf '  - agent-start runs in the background and can attach XDP. Use only approved WAN/output interfaces.\n'
+	@printf '  - agent-start leaves output xdp_pass attached after a failed start; use agent-remove to detach it.\n'
 	@printf '  - agent-start refuses to replace a non-xdp_pass program on output interfaces.\n'
 	@printf '  - agent-remove removes the pinned BPF link before using ip link xdp off on the WAN interface.\n'
 	@printf '  - agent-remove detaches output interfaces only when their XDP program is xdp_pass.\n'
@@ -201,9 +200,11 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 	metrics_addr="$(AGENT_METRICS_ADDR)"; \
 	if [ -z "$$metrics_addr" ]; then metrics_addr="$${ANTI_DDOS_METRICS_ADDR:-0.0.0.0:9091}"; fi; \
 	control_url="$(AGENT_CONTROL_URL)"; \
-	if [ -z "$$control_url" ]; then control_url="$${ANTI_DDOS_CONTROL_URL:-http://127.0.0.1:8080}"; fi; \
+	if [ -z "$$control_url" ]; then control_url="$${ANTI_DDOS_CONTROL_URL:-}"; fi; \
 	token="$${AGENT_TOKEN:-}"; \
 	if [ -z "$$token" ]; then token="$${ANTI_DDOS_AGENT_TOKEN:-$${ANTI_DDOS_AGENT_SHARED_TOKEN:-}}"; fi; \
+	owner_user_id="$${ANTI_DDOS_OWNER_USER_ID:-}"; \
+	owner_username="$${ANTI_DDOS_OWNER_USERNAME:-}"; \
 	xdp_mode="$(AGENT_XDP_MODE)"; \
 	if [ -z "$$xdp_mode" ]; then xdp_mode="$${ANTI_DDOS_XDP_MODE:-native}"; fi; \
 	output_xdp_mode="$(AGENT_OUTPUT_XDP_MODE)"; \
@@ -228,10 +229,13 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 	pid_file="$(AGENT_PID_FILE)"; \
 	start_wait="$(AGENT_START_WAIT)"; \
 	mkdir -p "$$(dirname "$$log_file")" "$$(dirname "$$pid_file")"; \
+	if [ -n "$$control_url" ] && [ -z "$$owner_user_id" ] && [ -z "$$owner_username" ]; then \
+		echo "ANTI_DDOS_OWNER_USER_ID or ANTI_DDOS_OWNER_USERNAME is required when AGENT_CONTROL_URL/ANTI_DDOS_CONTROL_URL is set" >&2; \
+		exit 1; \
+	fi; \
 	if [ -n "$$control_url" ] && [ -z "$$token" ]; then \
 		echo "warning: ANTI_DDOS_AGENT_TOKEN is empty; Control API sync may be rejected" >&2; \
 	fi; \
-	attached_output_ifaces=""; \
 	if [ -n "$$output_ifaces" ]; then \
 		for output_iface in $$output_ifaces; do \
 			if [ "$$output_iface" = "$$iface" ]; then \
@@ -253,7 +257,6 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 			else \
 				echo "attaching xdp_pass on output interface $$output_iface with $$output_xdp_mode XDP"; \
 				$(SUDO) ip link set dev "$$output_iface" "$$output_xdp_attach_arg" obj "$(BPF_PASS_OBJ)" sec xdp; \
-				attached_output_ifaces="$$attached_output_ifaces $$output_iface"; \
 			fi; \
 		done; \
 	else \
@@ -270,6 +273,8 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 		ANTI_DDOS_BPF_PIN_DIR="$$pin_dir" \
 		ANTI_DDOS_CONTROL_URL="$$control_url" \
 		ANTI_DDOS_AGENT_TOKEN="$$token" \
+		ANTI_DDOS_OWNER_USER_ID="$$owner_user_id" \
+		ANTI_DDOS_OWNER_USERNAME="$$owner_username" \
 		ANTI_DDOS_SAFE_DETACH_ON_EXIT="$$safe_detach" \
 		"$(AGENT_BIN)" >> "$$log_file" 2>&1 & \
 	launcher_pid="$$!"; \
@@ -279,13 +284,8 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 		echo "$(AGENT_PROCESS) failed to stay running; launcher pid $$launcher_pid" >&2; \
 		echo "last log lines from $$log_file:" >&2; \
 		tail -n 40 "$$log_file" >&2 || true; \
-		if [ -n "$$attached_output_ifaces" ]; then \
-			for output_iface in $$attached_output_ifaces; do \
-				if ip -d link show dev "$$output_iface" 2>/dev/null | grep -q 'name xdp_pass'; then \
-					echo "detaching xdp_pass from $$output_iface after failed start"; \
-					$(SUDO) ip link set dev "$$output_iface" xdp off || true; \
-				fi; \
-			done; \
+		if [ -n "$$output_ifaces" ]; then \
+			echo "leaving output xdp_pass attached after failed start; run agent-remove to detach output XDP" >&2; \
 		fi; \
 		rm -f -- "$$pid_file"; \
 		exit 1; \
@@ -447,12 +447,6 @@ control-core-postgres-test:
 
 observability-postgres-test:
 	scripts/lab/observability-postgres-test.sh
-
-anomaly-alert-only-postgres-test:
-	scripts/lab/anomaly-alert-only-postgres-test.sh
-
-anomaly-auto-enforce-postgres-test:
-	scripts/lab/anomaly-auto-enforce-postgres-test.sh
 
 threat-feed-postgres-test:
 	scripts/lab/threat-feed-postgres-test.sh

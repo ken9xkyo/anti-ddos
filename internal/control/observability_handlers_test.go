@@ -27,10 +27,12 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	owner, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateService(ctx, adminActor, ServiceInput{
+	ownerActor := &Actor{User: owner}
+	if _, err := store.CreateService(contextWithOwner(ctx, owner.ID), ownerActor, ServiceInput{
 		Reason:                   "publish service",
 		Name:                     "api-https",
 		BackendCIDR:              "203.0.113.10/32",
@@ -51,7 +53,11 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
-	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
+	readOnlyToken := viewSession.Token
 
 	regResp := agentJSON(t, http.MethodPost, server.URL+"/v1/agents/register", "agent-secret", AgentRegisterRequest{
 		Hostname:      "node-a",
@@ -85,15 +91,15 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 		t.Fatalf("bad ingest response: %s", eventsResp.Body.String())
 	}
 
-	listResp := authedJSON(t, http.MethodGet, server.URL+"/v1/security-events?src=198.51.100.10", adminToken, nil)
+	listResp := authedJSON(t, http.MethodGet, server.URL+"/v1/security-events?src=198.51.100.10", readOnlyToken, nil)
 	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), "198.51.100.10") {
 		t.Fatalf("security event query status=%d body=%s", listResp.Code, listResp.Body.String())
 	}
-	summaryResp := authedJSON(t, http.MethodGet, server.URL+"/v1/security-events/summary", viewerToken, nil)
+	summaryResp := authedJSON(t, http.MethodGet, server.URL+"/v1/security-events/summary", readOnlyToken, nil)
 	if summaryResp.Code != http.StatusOK || !strings.Contains(summaryResp.Body.String(), `"total":1`) {
 		t.Fatalf("summary status=%d body=%s", summaryResp.Code, summaryResp.Body.String())
 	}
-	overviewResp := authedJSON(t, http.MethodGet, server.URL+"/v1/dashboard/overview", viewerToken, nil)
+	overviewResp := authedJSON(t, http.MethodGet, server.URL+"/v1/dashboard/overview", readOnlyToken, nil)
 	if overviewResp.Code != http.StatusOK || !strings.Contains(overviewResp.Body.String(), `"configured":false`) {
 		t.Fatalf("overview status=%d body=%s", overviewResp.Code, overviewResp.Body.String())
 	}
@@ -108,7 +114,7 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 		t.Fatalf("metrics status=%d body=%s", metricsResp.StatusCode, string(body))
 	}
 	text := string(body)
-	for _, forbidden := range []string{"src_ip", "198.51.100.10", "admin", "viewer password"} {
+	for _, forbidden := range []string{"src_ip", "198.51.100.10", "correct horse", "user password"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("high-cardinality or sensitive label leaked in metrics: %q", forbidden)
 		}

@@ -38,6 +38,7 @@ type Store struct {
 
 type Actor struct {
 	User
+	ViewOwnerUserID string
 }
 
 func OpenPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
@@ -76,6 +77,57 @@ func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+const defaultUDPSourcePortSeedReason = "seeded UDP reflection source-port candidate from CISA/Cloudflare guidance"
+
+type udpSourcePortSeed struct {
+	port  int
+	label string
+}
+
+var defaultUDPSourcePortSeeds = []udpSourcePortSeed{
+	{0, "reserved source port"},
+	{19, "CHARGEN"},
+	{53, "DNS"},
+	{69, "TFTP"},
+	{111, "SunRPC"},
+	{123, "NTP"},
+	{137, "NetBIOS"},
+	{161, "SNMP"},
+	{162, "SNMP trap"},
+	{389, "CLDAP"},
+	{427, "SLP"},
+	{520, "RIP"},
+	{1194, "OpenVPN"},
+	{1900, "SSDP"},
+	{3702, "WS-Discovery"},
+	{5353, "mDNS"},
+	{10001, "Ubiquiti discovery"},
+	{11211, "Memcached"},
+	{20800, "Call of Duty"},
+	{27005, "SRCDS"},
+}
+
+func seedDefaultUDPSourcePortBlocks(ctx context.Context, q dbQuerier, ownerUserID string) error {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return errors.New("owner user id is required")
+	}
+	for _, seed := range defaultUDPSourcePortSeeds {
+		id, err := newUUID()
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO udp_source_port_blocks(id, owner_user_id, port, label, reason, owner, scope_type, enabled)
+VALUES ($1, $2, $3, $4, $5, 'system', 'user_global', false)
+ON CONFLICT (id) DO NOTHING`,
+			id, ownerUserID, seed.port, seed.label, defaultUDPSourcePortSeedReason,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -85,14 +137,14 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) (
 		return User{}, errors.New("admin password must be at least 12 characters")
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
 	defer tx.Rollback(ctx)
 
 	var admins int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE role = 'admin'`).Scan(&admins); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE role='admin' AND status='active'`).Scan(&admins); err != nil {
 		return User{}, err
 	}
 	if admins > 0 {
@@ -183,22 +235,34 @@ func (s *Store) AuthenticateToken(ctx context.Context, token string) (*Actor, er
 		return nil, errors.New("missing bearer token")
 	}
 	var user User
-	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.status, u.force_password_change, u.created_at, u.last_login_at
+	var viewOwnerUserID string
+	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.status, u.force_password_change, u.created_at, u.last_login_at, COALESCE(s.view_owner_user_id::text, '')
 FROM user_sessions s
 JOIN app_users u ON u.id = s.user_id
 WHERE s.token_hash = $1
   AND s.revoked_at IS NULL
-  AND s.expires_at > now()
-  AND u.status = 'active'`,
+	AND s.expires_at > now()
+	AND u.status = 'active'`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt)
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &viewOwnerUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("invalid or expired session")
 		}
 		return nil, err
 	}
-	return &Actor{User: user}, nil
+	actor := &Actor{User: user, ViewOwnerUserID: user.ID}
+	if user.Role == RoleAdmin && strings.TrimSpace(viewOwnerUserID) != "" {
+		target, err := s.userSummary(ctx, viewOwnerUserID)
+		if err != nil {
+			return nil, err
+		}
+		user.ViewingUser = &target
+		user.ReadOnly = true
+		actor.User = user
+		actor.ViewOwnerUserID = target.ID
+	}
+	return actor, nil
 }
 
 func (s *Store) RevokeToken(ctx context.Context, token string) error {
@@ -207,16 +271,16 @@ func (s *Store) RevokeToken(ctx context.Context, token string) error {
 }
 
 func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password, role, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
-		return User{}, errors.New("admin role required")
-	}
 	username = strings.TrimSpace(username)
 	role = strings.TrimSpace(strings.ToLower(role))
 	if username == "" {
 		return User{}, errors.New("username is required")
 	}
-	if role != RoleAdmin && role != RoleOperator && role != RoleViewer {
+	if !validUserRole(role) {
 		return User{}, fmt.Errorf("unsupported role %q", role)
+	}
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
 	}
 	if len(password) < 12 {
 		return User{}, errors.New("password must be at least 12 characters")
@@ -224,35 +288,71 @@ func (s *Store) CreateUser(ctx context.Context, actor *Actor, username, password
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	id, err := newUUID()
-	if err != nil {
-		return User{}, err
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return User{}, err
-	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
 	defer tx.Rollback(ctx)
-	var user User
-	if err := tx.QueryRow(ctx, `INSERT INTO app_users(id, username, password_hash, role, status)
-VALUES ($1, $2, $3, $4, 'active')
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
-		id, username, string(hash), role,
-	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
+	user, created, err := s.ensureUserIdentity(ctx, tx, username, password, role)
+	if err != nil {
 		return User{}, err
 	}
-	if err := insertAudit(ctx, tx, actor, "create_user", "user", user.ID, nil, user, reason, ""); err != nil {
+	user, err = s.getUser(ctx, tx, user.ID)
+	if err != nil {
+		return User{}, err
+	}
+	if user.Role == RoleUser {
+		if err := seedDefaultUDPSourcePortBlocks(ctx, tx, user.ID); err != nil {
+			return User{}, err
+		}
+	}
+	action := "reactivate_user"
+	if created {
+		action = "create_user"
+	}
+	if err := insertAudit(ctx, tx, actor, action, "user", user.ID, nil, user, reason, ""); err != nil {
 		return User{}, err
 	}
 	return user, tx.Commit(ctx)
 }
 
+func (s *Store) ensureUserIdentity(ctx context.Context, q dbQuerier, username, password, role string) (User, bool, error) {
+	id, err := newUUID()
+	if err != nil {
+		return User{}, false, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return User{}, false, err
+	}
+	var user User
+	var created bool
+	err = q.QueryRow(ctx, `INSERT INTO app_users(id, username, password_hash, role, status, force_password_change)
+VALUES ($1,$2,$3,$4,'active',true)
+ON CONFLICT (username) DO UPDATE SET
+    password_hash=EXCLUDED.password_hash,
+    role=EXCLUDED.role,
+    status='active',
+    force_password_change=true,
+    updated_at=now()
+RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at, (xmax = 0)`,
+		id, username, string(hash), role,
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &created)
+	if err != nil {
+		return User{}, false, err
+	}
+	return user, created, nil
+}
+
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at FROM app_users ORDER BY username`)
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+FROM app_users
+ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -265,17 +365,20 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		}
 		users = append(users, user)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, tx.Commit(ctx)
 }
 
 func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
-		return User{}, errors.New("admin role required")
-	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
+	}
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -288,10 +391,16 @@ func (s *Store) RevokeUser(ctx context.Context, actor *Actor, id, reason string)
 		return User{}, err
 	}
 	var after User
-	if err := tx.QueryRow(ctx, `UPDATE app_users SET status = 'revoked', updated_at = now() WHERE id = $1
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`, id).Scan(
-		&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt,
-	); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE app_users SET status='revoked', updated_at=now()
+WHERE id=$1`, id); err != nil {
+		return User{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now()
+WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+		return User{}, err
+	}
+	after, err = s.getUser(ctx, tx, id)
+	if err != nil {
 		return User{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "revoke_user", "user", id, before, after, reason, ""); err != nil {
@@ -302,19 +411,35 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 
 func (s *Store) getUser(ctx context.Context, q dbQuerier, id string) (User, error) {
 	var user User
-	err := q.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at FROM app_users WHERE id = $1`, id).Scan(
+	err := q.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+FROM app_users
+WHERE id = $1`, id).Scan(
 		&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt,
 	)
 	return user, err
+}
+
+func (s *Store) userSummary(ctx context.Context, id string) (ViewingUser, error) {
+	var user ViewingUser
+	if err := s.pool.QueryRow(ctx, `SELECT id::text, username FROM app_users WHERE id=$1 AND status='active'`, strings.TrimSpace(id)).Scan(&user.ID, &user.Username); err != nil {
+		return ViewingUser{}, err
+	}
+	return user, nil
 }
 
 func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text, created_at, COALESCE(actor_id::text, ''), actor_username, action, entity_type, entity_id,
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, created_at, COALESCE(actor_id::text, ''), actor_username, action, entity_type, entity_id,
        COALESCE(before, 'null'::jsonb), COALESCE(after, 'null'::jsonb), COALESCE(reason, ''), request_id
 FROM audit_events
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 ORDER BY created_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -341,7 +466,10 @@ LIMIT $1`, limit)
 		}
 		events = append(events, event)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, tx.Commit(ctx)
 }
 
 func insertAudit(ctx context.Context, q dbQuerier, actor *Actor, action, entityType, entityID string, before, after any, reason, requestID string) error {
@@ -351,9 +479,13 @@ func insertAudit(ctx context.Context, q dbQuerier, actor *Actor, action, entityT
 	}
 	var actorID any
 	var username string
+	ownerUserID := ownerUserIDFromContext(ctx)
 	if actor != nil {
 		actorID = actor.ID
 		username = actor.Username
+		if ownerUserID == "" {
+			ownerUserID = actorOwnerUserID(actor)
+		}
 	}
 	beforeJSON, err := marshalRedactedJSON(before)
 	if err != nil {
@@ -363,9 +495,9 @@ func insertAudit(ctx context.Context, q dbQuerier, actor *Actor, action, entityT
 	if err != nil {
 		return err
 	}
-	_, err = q.Exec(ctx, `INSERT INTO audit_events(id, actor_id, actor_username, action, entity_type, entity_id, before, after, reason, request_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10)`,
-		id, actorID, username, action, entityType, entityID, beforeJSON, afterJSON, strings.TrimSpace(reason), requestID,
+	_, err = q.Exec(ctx, `INSERT INTO audit_events(id, owner_user_id, actor_id, actor_username, action, entity_type, entity_id, before, after, reason, request_id)
+VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11)`,
+		id, ownerUserID, actorID, username, action, entityType, entityID, beforeJSON, afterJSON, strings.TrimSpace(reason), requestID,
 	)
 	return err
 }

@@ -6,9 +6,8 @@ import (
 )
 
 const (
-	RoleAdmin    = "admin"
-	RoleOperator = "operator"
-	RoleViewer   = "viewer"
+	RoleAdmin = "admin"
+	RoleUser  = "user"
 
 	StatusActive  = "active"
 	StatusRevoked = "revoked"
@@ -23,17 +22,28 @@ const (
 	PolicyScopeGlobal  = 0
 	PolicyScopeService = 1
 
+	ScopeTypeAdminGlobal = "admin_global"
+	ScopeTypeUserGlobal  = "user_global"
+	ScopeTypeService     = "service"
+
 	NeighborResolved = 1
 )
 
+type ViewingUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+}
+
 type User struct {
-	ID                  string     `json:"id"`
-	Username            string     `json:"username"`
-	Role                string     `json:"role"`
-	Status              string     `json:"status"`
-	ForcePasswordChange bool       `json:"force_password_change"`
-	CreatedAt           time.Time  `json:"created_at"`
-	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	ID                  string       `json:"id"`
+	Username            string       `json:"username"`
+	Role                string       `json:"role"`
+	Status              string       `json:"status"`
+	ForcePasswordChange bool         `json:"force_password_change"`
+	CreatedAt           time.Time    `json:"created_at"`
+	LastLoginAt         *time.Time   `json:"last_login_at,omitempty"`
+	ViewingUser         *ViewingUser `json:"viewing_user,omitempty"`
+	ReadOnly            bool         `json:"read_only,omitempty"`
 }
 
 type UserUpdateInput struct {
@@ -146,6 +156,7 @@ type WhitelistInput struct {
 	Reason    string    `json:"reason"`
 	CIDR      string    `json:"cidr"`
 	Scope     string    `json:"scope"`
+	ScopeType string    `json:"scope_type,omitempty"`
 	ServiceID string    `json:"service_id,omitempty"`
 	Label     string    `json:"label,omitempty"`
 	Owner     string    `json:"owner"`
@@ -159,6 +170,7 @@ type WhitelistEntry struct {
 	EBPFID    uint32     `json:"ebpf_id"`
 	CIDR      string     `json:"cidr"`
 	Scope     string     `json:"scope"`
+	ScopeType string     `json:"scope_type"`
 	ServiceID string     `json:"service_id,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	Reason    string     `json:"reason"`
@@ -166,6 +178,7 @@ type WhitelistEntry struct {
 	Priority  uint32     `json:"priority"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -173,6 +186,7 @@ type WhitelistEntry struct {
 type WhitelistEntryQuery struct {
 	Search    string
 	Scope     string
+	ScopeType string
 	ServiceID string
 	State     string
 	Expiry    string
@@ -181,6 +195,7 @@ type WhitelistEntryQuery struct {
 type RuleInput struct {
 	Reason       string          `json:"reason"`
 	ServiceID    string          `json:"service_id,omitempty"`
+	ScopeType    string          `json:"scope_type,omitempty"`
 	Name         string          `json:"name"`
 	Priority     uint32          `json:"priority,omitempty"`
 	MatchExpr    json.RawMessage `json:"match_expr,omitempty"`
@@ -205,6 +220,7 @@ type Rule struct {
 	ID           string          `json:"id"`
 	EBPFID       uint32          `json:"ebpf_id"`
 	ServiceID    string          `json:"service_id,omitempty"`
+	ScopeType    string          `json:"scope_type"`
 	Name         string          `json:"name"`
 	Priority     uint32          `json:"priority"`
 	MatchExpr    json.RawMessage `json:"match_expr,omitempty"`
@@ -223,6 +239,7 @@ type Rule struct {
 	Confidence   float64         `json:"confidence,omitempty"`
 	Enabled      bool            `json:"enabled"`
 	Owner        string          `json:"owner"`
+	Editable     bool            `json:"editable"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 }
@@ -230,10 +247,13 @@ type Rule struct {
 type BlacklistInput struct {
 	Reason    string    `json:"reason"`
 	CIDR      string    `json:"cidr"`
+	ScopeType string    `json:"scope_type,omitempty"`
+	ServiceID string    `json:"service_id,omitempty"`
 	Score     uint32    `json:"score,omitempty"`
 	Action    string    `json:"action"`
 	Source    string    `json:"source"`
 	RuleID    string    `json:"rule_id,omitempty"`
+	Owner     string    `json:"owner,omitempty"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 	Enabled   *bool     `json:"enabled,omitempty"`
 }
@@ -242,44 +262,55 @@ type BlacklistEntry struct {
 	ID        string     `json:"id"`
 	EBPFID    uint32     `json:"ebpf_id"`
 	CIDR      string     `json:"cidr"`
+	ScopeType string     `json:"scope_type"`
+	ServiceID string     `json:"service_id,omitempty"`
 	Score     uint32     `json:"score,omitempty"`
 	Action    string     `json:"action"`
 	Source    string     `json:"source"`
 	RuleID    string     `json:"rule_id,omitempty"`
 	Reason    string     `json:"reason"`
+	Owner     string     `json:"owner"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type BlacklistEntryQuery struct {
-	Search string
-	Source string
-	State  string
-	Expiry string
+	Search    string
+	Source    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
 }
 
 type BlacklistEntriesQuery struct {
-	Search   string
-	Source   string
-	Origin   string
-	State    string
-	Expiry   string
-	Page     uint32
-	PageSize uint32
+	Search    string
+	Source    string
+	Origin    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
+	Page      uint32
+	PageSize  uint32
 }
 
 type BlacklistEntryRow struct {
 	ID         string     `json:"id"`
 	EBPFID     uint32     `json:"ebpf_id"`
 	CIDR       string     `json:"cidr"`
+	ScopeType  string     `json:"scope_type"`
+	ServiceID  string     `json:"service_id,omitempty"`
 	Score      uint32     `json:"score,omitempty"`
 	Action     string     `json:"action"`
 	Source     string     `json:"source"`
 	SourceName string     `json:"source_name,omitempty"`
 	RuleID     string     `json:"rule_id,omitempty"`
 	Reason     string     `json:"reason"`
+	Owner      string     `json:"owner"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	Enabled    bool       `json:"enabled"`
 	Status     string     `json:"status,omitempty"`
@@ -299,6 +330,8 @@ type BlacklistEntriesPage struct {
 type UDPSourcePortBlockInput struct {
 	Reason    string    `json:"reason"`
 	Port      uint16    `json:"port"`
+	ScopeType string    `json:"scope_type,omitempty"`
+	ServiceID string    `json:"service_id,omitempty"`
 	Label     string    `json:"label,omitempty"`
 	Owner     string    `json:"owner"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
@@ -309,19 +342,24 @@ type UDPSourcePortBlock struct {
 	ID        string     `json:"id"`
 	EBPFID    uint32     `json:"ebpf_id"`
 	Port      uint16     `json:"port"`
+	ScopeType string     `json:"scope_type"`
+	ServiceID string     `json:"service_id,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	Reason    string     `json:"reason"`
 	Owner     string     `json:"owner"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Enabled   bool       `json:"enabled"`
+	Editable  bool       `json:"editable"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 type UDPSourcePortBlockQuery struct {
-	Search string
-	State  string
-	Expiry string
+	Search    string
+	ScopeType string
+	ServiceID string
+	State     string
+	Expiry    string
 }
 
 type FeedSourceInput struct {
@@ -627,69 +665,6 @@ type SecurityEventTop struct {
 	Count   uint64 `json:"count"`
 	Packets uint64 `json:"packets,omitempty"`
 	Bytes   uint64 `json:"bytes,omitempty"`
-}
-
-type BaselineProfileInput struct {
-	Reason       string          `json:"reason"`
-	ServiceID    string          `json:"service_id"`
-	Interface    string          `json:"interface"`
-	Protocol     string          `json:"protocol"`
-	Port         uint16          `json:"port,omitempty"`
-	Window       string          `json:"window"`
-	ExpectedPPS  float64         `json:"expected_pps"`
-	ExpectedBPS  float64         `json:"expected_bps"`
-	ExpectedCPS  float64         `json:"expected_cps"`
-	HistoryHours uint32          `json:"history_hours"`
-	Confidence   float64         `json:"confidence"`
-	Evidence     json.RawMessage `json:"evidence,omitempty"`
-}
-
-type BaselineProfile struct {
-	ID            string          `json:"id"`
-	ServiceID     string          `json:"service_id"`
-	ServiceEBPFID uint32          `json:"service_ebpf_id,omitempty"`
-	ServiceName   string          `json:"service_name,omitempty"`
-	Interface     string          `json:"interface"`
-	Protocol      string          `json:"protocol"`
-	Port          uint16          `json:"port,omitempty"`
-	Window        string          `json:"window"`
-	ExpectedPPS   float64         `json:"expected_pps"`
-	ExpectedBPS   float64         `json:"expected_bps"`
-	ExpectedCPS   float64         `json:"expected_cps"`
-	HistoryHours  uint32          `json:"history_hours"`
-	Confidence    float64         `json:"confidence"`
-	Approved      bool            `json:"approved"`
-	Status        string          `json:"status"`
-	Evidence      json.RawMessage `json:"evidence,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	ApprovedAt    *time.Time      `json:"approved_at,omitempty"`
-}
-
-type AnomalyEvaluation struct {
-	ID                 string          `json:"id"`
-	ServiceID          string          `json:"service_id,omitempty"`
-	ServiceEBPFID      uint32          `json:"service_ebpf_id,omitempty"`
-	ServiceName        string          `json:"service_name,omitempty"`
-	BaselineID         string          `json:"baseline_id,omitempty"`
-	EvaluatedAt        time.Time       `json:"evaluated_at"`
-	Window             string          `json:"window"`
-	PPS                float64         `json:"pps"`
-	BPS                float64         `json:"bps"`
-	CPS                float64         `json:"cps"`
-	DropRatio          float64         `json:"drop_ratio"`
-	Score              float64         `json:"score"`
-	Confidence         float64         `json:"confidence"`
-	Signals            []string        `json:"signals,omitempty"`
-	Recommendation     string          `json:"recommendation"`
-	RecommendedAction  string          `json:"recommended_action"`
-	ProposedTTLSeconds uint32          `json:"proposed_ttl_seconds,omitempty"`
-	ProposedRuleID     string          `json:"proposed_rule_id,omitempty"`
-	AutoEnforced       bool            `json:"auto_enforced"`
-	Status             string          `json:"status"`
-	Reason             string          `json:"reason,omitempty"`
-	Source             string          `json:"source,omitempty"`
-	Evidence           json.RawMessage `json:"evidence,omitempty"`
 }
 
 type DashboardOverview struct {

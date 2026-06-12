@@ -1,71 +1,78 @@
 # Control API
 
-Trang thai: tai lieu mo ta Control Plane HTTP API hien co trong working tree ngay 2026-06-03.
-
-Control API la JSON API dung cho dashboard/admin console, agent control loop va cac workflow van hanh Anti-DDoS. Tat ca endpoint nghiep vu nam duoi `/v1`, tru `/healthz` va `/metrics`.
+Control API is the JSON HTTP API used by the Admin Dashboard, admin console, host Agent control loop and operations workflows. Business endpoints live under `/v1`; `/healthz` and `/metrics` are outside that prefix.
 
 ## 1. Conventions
 
-- JSON request/response, `Content-Type: application/json` cho response.
-- Timestamp dung RFC3339.
-- JSON decoder reject unknown fields. Field sai ten se tra `400`.
-- Thanh cong mac dinh tra `200`.
-- Loi tra object dang:
+- Requests and responses use JSON unless an endpoint states otherwise.
+- Responses set `Content-Type: application/json`.
+- Timestamps are RFC3339.
+- Request JSON decoders reject unknown fields.
+- Success usually returns `200`.
+- Errors return JSON:
 
 ```json
 {"error":"reason is required"}
 ```
 
-- Auth user dung `Authorization: Bearer <session_token>` hoac cookie `anti_ddos_session`.
-- Auth agent dung `Authorization: Bearer <agent_shared_token>` neu `AgentSharedToken` duoc cau hinh. Neu token nay rong, agent endpoints khong bi chan boi shared token.
-- Mutation reason lay tu body `reason` truoc, fallback sang header `X-Audit-Reason`.
-- Nhieu store error duoc map thanh `400`; loi role co text `role required` duoc map thanh `403`.
-- `POST /v1/agents/{id}/snapshot` khong ton tai; agent fetch snapshot bang `GET`.
+- User auth accepts `Authorization: Bearer <session_token>` or cookie `anti_ddos_session`.
+- Agent auth accepts `Authorization: Bearer <agent_shared_token>` when `ANTI_DDOS_AGENT_SHARED_TOKEN` is configured.
+- User operational data is isolated by owner context: a user sees their own data; admin view-user sessions read the target user's data.
+- Mutation reason is read from body `reason` first, then from `X-Audit-Reason`.
+- Validation errors map to `400`; missing rows map to `404`; role/authorization errors map to `403`.
+- Agent fetches policy by `GET /v1/agents/{id}/snapshot?active_version=N`.
 
-## 2. Roles
+## 2. Roles And Ownership
 
-| Role | Mo ta |
+| Role | API behavior |
 |---|---|
-| `viewer` | Doc dashboard, policy, events, alerts, feeds, snapshots |
-| `operator` | Bao gom viewer; duoc thao tac operational mutations |
-| `admin` | Bao gom operator; duoc quan tri users va feed/secret credentials |
+| `user` | Reads effective policy and mutates their own user-global/service-scoped policy plus user-owned services/forwarding/snapshots/alerts. |
+| `admin` | Manages accounts, global feed sources and admin-global policy; can open read-only user config context. |
 
 Mutation policy:
 
-- User mutations: Admin only. `GET /v1/users` is authenticated read in the current server.
-- Service, forwarding policy, whitelist, rules, blacklist, UDP source-port block, feed, snapshot, baseline/anomaly operational actions: Operator/Admin.
-- Telegram config: Operator/Admin, nhung thay doi write-only `bot_token_ref` can Admin.
-- Feed `credential_ref`: Admin only khi create/update; raw values and secret refs are write-only and response is masked as `***`.
-- Viewer khong nen thay mutation control tren UI, nhung backend van la enforcement chinh.
+- Account mutations: `admin` only.
+- Global feed mutations/sync: normal `admin` session only.
+- Policy config mutations: normal `admin` sessions can mutate `scope_type="admin_global"` rows; `user` sessions can mutate their own `scope_type="user_global"` and `scope_type="service"` rows.
+- Services, forwarding policies, snapshots, Telegram and alerts remain user-owned operational config; normal admins do not mutate them.
+- Admin view-user context: read-only; operational mutations return `403`.
+- Telegram config: mutable only by `user` owner context; token values are masked in responses.
 
-## 3. Common data enums
+Policy list APIs return the effective policy for the actor:
+
+- Normal admin: admin-global rows.
+- User: admin-global rows as read-only plus own user-global/service rows.
+- Admin view-user: effective policy for the viewed user, read-only.
+
+Policy mutation inputs may include `owner`, but the backend ignores it. Created rows store the creator as owner; updates preserve the existing owner.
+
+## 3. Common Data Values
 
 | Field | Values |
 |---|---|
-| `role` | `admin`, `operator`, `viewer` |
+| `role` | `admin`, `user` |
 | user `status` | `active`, `revoked` |
 | packet/action constants | `0` pass, `1` drop, `2` rate_limit, `3` observe, `4` sample, `6` redirect |
+| policy `scope_type` | `admin_global`, `user_global`, `service` |
 | policy scope constants | `0` global, `1` service |
 | neighbor status | `1` resolved |
 
-## 4. Health and metrics
+## 4. Health And Metrics
 
 | Method | Path | Auth | Response |
 |---|---|---|---|
 | GET | `/healthz` | None | `{"ok":true}` |
-| GET | `/metrics` | None | Prometheus metrics when enabled; `503` JSON error when disabled |
+| GET | `/metrics` | None | Prometheus metrics when enabled; JSON `503` when disabled |
 
-## 5. Auth and current user
+## 5. Auth And Current User
 
 ### POST `/v1/auth/login`
-
-Public login endpoint.
 
 Request:
 
 ```json
 {
-  "username": "operator",
+  "username": "user",
   "password": "password phrase"
 }
 ```
@@ -75,23 +82,23 @@ Response `Session`:
 ```json
 {
   "token": "session-token",
-  "expires_at": "2026-05-29T12:00:00Z",
+  "expires_at": "2026-06-12T12:00:00Z",
   "user": {
     "id": "uuid",
-    "username": "operator",
-    "role": "operator",
+    "username": "user",
+    "role": "user",
     "status": "active",
     "force_password_change": false,
-    "created_at": "2026-05-29T12:00:00Z"
+    "created_at": "2026-06-12T12:00:00Z"
   }
 }
 ```
 
-Side effect: sets `anti_ddos_session` HttpOnly cookie.
+Side effect: sets HttpOnly cookie `anti_ddos_session`.
 
 ### POST `/v1/auth/logout`
 
-Authenticated by bearer or cookie if present. Revokes token when token exists.
+Authenticated by bearer or cookie if present. Revokes the matching session token.
 
 Response:
 
@@ -105,7 +112,7 @@ Authenticated. Returns current `User`.
 
 ### POST `/v1/me/password`
 
-Authenticated. Changes own password, clears `force_password_change`, revokes other active sessions.
+Authenticated. Changes own password, clears `force_password_change`, and revokes other active sessions.
 
 Request `OwnPasswordInput`:
 
@@ -119,103 +126,94 @@ Request `OwnPasswordInput`:
 
 Password minimum length is 12 characters.
 
-## 6. Users
-
-Authenticated read, Admin mutation.
+## 6. Admin View Context
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/users` | none | `User[]` | List local users |
-| POST | `/v1/users` | `{username,password,role,reason}` | `User` | Create active user |
-| PATCH | `/v1/users/{id}` | `UserUpdateInput` | `User` | Update role/status/force_password_change |
-| DELETE | `/v1/users/{id}` | reason via header | `User` | Legacy revoke user route; sets status `revoked` |
-| POST | `/v1/users/{id}/password-reset` | `PasswordResetInput` | `User` | Reset password and revoke active sessions |
-| POST | `/v1/users/{id}/sessions/revoke` | optional `{reason}` | `User` | Revoke active sessions |
+| POST | `/v1/admin/view-user` | `{"user_id":"uuid"}` | `Session` | Admin opens read-only dashboard context for an active user |
 
-`UserUpdateInput`:
+Returned `User` includes:
 
 ```json
 {
-  "reason": "update access",
-  "role": "operator",
-  "status": "active",
-  "force_password_change": true
+  "viewing_user": {"id": "uuid", "username": "user"},
+  "read_only": true
 }
 ```
 
+## 7. Users
+
+Authenticated read. `admin` has account lifecycle mutation.
+
+| Method | Path | Body | Response | Semantics |
+|---|---|---|---|---|
+| GET | `/v1/users` | none | `User[]` | List accounts |
+| POST | `/v1/users` | `{username,password,role,reason}` | `User` | Create account |
+| PATCH | `/v1/users/{id}` | `UserUpdateInput` | `User` | Update role/status/password-change flag |
+| DELETE | `/v1/users/{id}` | reason via header | `User` | Revoke account |
+| POST | `/v1/users/{id}/password-reset` | `PasswordResetInput` | `User` | Reset password and revoke sessions |
+| POST | `/v1/users/{id}/sessions/revoke` | optional `{reason}` | `User` | Revoke sessions |
+
 Safety:
 
-- Backend prevents revoking/downgrading the last active admin.
-- Raw password is never included in returned user or audit before/after payload.
+- Backend prevents revoking or downgrading the last active admin.
+- Non-admin account mutation requests return `403`.
+- Raw passwords are not returned or stored in audit before/after payloads.
 
-## 7. Services
+## 8. Services
 
-Authenticated read, Operator/Admin mutation.
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/services` | none | `Service[]` | List protected services |
 | POST | `/v1/services` | `ServiceInput` | `Service` | Create service and rebuild snapshot |
 | PUT | `/v1/services/{id}` | `ServiceInput` | `Service` | Replace/update service and rebuild snapshot |
-| DELETE | `/v1/services/{id}` | reason via header | `Service` | Existing service delete/disable flow |
+| DELETE | `/v1/services/{id}` | reason via header | `Service` | Disable service and rebuild snapshot |
 
-`ServiceInput` fields:
+`ServiceInput` key fields:
 
-- `reason`
-- `name`, `description`
+- `reason`, `name`, `description`
 - `backend_cidr`
-- `protocol`
+- `protocol`: `tcp`, `udp`, `icmp`
 - `allowed_ports`
 - `output_interface`
-- `owner`
-- `criticality`
-- `protection_mode`
-- `enabled`
-- `priority`
-- `tags`
-- `resolved_ifindex`
-- `resolved_next_hop_mac`
-- `resolved_src_mac`
-- `neighbor_resolution_status`
+- `owner`, `criticality`, `protection_mode`
+- `enabled`, `priority`, `tags`
+- optional resolved forwarding metadata: `resolved_ifindex`, `resolved_next_hop_mac`, `resolved_src_mac`, `neighbor_resolution_status`
 
-Dashboard vNext policy: next-hop MAC is not manually configured in the dashboard. The Agent resolves/configures next-hop MAC during forwarding metadata resolution.
+TCP/UDP services require non-zero allowed ports. ICMP ports must be `0`. Dashboard service creation defaults to disabled and lets the Agent resolve forwarding metadata when live metadata is not yet available.
 
-## 8. Forwarding policies
+## 9. Forwarding Policies
 
-Authenticated read, Operator/Admin mutation.
+Authenticated read. `user` mutates own config; admin view-user context reads only.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/forwarding-policies` | none | `ForwardingPolicy[]` | List forwarding policies |
-| POST | `/v1/forwarding-policies` | `ForwardingPolicyInput` | `ForwardingPolicy` | Create forwarding policy |
+| GET | `/v1/forwarding-policies` | none | `ForwardingPolicy[]` | List policies |
+| POST | `/v1/forwarding-policies` | `ForwardingPolicyInput` | `ForwardingPolicy` | Create policy |
 
-`ForwardingPolicyInput` key fields:
+`ForwardingPolicyInput` requires `service_id`, `backend_target`, `match_protocol`, `output_interface`, `owner`, and `action="redirect"`. TCP/UDP policies require `match_dst_port`; ICMP requires `0`.
 
-- `reason`
-- `service_id`
-- `match_protocol`
-- `match_dst_port`
-- `backend_target`
-- `output_interface`
-- `resolved_ifindex`
-- `resolved_dst_mac`
-- `resolved_src_mac`
-- `devmap_key`
-- `action`
-- `priority`
-- `enabled`
-- `owner`
+## 10. Whitelist
 
-## 9. Whitelist
+Authenticated read. `user` mutates own config; admin view-user context reads only.
 
-Authenticated read, Operator/Admin mutation.
-
-| Method | Path | Body | Response | Semantics |
+| Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/whitelist` | none | `WhitelistEntry[]` | List entries |
+| GET | `/v1/whitelist?q=&scope_type=&scope=&service_id=&state=&expiry=` | query | `WhitelistEntry[]` | List entries |
 | POST | `/v1/whitelist` | `WhitelistInput` | `WhitelistEntry` | Create entry and rebuild snapshot |
 | PATCH | `/v1/whitelist/{id}` | `WhitelistInput` | `WhitelistEntry` | Update entry and rebuild snapshot |
-| DELETE | `/v1/whitelist/{id}` | reason via header | `WhitelistEntry` | Soft-disable entry and rebuild snapshot |
+| DELETE | `/v1/whitelist/{id}` | reason via header | `WhitelistEntry` | Disable entry and rebuild snapshot |
+
+Filters:
+
+- `q`: CIDR, label, owner, reason or service text.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `scope`: legacy compatibility filter: `all`, `global`, `service`.
+- `service_id`: UUID for service-scoped entries.
+- `state`: `all`, `enabled`, `disabled`.
+- `expiry`: `all`, `valid`, `expired`, `none`.
 
 `WhitelistInput`:
 
@@ -223,73 +221,66 @@ Authenticated read, Operator/Admin mutation.
 {
   "reason": "allow customer monitor",
   "cidr": "203.0.113.10/32",
+  "scope_type": "user_global",
   "scope": "global",
   "service_id": "",
   "label": "customer-monitor",
-  "owner": "sre",
   "priority": 100,
-  "expires_at": "2026-06-01T00:00:00Z",
+  "expires_at": "2026-06-12T00:00:00Z",
   "enabled": true
 }
 ```
 
-## 10. Rules
+Service-scoped whitelist entries require `service_id`. Responses include `owner` and `editable`; admin-global entries returned to users have `editable=false`.
 
-Authenticated read, Operator/Admin mutation.
+## 11. Rules
+
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/rules` | none | `Rule[]` | List rules |
 | POST | `/v1/rules` | `RuleInput` | `Rule` | Create rule and rebuild snapshot |
 | PATCH | `/v1/rules/{id}` | `RuleInput` | `Rule` | Update rule and rebuild snapshot |
-| DELETE | `/v1/rules/{id}` | reason via header | `Rule` | Soft-disable rule and rebuild snapshot |
+| DELETE | `/v1/rules/{id}` | reason via header | `Rule` | Disable rule and rebuild snapshot |
 
-`RuleInput` key fields:
+`RuleInput` supports:
 
-- `reason`
-- `service_id`
-- `name`
-- `priority`
-- `match_expr`
-- `action`
-- `mode`
-- `threshold_pps`
-- `threshold_bps`
-- `threshold_cps`
-- `dimension`
-- `burst_packets`
-- `burst_bytes`
-- `sample_denom`
-- `ttl_seconds`
-- `expires_at`
-- `evidence`
-- `confidence`
-- `enabled`
-- `owner`
+- `reason`, `service_id`, `name`, `priority`
+- `scope_type`: `admin_global`, `user_global`, or `service`
+- `match_expr`, `evidence` as JSON objects
+- `action`: `observe`, `drop`, `rate_limit`, `sample`
+- `mode`: `observe`, `enforce`
+- thresholds: `threshold_pps`, `threshold_bps`, `threshold_cps`
+- burst and sample controls: `burst_packets`, `burst_bytes`, `sample_denom`
+- `dimension`: `source`, `service`, `source_service`
+- `ttl_seconds`, `expires_at`, `confidence`, `enabled`
 
-If `ttl_seconds` is set and `expires_at` is omitted, backend derives expiry from current time.
+If `scope_type="service"`, `service_id` is required. If `ttl_seconds` is set and `expires_at` is omitted, backend derives expiry from current time. Responses include `owner` and `editable`.
 
-## 11. Blacklist
+## 12. Blacklist
 
-Authenticated read, Operator/Admin mutation.
+Authenticated read returns effective manual policy plus global feed-origin rows where supported. Normal admins mutate admin-global manual entries. Users mutate their own user-global/service manual entries. Admin view-user context reads only.
 
-| Method | Path | Body | Response | Semantics |
+| Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/blacklist` | none | `BlacklistEntry[]` | List manual blacklist entries |
-| GET | `/v1/blacklist/entries` | none | `BlacklistEntriesPage` | List paginated manual and feed blacklist rows |
-| POST | `/v1/blacklist` | `BlacklistInput` | `BlacklistEntry` | Create entry |
-| PATCH | `/v1/blacklist/{id}` | `BlacklistInput` | `BlacklistEntry` | Update entry |
-| DELETE | `/v1/blacklist/{id}` | reason via header | `BlacklistEntry` | Soft-disable entry |
+| GET | `/v1/blacklist?q=&source=&scope_type=&service_id=&state=&expiry=` | query | `BlacklistEntry[]` | List manual blacklist entries |
+| GET | `/v1/blacklist/entries?q=&source=&scope_type=&service_id=&origin=&state=&expiry=&page=&page_size=` | query | `BlacklistEntriesPage` | List manual plus feed-origin rows |
+| POST | `/v1/blacklist` | `BlacklistInput` | `BlacklistEntry` | Create manual entry and rebuild snapshot |
+| PATCH | `/v1/blacklist/{id}` | `BlacklistInput` | `BlacklistEntry` | Update manual entry and rebuild snapshot |
+| DELETE | `/v1/blacklist/{id}` | reason via header | `BlacklistEntry` | Disable manual entry and rebuild snapshot |
 
-Optional list filters:
+Filters:
 
-- `q`: search CIDR, source, reason, rule UUID or rule name.
+- `q`: CIDR, source, reason, rule UUID or rule name.
 - `source`: exact source filter, case-insensitive.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `service_id`: UUID for service-scoped entries.
 - `origin`: `all`, `manual`, `feed` on `/v1/blacklist/entries`.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
 - `page`: zero-based page on `/v1/blacklist/entries`; default `0`.
-- `page_size`: page size on `/v1/blacklist/entries`; default `25`, max `100`.
+- `page_size`: default `25`, max `100`.
 
 `BlacklistEntriesPage`:
 
@@ -300,17 +291,20 @@ Optional list filters:
       "id": "uuid",
       "ebpf_id": 31,
       "cidr": "203.0.113.8/32",
+      "scope_type": "user_global",
+      "service_id": "",
       "score": 100,
       "action": "drop",
-      "source": "abuseipdb",
-      "source_name": "abuseipdb-fixture",
-      "reason": "feed evidence",
+      "source": "manual",
+      "source_name": "",
+      "reason": "manual evidence",
+      "owner": "user",
       "enabled": true,
-      "status": "active",
-      "origin": "feed",
-      "editable": false,
-      "created_at": "2026-06-01T00:00:00Z",
-      "updated_at": "2026-06-01T00:00:00Z"
+      "status": "enabled",
+      "origin": "manual",
+      "editable": true,
+      "created_at": "2026-06-12T00:00:00Z",
+      "updated_at": "2026-06-12T00:00:00Z"
     }
   ],
   "total": 1,
@@ -319,39 +313,24 @@ Optional list filters:
 }
 ```
 
-Feed rows come from non-inactive `reputation_entries` with `action='drop'` joined to `feed_sources`; `source=abuseipdb` matches the normalized feed type or exact feed source name case-insensitively. Feed rows are read-only (`editable=false`) and cannot be mutated through `PATCH` or `DELETE /v1/blacklist/{id}`.
+Feed-origin rows are generated from global active reputation and have `editable=false`. Manual blacklist mutations accept only `action="drop"`. Service-scoped manual entries require `service_id`.
 
-`BlacklistInput`:
+## 13. UDP Source Port Blocks
 
-```json
-{
-  "reason": "manual abuse block",
-  "cidr": "198.51.100.0/24",
-  "score": 80,
-  "action": "drop",
-  "source": "manual",
-  "rule_id": "",
-  "expires_at": "2026-06-01T00:00:00Z",
-  "enabled": true
-}
-```
-
-Manual blacklist action must be `drop`. Create/update/disable rebuild policy snapshots. Effective snapshot generation de-duplicates exact CIDR keys; enabled manual entries take precedence over feed reputation entries for the same exact CIDR.
-
-## 12. UDP Source Port Blocks
-
-Authenticated read, Operator/Admin mutation.
+Authenticated read returns effective policy. Normal admins mutate admin-global entries. Users mutate their own user-global/service entries. Admin view-user context reads only.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| GET | `/v1/udp-source-port-blocks?q=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List global UDP source-port block entries |
+| GET | `/v1/udp-source-port-blocks?q=&scope_type=&service_id=&state=&expiry=` | query | `UDPSourcePortBlock[]` | List source-port blocks |
 | POST | `/v1/udp-source-port-blocks` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Create entry and rebuild snapshot |
 | PATCH | `/v1/udp-source-port-blocks/{id}` | `UDPSourcePortBlockInput` | `UDPSourcePortBlock` | Update entry and rebuild snapshot |
-| DELETE | `/v1/udp-source-port-blocks/{id}` | `X-Audit-Reason` | `UDPSourcePortBlock` | Soft-disable entry and rebuild snapshot |
+| DELETE | `/v1/udp-source-port-blocks/{id}` | `X-Audit-Reason` | `UDPSourcePortBlock` | Disable entry and rebuild snapshot |
 
-Optional list filters:
+Filters:
 
-- `q`: search port, label, reason or owner.
+- `q`: port, label, reason or owner.
+- `scope_type`: `all`, `admin_global`, `user_global`, `service`.
+- `service_id`: UUID for service-scoped entries.
 - `state`: `all`, `enabled`, `disabled`.
 - `expiry`: `all`, `valid`, `expired`, `none`.
 
@@ -361,111 +340,80 @@ Optional list filters:
 {
   "reason": "block NTP reflection source port",
   "port": 123,
+  "scope_type": "user_global",
+  "service_id": "",
   "label": "ntp",
-  "owner": "sre",
-  "expires_at": "2026-06-10T00:00:00Z",
+  "expires_at": "2026-06-12T00:00:00Z",
   "enabled": true
 }
 ```
 
-`UDPSourcePortBlock`:
+New user owners are seeded with disabled user-global entries for common reflection/amplification source ports. Enabled, non-expired entries are included in owner snapshots as `udp_source_port_blocks`; service-scoped rows populate service source-port maps. Whitelist bypasses this datapath check.
+
+## 14. Feeds And Reputation
+
+Threat Feed/Reputation endpoints require normal `admin` session.
+
+| Method | Path | Body/query | Response | Semantics |
+|---|---|---|---|---|
+| GET | `/v1/feed-sources` | none | `FeedSource[]` | List global feed sources |
+| POST | `/v1/feed-sources` | `FeedSourceInput` | `FeedSource` | Create global feed source |
+| GET | `/v1/feed-sources/{id}` | none | `FeedSource` | Get global feed source |
+| PATCH | `/v1/feed-sources/{id}` | `FeedSourceInput` | `FeedSource` | Update global feed source |
+| DELETE | `/v1/feed-sources/{id}` | `X-Audit-Reason` | `FeedSource` | Disable source and rebuild active user snapshots |
+| POST | `/v1/feed-sources/{id}/sync` | optional `{reason}` | `FeedRun` | Sync source, refresh reputation and rebuild active user snapshots |
+| GET | `/v1/feed-runs?limit=N` | query | `FeedRun[]` | Recent global feed sync runs |
+| GET | `/v1/feed-conflicts` | none | `FeedConflict[]` | Active conflicts between global reputation and user whitelists |
+
+`FeedSourceInput`:
 
 ```json
 {
-  "id": "uuid",
-  "ebpf_id": 42,
-  "port": 123,
-  "label": "ntp",
-  "reason": "block NTP reflection source port",
-  "owner": "sre",
+  "reason": "create feed",
+  "name": "abuseipdb",
+  "type": "abuseipdb",
+  "url": "https://example.test/feed",
+  "credential_ref": "env://ABUSEIPDB_KEY",
+  "required_for_production": true,
   "enabled": true,
-  "expires_at": "2026-06-10T00:00:00Z",
-  "created_at": "2026-06-03T00:00:00Z",
-  "updated_at": "2026-06-03T00:00:00Z"
+  "interval_seconds": 3600,
+  "license_note": "commercial",
+  "quota_metadata": {"ttl_seconds": 3600},
+  "status": "placeholder"
 }
 ```
 
-The migration seeds disabled entries for common UDP reflection/amplification source ports: `0`, `19`, `53`, `69`, `111`, `123`, `137`, `161`, `162`, `389`, `427`, `520`, `1194`, `1900`, `3702`, `5353`, `10001`, `11211`, `20800`, `27005`.
+Credential behavior:
 
-Only enabled and non-expired entries are included in policy snapshots as `udp_source_port_blocks`. Snapshot feature flag `udp_src_port_block` is present only when active entries exist. Datapath semantics are global: after a protected service match and whitelist precedence, non-whitelisted UDP packets with a matching source port are dropped with reason `11`. Whitelisted sources bypass this check; packets outside the service allowlist keep the existing `REASON_NOT_ALLOWED_SERVICE` behavior.
+- Responses and audit payloads mask credentials as `***`.
+- PATCH with `credential_ref: "***"` keeps the stored credential.
+- PATCH with `credential_ref: ""` clears the stored credential.
 
-## 13. Feeds and reputation
+Active global reputation rows with `action="drop"` are unioned into every active user's policy snapshot.
 
-Authenticated read, Operator/Admin mutation. `credential_ref` create/update requires Admin.
+## 15. Telegram And Alerts
 
-| Method | Path | Body | Response | Semantics |
-|---|---|---|---|---|
-| GET | `/v1/feed-sources` | none | `FeedSource[]` | List feed sources |
-| POST | `/v1/feed-sources` | `FeedSourceInput` | `FeedSource` | Create feed source |
-| GET | `/v1/feed-sources/{id}` | none | `FeedSource` | Get one feed source |
-| PATCH | `/v1/feed-sources/{id}` | `FeedSourceInput` | `FeedSource` | Update feed source |
-| DELETE | `/v1/feed-sources/{id}` | reason via header | `FeedSource` | Soft-disable feed source |
-| POST | `/v1/feed-sources/{id}/sync` | optional `{reason}` | `FeedRun` | Run manual sync; provide reason when sync may change snapshot |
-| GET | `/v1/feed-runs?limit=N` | none | `FeedRun[]` | List feed sync runs |
-| GET | `/v1/feed-conflicts` | none | `FeedConflict[]` | List whitelist/reputation conflicts |
+Authenticated read. `user` mutates own Telegram/alert config; admin view-user context reads only.
 
-`FeedSourceInput` key fields:
-
-- `reason`
-- `name`
-- `type`
-- `url`
-- `credential_ref`
-- `required_for_production`
-- `enabled`
-- `interval_seconds`
-- `license_note`
-- `quota_metadata`
-- `status`
-
-`credential_ref` accepts either a raw feed credential or an existing reference such as `env://KEY` or `secret://anti-ddos/name`. Non-empty values are returned as `***` in `FeedSource` responses and audit records. On PATCH, omitted `credential_ref` or `***` preserves the stored credential, an empty string clears it, and any other non-empty value replaces it.
-
-Soft-disable can rebuild snapshot when active feed state changes.
-
-## 14. Telegram and alerts
-
-Authenticated read. Operational alert actions require Operator/Admin through store checks.
-
-| Method | Path | Body | Response | Semantics |
+| Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/telegram/config` | none | `TelegramConfig` | Get Telegram config |
-| POST | `/v1/telegram/config` | `TelegramConfigInput` | `TelegramConfig` | Upsert config; bot token changes require Admin |
+| POST | `/v1/telegram/config` | `TelegramConfigInput` | `TelegramConfig` | Upsert owner Telegram config |
 | POST | `/v1/telegram/test` | optional `{reason}` | `Alert` | Create test alert |
-| GET | `/v1/alerts?limit=N` | none | `Alert[]` | List alerts |
+| GET | `/v1/alerts?limit=N` | query | `Alert[]` | List alerts |
 | POST | `/v1/alerts` | `AlertInput` | `Alert` | Create alert |
 | GET | `/v1/alerts/{id}/deliveries` | none | `AlertDelivery[]` | List alert deliveries |
 | POST | `/v1/alerts/evaluate-isp-escalation` | `ISPEscalationInput` | `Alert` | Evaluate manual ISP escalation |
 
-`TelegramConfigInput`:
+`TelegramConfigInput` requires `chat_id`; `parse_mode` can be empty, `HTML`, `MarkdownV2`, or `Markdown`. `bot_token_ref` is write-only; responses use `*****` when a token is configured.
 
-```json
-{
-  "reason": "configure telegram",
-  "bot_token_ref": "123456:telegram-bot-token",
-  "chat_id": "123456",
-  "parse_mode": "MarkdownV2",
-  "enabled": true
-}
-```
+`AlertInput` requires `severity`, `type` and `dedupe_key`. Severity is `info`, `warning`, or `critical`.
 
-`bot_token_ref` is a write-only Telegram bot token value. Responses return `bot_token_ref: "*****"` when a token is configured; sending `"*****"` or an empty value keeps the existing token.
+ISP escalation creates/evaluates alert/runbook payloads. It does not perform automatic BGP/RTBH/FlowSpec changes.
 
-`AlertInput` key fields:
+## 16. Snapshots
 
-- `severity`
-- `type`
-- `dedupe_key`
-- `service_id`
-- `affected_service`
-- `vector`
-- `evidence`
-- `recommended_action`
-
-ISP escalation does not perform automatic BGP/RTBH/FlowSpec. It creates/evaluates alert/runbook payload for manual escalation.
-
-## 15. Snapshots
-
-Authenticated read, Operator/Admin mutation for build/rollback.
+Authenticated read. `user` can build/rollback own snapshots; admin view-user context reads only.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
@@ -475,105 +423,33 @@ Authenticated read, Operator/Admin mutation for build/rollback.
 | POST | `/v1/snapshots/build` | `{reason}` | `SnapshotMetadata` or `{"status":"unchanged"}` | Rebuild active snapshot |
 | POST | `/v1/snapshots/rollback` | `RollbackRequest` | `SnapshotMetadata` | Create rollback snapshot from target version |
 
-`RollbackRequest`:
+`SnapshotDiff` groups changes by `services`, `whitelist_v4`, `blacklist_v4`, `udp_source_port_blocks`, `rules`, `runtime`, and `object_checksum`.
 
-```json
-{
-  "reason": "rollback bad policy",
-  "target_version": 7
-}
-```
-
-`SnapshotDiff` groups changes by:
-
-- `services`
-- `whitelist_v4`
-- `blacklist_v4`
-- `udp_source_port_blocks`
-- `rules`
-- `runtime`
-- `object_checksum`
-
-## 16. Audit
+## 17. Audit
 
 Authenticated.
 
 | Method | Path | Query | Response |
-|---|---|---|---|
+|---|---|---|
 | GET | `/v1/audit?limit=N` | `limit` optional | `AuditEvent[]` |
 
-Audit event fields:
+Audit payloads must not include raw passwords, Telegram bot tokens or feed credential values.
 
-- `id`
-- `created_at`
-- `actor_id`
-- `actor_username`
-- `action`
-- `entity_type`
-- `entity_id`
-- `before`
-- `after`
-- `reason`
-- `request_id`
+## 18. Security Events And Investigation
 
-Sensitive policy: raw passwords, Telegram bot tokens and credential values must not be stored in audit payloads.
-
-## 17. Security events and investigation
-
-Authenticated user endpoints.
+Authenticated owner-context read endpoints.
 
 | Method | Path | Query | Response | Semantics |
 |---|---|---|---|---|
 | GET | `/v1/security-events` | event query | `SecurityEvent[]` | List sampled events |
-| GET | `/v1/security-events/summary` | event query | `SecurityEventSummary` | Aggregate summary, default last 5 minutes if no time range |
+| GET | `/v1/security-events/summary` | event query | `SecurityEventSummary` | Aggregate summary; default window is last five minutes when no range is supplied |
 | GET | `/v1/security-events/investigate` | `target`, `limit` | `{target, events}` | Investigate source/prefix/service target |
 
-Event query parameters:
+Event query parameters: `since`, `until`, `service_id`, `rule_id`, `action`, `reason`, `src`, `limit`.
 
-- `since` RFC3339
-- `until` RFC3339
-- `service_id`
-- `rule_id`
-- `action`
-- `reason`
-- `src`
-- `limit`
+## 19. Dashboard Read API
 
-Agent event ingest is documented in section 19.
-
-## 18. Baselines and anomalies
-
-Authenticated read. Baseline mutation and anomaly evaluate require Operator/Admin through store checks.
-
-| Method | Path | Body/query | Response | Semantics |
-|---|---|---|---|---|
-| GET | `/v1/baselines` | none | `BaselineProfile[]` | List baseline profiles |
-| POST | `/v1/baselines` | `BaselineProfileInput` | `BaselineProfile` | Create baseline |
-| POST | `/v1/baselines/{id}/approve` | `{reason}` | `BaselineProfile` | Approve baseline |
-| POST | `/v1/baselines/{id}/recalibrate` | `BaselineProfileInput` | `BaselineProfile` | Recalibrate baseline |
-| GET | `/v1/anomalies?limit=N` | query | `AnomalyEvaluation[]` | List anomalies |
-| POST | `/v1/anomalies/evaluate` | `{reason}` | `AnomalyEvaluation[]` | Evaluate anomalies and create alert-only operational signals; it does not create mitigation rules |
-
-`AnomalyEvaluation` keeps legacy compatibility fields such as `auto_enforced`, `proposed_rule_id` and `proposed_ttl_seconds`. New evaluations set `auto_enforced=false` and leave proposed rule fields empty; operators create any `rate_limit` rule manually through `Rules`.
-
-`BaselineProfileInput` key fields:
-
-- `reason`
-- `service_id`
-- `interface`
-- `protocol`
-- `port`
-- `window`
-- `expected_pps`
-- `expected_bps`
-- `expected_cps`
-- `history_hours`
-- `confidence`
-- `evidence`
-
-## 19. Dashboard read API
-
-Authenticated. These endpoints are optimized for dashboard polling and view models.
+Authenticated owner-context read endpoints optimized for dashboard polling.
 
 | Method | Path | Response |
 |---|---|---|
@@ -582,98 +458,43 @@ Authenticated. These endpoints are optimized for dashboard polling and view mode
 | GET | `/v1/dashboard/services` | `DashboardService[]` |
 | GET | `/v1/dashboard/rules` | `DashboardRule[]` |
 
-Dashboard overview includes:
+Overview includes generated time, Prometheus status, traffic, decision rates, security event summary, agent summary, snapshot version and latest apply status.
 
-- `generated_at`
-- `prometheus`
-- `traffic`
-- `decision_rates`
-- `security_events`
-- `agents`
-- `snapshot_version`
-- `latest_apply_status`
+## 20. Agent Control API
 
-## 20. Agent control API
-
-Agent endpoints use the agent shared bearer token, not user sessions.
+Agent endpoints use the agent shared bearer token. Register requires `X-Owner-User-ID` or `X-Owner-Username`; later calls resolve owner from `agent_id`.
 
 | Method | Path | Body/query | Response | Semantics |
 |---|---|---|---|---|
-| POST | `/v1/agents/register` | `AgentRegisterRequest` | `AgentRegisterResponse` | Register or refresh agent identity |
+| POST | `/v1/agents/register` | `AgentRegisterRequest` + owner header | `AgentRegisterResponse` | Register or refresh agent identity for owner user |
 | POST | `/v1/agents/{id}/heartbeat` | `AgentHeartbeatRequest` | `AgentHeartbeatResponse` | Report status/interfaces/map utilization |
 | GET | `/v1/agents/{id}/snapshot?active_version=N` | query | `{"snapshot": ...}` or `204` | Fetch desired snapshot when newer than active |
 | POST | `/v1/agents/{id}/apply` | `AgentApplyRequest` | `{"ok":true}` | Report apply result |
 | POST | `/v1/agents/{id}/events` | `SecurityEventBatch` | `SecurityEventIngestResult` | Ingest sampled XDP/security events |
 
-`AgentRegisterRequest` key fields:
+`AgentRegisterRequest` key fields: `hostname`, `interfaces`, `kernel_version`, `ubuntu_version`, `xdp_mode`, `devmap_support`, `agent_version`.
 
-- `hostname`
-- `interfaces`
-- `kernel_version`
-- `ubuntu_version`
-- `xdp_mode`
-- `devmap_support`
-- `agent_version`
+`AgentHeartbeatRequest` key fields: `status`, `active_policy_version`, `xdp_mode`, `uptime_seconds`, `map_utilization`, `interfaces`.
 
-`AgentHeartbeatRequest` key fields:
+`AgentApplyRequest` key fields: `policy_version`, `status`, `error_stage`, `error_reason`, `map_stats`, `devmap_stats`.
 
-- `status`
-- `active_policy_version`
-- `xdp_mode`
-- `uptime_seconds`
-- `map_utilization`
-- `interfaces`
+`SecurityEventBatch` accepts up to 1000 events.
 
-`AgentApplyRequest` key fields:
-
-- `policy_version`
-- `status`
-- `error_stage`
-- `error_reason`
-- `map_stats`
-- `devmap_stats`
-
-`SecurityEventBatch`:
-
-```json
-{
-  "events": [
-    {
-      "event_time": "2026-05-29T12:00:00Z",
-      "policy_version": 7,
-      "src_ip": "198.51.100.10",
-      "dst_ip": "203.0.113.10",
-      "dst_port": 443,
-      "protocol": 6,
-      "action": 1,
-      "reason": 4,
-      "service_id": 1,
-      "rule_id": 10,
-      "pkt_len": 64,
-      "sample_rate": 10,
-      "metadata": {}
-    }
-  ]
-}
-```
-
-Batch limit: max 1000 events.
-
-## 21. Endpoint summary
+## 21. Endpoint Summary
 
 | Domain | Endpoints |
 |---|---|
 | Health | `GET /healthz`, `GET /metrics` |
 | Auth | `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me`, `POST /v1/me/password` |
-| Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, `POST /v1/users/{id}/password-reset`, `POST /v1/users/{id}/sessions/revoke` |
-| Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist`, `PATCH/DELETE /v1/blacklist/{id}`, `GET/POST /v1/udp-source-port-blocks`, `PATCH/DELETE /v1/udp-source-port-blocks/{id}` |
-| Feeds | `GET/POST /v1/feed-sources`, `GET/PATCH/DELETE /v1/feed-sources/{id}`, `POST /v1/feed-sources/{id}/sync`, `GET /v1/feed-runs`, `GET /v1/feed-conflicts` |
+| Users | `GET/POST /v1/users`, `PATCH/DELETE /v1/users/{id}`, `POST /v1/users/{id}/password-reset`, `POST /v1/users/{id}/sessions/revoke`, `POST /v1/admin/view-user` |
+| Policy | `GET/POST /v1/services`, `PUT/DELETE /v1/services/{id}`, `GET/POST /v1/forwarding-policies`, `GET/POST /v1/whitelist`, `PATCH/DELETE /v1/whitelist/{id}`, `GET/POST /v1/rules`, `PATCH/DELETE /v1/rules/{id}`, `GET/POST /v1/blacklist`, `GET /v1/blacklist/entries`, `PATCH/DELETE /v1/blacklist/{id}`, `GET/POST /v1/udp-source-port-blocks`, `PATCH/DELETE /v1/udp-source-port-blocks/{id}` |
+| Reputation | `GET/POST /v1/feed-sources`, `GET/PATCH/DELETE /v1/feed-sources/{id}`, `POST /v1/feed-sources/{id}/sync`, `GET /v1/feed-runs`, `GET /v1/feed-conflicts` |
 | Alerts | `GET/POST /v1/alerts`, `GET /v1/alerts/{id}/deliveries`, `POST /v1/alerts/evaluate-isp-escalation`, `GET/POST /v1/telegram/config`, `POST /v1/telegram/test` |
 | Snapshots | `GET /v1/snapshots`, `GET /v1/snapshots/{version}`, `GET /v1/snapshots/diff`, `POST /v1/snapshots/build`, `POST /v1/snapshots/rollback` |
-| Observability | `GET /v1/audit`, `GET /v1/security-events`, `GET /v1/security-events/summary`, `GET /v1/security-events/investigate`, `GET/POST /v1/baselines`, `POST /v1/baselines/{id}/approve`, `POST /v1/baselines/{id}/recalibrate`, `GET /v1/anomalies`, `POST /v1/anomalies/evaluate`, `GET /v1/dashboard/overview`, `GET /v1/dashboard/agents`, `GET /v1/dashboard/services`, `GET /v1/dashboard/rules` |
+| Observability | `GET /v1/audit`, `GET /v1/security-events`, `GET /v1/security-events/summary`, `GET /v1/security-events/investigate`, `GET /v1/dashboard/overview`, `GET /v1/dashboard/agents`, `GET /v1/dashboard/services`, `GET /v1/dashboard/rules` |
 | Agents | `POST /v1/agents/register`, `POST /v1/agents/{id}/heartbeat`, `GET /v1/agents/{id}/snapshot`, `POST /v1/agents/{id}/apply`, `POST /v1/agents/{id}/events` |
 
-## 22. Verification guidance
+## 22. Verification Guidance
 
 When changing Control API behavior, update this document and run relevant gates:
 
@@ -682,5 +503,3 @@ When changing Control API behavior, update this document and run relevant gates:
 - Static checks: `go vet ./...`
 - Dashboard contract changes: `npm --prefix web/dashboard test -- --run`
 - UI/API shape changes: `npm --prefix web/dashboard run build`
-
-Also update `docs/Admin-Dashboard-v2.md` when the dashboard-visible contract changes.

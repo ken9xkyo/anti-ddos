@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -57,6 +58,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/v1/me", s.handleMe)
 	s.mux.HandleFunc("/v1/me/password", s.handleMePassword)
+	s.mux.HandleFunc("/v1/admin/view-user", s.handleAdminViewUser)
 	s.mux.HandleFunc("/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/v1/users/", s.handleUserByID)
 	s.mux.HandleFunc("/v1/services", s.handleServices)
@@ -88,10 +90,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/security-events", s.handleSecurityEvents)
 	s.mux.HandleFunc("/v1/security-events/summary", s.handleSecurityEventSummary)
 	s.mux.HandleFunc("/v1/security-events/investigate", s.handleSecurityEventInvestigate)
-	s.mux.HandleFunc("/v1/baselines", s.handleBaselines)
-	s.mux.HandleFunc("/v1/baselines/", s.handleBaselineByID)
-	s.mux.HandleFunc("/v1/anomalies", s.handleAnomalies)
-	s.mux.HandleFunc("/v1/anomalies/evaluate", s.handleAnomalyEvaluate)
 	s.mux.HandleFunc("/v1/dashboard/overview", s.handleDashboardOverview)
 	s.mux.HandleFunc("/v1/dashboard/agents", s.handleDashboardAgents)
 	s.mux.HandleFunc("/v1/dashboard/services", s.handleDashboardServices)
@@ -185,6 +183,23 @@ func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.store.ChangeOwnPassword(r.Context(), actor, req, bearerTokenOrCookie(r))
 	writeResult(w, user, err)
+}
+
+func (s *Server) handleAdminViewUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var req AdminViewUserInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	session, err := s.store.ViewUserConfig(r.Context(), actor, bearerTokenOrCookie(r), req)
+	writeResult(w, session, err)
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -358,7 +373,7 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListWhitelistEntries(r.Context(), query)
+		entries, err := s.store.ListWhitelistEntries(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req WhitelistInput
@@ -405,7 +420,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := s.store.ListRules(r.Context())
+		rules, err := s.store.ListRules(r.Context(), actor)
 		writeResult(w, rules, err)
 	case http.MethodPost:
 		var req RuleInput
@@ -457,7 +472,7 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListBlacklistEntries(r.Context(), query)
+		entries, err := s.store.ListBlacklistEntries(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req BlacklistInput
@@ -472,7 +487,7 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBlacklistEntries(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.requireActor(w, r)
+	actor, ok := s.requireActor(w, r)
 	if !ok {
 		return
 	}
@@ -485,7 +500,7 @@ func (s *Server) handleBlacklistEntries(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	entries, err := s.store.ListBlacklistEntryRows(r.Context(), query)
+	entries, err := s.store.ListBlacklistEntryRows(r.Context(), actor, query)
 	writeResult(w, entries, err)
 }
 
@@ -527,7 +542,7 @@ func (s *Server) handleUDPSourcePortBlocks(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entries, err := s.store.ListUDPSourcePortBlocks(r.Context(), query)
+		entries, err := s.store.ListUDPSourcePortBlocks(r.Context(), actor, query)
 		writeResult(w, entries, err)
 	case http.MethodPost:
 		var req UDPSourcePortBlockInput
@@ -572,23 +587,21 @@ func (s *Server) handleFeedSources(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		sources, err := s.store.ListFeedSources(r.Context())
-		if err == nil {
-			sources = maskFeedSourceCredentials(sources)
-		}
-		writeResult(w, sources, err)
+		writeResult(w, maskFeedSourceCredentials(sources), err)
 	case http.MethodPost:
 		var req FeedSourceInput
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 		source, err := s.store.CreateFeedSource(r.Context(), actor, req, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredential(source)
-		}
-		writeResult(w, source, err)
+		writeResult(w, maskFeedSourceCredential(source), err)
 	default:
 		methodNotAllowed(w)
 	}
@@ -599,20 +612,24 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/v1/feed-sources/")
-	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+	rawPath := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/feed-sources/"), "/")
+	parts := strings.Split(rawPath, "/")
+	if rawPath == "" || len(parts) > 2 || parts[0] == "" {
 		writeError(w, http.StatusNotFound, errors.New("feed source not found"))
 		return
 	}
 	id := parts[0]
-	if len(parts) == 2 && parts[1] == "sync" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
+	if len(parts) == 2 {
+		if parts[1] != "sync" {
+			writeError(w, http.StatusNotFound, errors.New("feed source subroute not found"))
 			return
 		}
-		if err := requireOperator(actor); err != nil {
-			writeError(w, http.StatusForbidden, err)
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
 			return
 		}
 		var req struct {
@@ -621,57 +638,66 @@ func (s *Server) handleFeedSourceByID(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, &req) {
 			return
 		}
-		run, err := s.store.SyncFeedSource(r.Context(), id, actor, mutationReason(r.Header.Get("X-Audit-Reason"), req.Reason))
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = r.Header.Get("X-Audit-Reason")
+		}
+		run, err := s.store.SyncFeedSource(r.Context(), id, actor, reason)
 		writeResult(w, run, err)
-		return
-	}
-	if len(parts) != 1 {
-		writeError(w, http.StatusNotFound, errors.New("feed source route not found"))
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		source, err := s.store.GetFeedSource(r.Context(), id)
-		if err == nil {
-			source = maskFeedSourceCredential(source)
-		}
-		writeResult(w, source, err)
+		writeResult(w, maskFeedSourceCredential(source), err)
 	case http.MethodPatch:
 		var req FeedSourceInput
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 		source, err := s.store.UpdateFeedSource(r.Context(), actor, id, req, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredential(source)
-		}
-		writeResult(w, source, err)
+		writeResult(w, maskFeedSourceCredential(source), err)
 	case http.MethodDelete:
 		source, err := s.store.DisableFeedSource(r.Context(), actor, id, r.Header.Get("X-Audit-Reason"))
-		if err == nil {
-			source = maskFeedSourceCredential(source)
-		}
-		writeResult(w, source, err)
+		writeResult(w, maskFeedSourceCredential(source), err)
 	default:
 		methodNotAllowed(w)
 	}
 }
 
 func (s *Server) handleFeedRuns(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, errors.New("limit must be a positive integer"))
+			return
+		}
+		limit = parsed
+	}
 	runs, err := s.store.ListFeedRuns(r.Context(), limit)
 	writeResult(w, runs, err)
 }
 
 func (s *Server) handleFeedConflicts(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -805,7 +831,12 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	resp, err := s.store.RegisterAgent(r.Context(), req)
+	ownerUserID, err := s.store.ResolveOwnerUserID(r.Context(), r.Header.Get("X-Owner-User-ID"), r.Header.Get("X-Owner-Username"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	resp, err := s.store.RegisterAgentForOwner(contextWithOwner(r.Context(), ownerUserID), ownerUserID, req)
 	writeResult(w, resp, err)
 }
 
@@ -820,6 +851,12 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentID, action := parts[0], parts[1]
+	ownerUserID, err := s.store.AgentOwnerUserID(r.Context(), agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	ctx := contextWithOwner(r.Context(), ownerUserID)
 	switch action {
 	case "heartbeat":
 		if r.Method != http.MethodPost {
@@ -830,7 +867,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		resp, err := s.store.HeartbeatAgent(r.Context(), agentID, req)
+		resp, err := s.store.HeartbeatAgent(ctx, agentID, req)
 		writeResult(w, resp, err)
 	case "snapshot":
 		if r.Method != http.MethodGet {
@@ -838,7 +875,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		active, _ := strconv.ParseUint(r.URL.Query().Get("active_version"), 10, 32)
-		snapshot, err := s.store.FetchSnapshot(r.Context(), uint32(active))
+		snapshot, err := s.store.FetchSnapshot(ctx, uint32(active))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -857,7 +894,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		err := s.store.RecordAgentApply(r.Context(), agentID, req)
+		err := s.store.RecordAgentApply(ctx, agentID, req)
 		writeResult(w, map[string]bool{"ok": true}, err)
 	case "events":
 		if r.Method != http.MethodPost {
@@ -871,7 +908,7 @@ func (s *Server) handleAgentSubroute(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		result, err := s.store.IngestSecurityEvents(r.Context(), agentID, req, s.metrics)
+		result, err := s.store.IngestSecurityEvents(ctx, agentID, req, s.metrics)
 		writeResult(w, result, err)
 	default:
 		http.NotFound(w, r)
@@ -890,6 +927,7 @@ func (s *Server) requireActor(w http.ResponseWriter, r *http.Request) (*Actor, b
 		writeError(w, http.StatusUnauthorized, err)
 		return nil, false
 	}
+	*r = *r.WithContext(contextWithOwner(r.Context(), actorOwnerUserID(actor)))
 	return actor, true
 }
 
@@ -926,7 +964,9 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 func writeResult(w http.ResponseWriter, value any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
+		if errors.Is(err, pgx.ErrNoRows) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, errForbidden) || strings.Contains(err.Error(), "required") && strings.Contains(err.Error(), "role") {
 			status = http.StatusForbidden
 		}
 		writeError(w, status, err)
@@ -981,6 +1021,8 @@ func routeName(r *http.Request) string {
 		return "/v1/me"
 	case path == "/v1/me/password":
 		return "/v1/me/password"
+	case path == "/v1/admin/view-user":
+		return "/v1/admin/view-user"
 	case path == "/v1/users":
 		return "/v1/users"
 	case strings.HasPrefix(path, "/v1/users/"):
@@ -1054,12 +1096,6 @@ func routeName(r *http.Request) string {
 		return "/v1/audit"
 	case strings.HasPrefix(path, "/v1/security-events"):
 		return "/v1/security-events"
-	case path == "/v1/baselines":
-		return "/v1/baselines"
-	case strings.HasPrefix(path, "/v1/baselines/"):
-		return "/v1/baselines/{id}"
-	case strings.HasPrefix(path, "/v1/anomalies"):
-		return "/v1/anomalies"
 	case strings.HasPrefix(path, "/v1/dashboard"):
 		return "/v1/dashboard"
 	case path == "/v1/agents/register":

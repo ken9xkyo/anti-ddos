@@ -15,20 +15,35 @@ func (s *Store) GetSnapshotMetadata(ctx context.Context, version uint32, include
 	if version == 0 {
 		return SnapshotMetadata{}, errors.New("snapshot version is required")
 	}
-	row := s.pool.QueryRow(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
-FROM policy_snapshots WHERE version=$1`, version)
-	return scanSnapshot(row, includeSnapshot)
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return SnapshotMetadata{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
+FROM policy_snapshots
+WHERE version=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, version)
+	meta, err := scanSnapshot(row, includeSnapshot)
+	if err != nil {
+		return SnapshotMetadata{}, err
+	}
+	return meta, tx.Commit(ctx)
 }
 
 func (s *Store) DiffSnapshots(ctx context.Context, fromVersion, toVersion uint32) (SnapshotDiff, error) {
 	if fromVersion == 0 || toVersion == 0 {
 		return SnapshotDiff{}, errors.New("from and to snapshot versions are required")
 	}
-	fromRaw, err := snapshotRaw(ctx, s.pool, fromVersion)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return SnapshotDiff{}, err
 	}
-	toRaw, err := snapshotRaw(ctx, s.pool, toVersion)
+	defer tx.Rollback(ctx)
+	fromRaw, err := snapshotRaw(ctx, tx, fromVersion)
+	if err != nil {
+		return SnapshotDiff{}, err
+	}
+	toRaw, err := snapshotRaw(ctx, tx, toVersion)
 	if err != nil {
 		return SnapshotDiff{}, err
 	}
@@ -62,7 +77,7 @@ func (s *Store) DiffSnapshots(ctx context.Context, fromVersion, toVersion uint32
 			After:  marshalSnapshotValue(to.Runtime),
 		}
 	}
-	return diff, nil
+	return diff, tx.Commit(ctx)
 }
 
 func cidrEntryKey(item agent.PolicyCIDREntry) string {

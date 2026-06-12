@@ -55,6 +55,65 @@ func TestRebuildAndRollbackAllowUnresolvedServiceSnapshots(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshotFlagsServiceScopedWhitelist(t *testing.T) {
+	ctx, pool, _ := resetControlTestDB(t)
+	objectPath := filepath.Join(t.TempDir(), "xdp.o")
+	if err := os.WriteFile(objectPath, []byte("test object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(pool, Config{XDPObject: objectPath}, nil)
+	admin, err := store.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := &Actor{User: admin}
+	enabled := true
+	service, err := store.CreateService(ctx, actor, ServiceInput{
+		Reason:                   "create api service",
+		Name:                     "api",
+		BackendCIDR:              "203.0.113.10/32",
+		Protocol:                 "tcp",
+		AllowedPorts:             []uint16{443},
+		OutputInterface:          "backend0",
+		Owner:                    "sre",
+		Criticality:              "high",
+		ProtectionMode:           "enforce",
+		Enabled:                  &enabled,
+		ResolvedIfindex:          7,
+		ResolvedNextHopMAC:       "02:00:00:00:00:02",
+		ResolvedSourceMAC:        "02:00:00:00:00:01",
+		NeighborResolutionStatus: "resolved",
+	}, "create api service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWhitelistEntry(ctx, actor, WhitelistInput{
+		Reason:    "allow monitor for api",
+		CIDR:      "198.51.100.20/32",
+		Scope:     "service",
+		ServiceID: service.ID,
+		Owner:     "sre",
+		Priority:  10,
+	}, "allow monitor for api"); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := store.FetchSnapshot(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshotHasFeatureFlag(snapshot.FeatureFlags, "service_scoped_whitelist_v4") {
+		t.Fatalf("snapshot feature flags = %#v, want service_scoped_whitelist_v4", snapshot.FeatureFlags)
+	}
+	if len(snapshot.WhitelistV4) != 1 {
+		t.Fatalf("snapshot whitelist = %#v, want one service-scoped entry", snapshot.WhitelistV4)
+	}
+	entry := snapshot.WhitelistV4[0]
+	if entry.Scope != PolicyScopeService || entry.ServiceID != service.EBPFID {
+		t.Fatalf("snapshot whitelist entry = %#v, want service scope service_id %d", entry, service.EBPFID)
+	}
+}
+
 func TestMakePolicyServiceEmitsUnresolvedForwardingIntentWhenNextHopMissing(t *testing.T) {
 	req := agent.ServiceResolveRequest{
 		ServiceID:          10,
@@ -195,4 +254,13 @@ func TestSnapshotJSONHelpers(t *testing.T) {
 	if got := string(marshalSnapshotValue(make(chan int))); got != "{}" {
 		t.Fatalf("marshalSnapshotValue() = %s, want {}", got)
 	}
+}
+
+func snapshotHasFeatureFlag(flags []string, want string) bool {
+	for _, flag := range flags {
+		if flag == want {
+			return true
+		}
+	}
+	return false
 }

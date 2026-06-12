@@ -28,4 +28,11 @@ Pointers:
 
 Operational caveat: this runtime attach is not managed by the Agent today. If `enp134s0f1` is detached, reset, or the host reboots, reattach `xdp_pass` before expecting native DEVMAP forwarding to work.
 
-Updated: 2026-06-02
+Agent lifecycle gotcha:
+- `make agent-start` may attach `xdp_pass` to configured output interfaces before the Agent process proves it stayed running.
+- If the Agent then exits early, `agent-start` must leave output `xdp_pass` attached. Detaching it recreates the ixgbe `XDP Queue count = 0` failure mode above.
+- Use `make AGENT_WAN_IFACE=<wan> AGENT_OUTPUT_IFACES=<output> agent-remove` when an operator intentionally wants to detach output `xdp_pass`.
+- Control sync is explicit in `Makefile:agent-start`; no localhost Control URL fallback.
+- If `AGENT_CONTROL_URL`/`ANTI_DDOS_CONTROL_URL` is set without owner config, `agent-start` fails before output `xdp_pass` attach.
+
+Updated: 2026-06-12

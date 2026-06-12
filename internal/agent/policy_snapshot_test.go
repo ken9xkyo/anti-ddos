@@ -112,6 +112,40 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 			want: "udp_source_port_blocks entry 4 is expired",
 		},
 		{
+			name: "service scoped whitelist requires service id",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+				snapshot.WhitelistV4 = []PolicyCIDREntry{
+					{EntryID: 4, CIDR: "198.51.100.20/32", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService},
+				}
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "service-scoped CIDR entry requires service_id",
+		},
+		{
+			name: "duplicate service scoped whitelist same service",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+				snapshot.WhitelistV4 = []PolicyCIDREntry{
+					{EntryID: 4, CIDR: "198.51.100.20/32", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10},
+					{EntryID: 5, CIDR: "198.51.100.20/32", Priority: 20, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10},
+				}
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "duplicate whitelist_service_v4 key",
+		},
+		{
+			name: "invalid whitelist scope",
+			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
+				snapshot.WhitelistV4[0].Scope = 99
+				snapshot = resignTestPolicySnapshot(t, snapshot)
+				return snapshot
+			},
+			want: "unsupported scope",
+		},
+		{
 			name: "ipv6 rejected",
 			mutate: func(snapshot PolicySnapshot) PolicySnapshot {
 				snapshot.BlacklistV4[0].CIDR = "2001:db8::/32"
@@ -172,6 +206,28 @@ func TestVerifyPolicySnapshotRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestVerifyPolicySnapshotSplitsServiceScopedWhitelist(t *testing.T) {
+	snapshot := testPolicySnapshot(t, 2)
+	snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+	snapshot.WhitelistV4 = []PolicyCIDREntry{
+		{EntryID: 1, CIDR: "198.51.100.0/24", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeGlobal},
+		{EntryID: 2, CIDR: "198.51.100.0/24", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10},
+		{EntryID: 3, CIDR: "198.51.100.0/24", Priority: 20, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 11},
+	}
+	snapshot = resignTestPolicySnapshot(t, snapshot)
+
+	stats, err := VerifyPolicySnapshot(snapshot, PolicySnapshotVerifyOptions{})
+	if err != nil {
+		t.Fatalf("VerifyPolicySnapshot() error = %v", err)
+	}
+	if stats.Maps["whitelist_v4"].Entries != 1 {
+		t.Fatalf("whitelist_v4 entries = %d, want 1", stats.Maps["whitelist_v4"].Entries)
+	}
+	if stats.Maps["whitelist_service_v4"].Entries != 2 {
+		t.Fatalf("whitelist_service_v4 entries = %d, want 2", stats.Maps["whitelist_service_v4"].Entries)
+	}
+}
+
 func TestVerifyPolicySnapshotAllowsUnresolvedServicesOnlyWhenConfigured(t *testing.T) {
 	snapshot := signedUnresolvedTestPolicySnapshot(t, 2)
 
@@ -192,6 +248,10 @@ func TestVerifyPolicySnapshotAllowsUnresolvedServicesOnlyWhenConfigured(t *testi
 func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 	valid := signedTestPolicySnapshot(t, 2)
 	valid.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{{EntryID: 4, Port: 123}}
+	valid.FeatureFlags = append(valid.FeatureFlags, "service_scoped_whitelist_v4")
+	valid.WhitelistV4 = append(valid.WhitelistV4, PolicyCIDREntry{
+		EntryID: 4, CIDR: "198.51.100.20/32", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10,
+	})
 	valid = resignTestPolicySnapshot(t, valid)
 
 	tests := []struct {
@@ -199,6 +259,7 @@ func TestVerifyPolicySnapshotRejectsCapacityOverflows(t *testing.T) {
 		overrides map[string]uint32
 		want      string
 	}{
+		{name: "service whitelist", overrides: map[string]uint32{"whitelist_service_v4": 0}, want: "whitelist_service_v4"},
 		{name: "blacklist", overrides: map[string]uint32{"blacklist_v4": 0}, want: "blacklist_v4"},
 		{name: "udp source port blocks", overrides: map[string]uint32{"udp_source_port_blocks": 0}, want: "udp_source_port_blocks"},
 		{name: "service", overrides: map[string]uint32{"service_allowlist": 0}, want: "service_allowlist"},
@@ -318,6 +379,11 @@ func TestApplyPolicySnapshotFlipsRuntimeAndPersistsLastValid(t *testing.T) {
 	runtime := newPolicyApplyTestRuntime(t, false)
 	path := filepath.Join(t.TempDir(), "last-valid.json")
 	snapshot := signedTestPolicySnapshot(t, 2)
+	serviceWhitelist := PolicyCIDREntry{
+		EntryID: 5, CIDR: "192.0.2.20/32", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10,
+	}
+	snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+	snapshot.WhitelistV4 = append(snapshot.WhitelistV4, serviceWhitelist)
 	snapshot.UDPSourcePortBlocks = []PolicyUDPSourcePortBlock{{EntryID: 4, Port: 123}}
 	snapshot = resignTestPolicySnapshot(t, snapshot)
 
@@ -362,6 +428,24 @@ func TestApplyPolicySnapshotFlipsRuntimeAndPersistsLastValid(t *testing.T) {
 		t.Fatalf("unexpected udp source port block value: %#v", udpValue)
 	}
 
+	serviceWhitelistKey, err := serviceCIDRPolicyKey(serviceWhitelist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Collection.Maps["whitelist_service_v4_b"].Lookup(&serviceWhitelistKey, &value); err != nil {
+		t.Fatalf("whitelist_service_v4_b missing entry: %v", err)
+	}
+	if value.EntryID != serviceWhitelist.EntryID || value.ServiceID != serviceWhitelist.ServiceID || value.Scope != policyScopeService {
+		t.Fatalf("unexpected service whitelist value: %#v", value)
+	}
+	globalKey, err := cidrPolicyKey(serviceWhitelist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Collection.Maps["whitelist_v4_b"].Lookup(&globalKey, &value); !errors.Is(err, ebpf.ErrKeyNotExist) {
+		t.Fatalf("service-scoped whitelist leaked into global map, err=%v value=%#v", err, value)
+	}
+
 	loaded, err := LoadLastValidSnapshot(path)
 	if err != nil {
 		t.Fatalf("LoadLastValidSnapshot() error = %v", err)
@@ -375,6 +459,12 @@ func TestApplyPolicySnapshotRollbackKeepsActiveSlotOnPopulateFailure(t *testing.
 	runtime := newPolicyApplyTestRuntime(t, true)
 	path := filepath.Join(t.TempDir(), "last-valid.json")
 	snapshot := signedTestPolicySnapshot(t, 2)
+	serviceWhitelist := PolicyCIDREntry{
+		EntryID: 5, CIDR: "192.0.2.20/32", Priority: 10, Action: actionPass, SourceType: 1, Scope: policyScopeService, ServiceID: 10,
+	}
+	snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+	snapshot.WhitelistV4 = append(snapshot.WhitelistV4, serviceWhitelist)
+	snapshot = resignTestPolicySnapshot(t, snapshot)
 
 	result, err := ApplyPolicySnapshot(runtime, snapshot, PolicyApplyOptions{
 		SnapshotPath:   path,
@@ -405,6 +495,13 @@ func TestApplyPolicySnapshotRollbackKeepsActiveSlotOnPopulateFailure(t *testing.
 	var value CIDRPolicyValue
 	if err := runtime.Collection.Maps["whitelist_v4_b"].Lookup(&key, &value); !errors.Is(err, ebpf.ErrKeyNotExist) {
 		t.Fatalf("inactive whitelist was not rolled back, lookup err=%v value=%#v", err, value)
+	}
+	serviceKey, err := serviceCIDRPolicyKey(serviceWhitelist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Collection.Maps["whitelist_service_v4_b"].Lookup(&serviceKey, &value); !errors.Is(err, ebpf.ErrKeyNotExist) {
+		t.Fatalf("inactive service whitelist was not rolled back, lookup err=%v value=%#v", err, value)
 	}
 }
 
@@ -557,16 +654,22 @@ func newPolicyApplyTestRuntime(t *testing.T, brokenBlacklist bool) *Runtime {
 			ValueSize:  uint32(unsafe.Sizeof(RuntimeConfigValue{})),
 			MaxEntries: 1,
 		}),
-		"whitelist_v4_a":        newCIDRTestMap(t, "whitelist_v4_a", false),
-		"whitelist_v4_b":        newCIDRTestMap(t, "whitelist_v4_b", false),
-		"blacklist_v4_a":        newCIDRTestMap(t, "blacklist_v4_a", false),
-		"blacklist_v4_b":        newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
-		"udp_src_port_blocks_a": newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_a"),
-		"udp_src_port_blocks_b": newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_b"),
-		"service_allowlist_a":   newServiceTestMap(t, "service_allowlist_a"),
-		"service_allowlist_b":   newServiceTestMap(t, "service_allowlist_b"),
-		"rule_config_a":         newRuleTestMap(t, "rule_config_a"),
-		"rule_config_b":         newRuleTestMap(t, "rule_config_b"),
+		"whitelist_v4_a":                newCIDRTestMap(t, "whitelist_v4_a", false),
+		"whitelist_v4_b":                newCIDRTestMap(t, "whitelist_v4_b", false),
+		"whitelist_service_v4_a":        newServiceCIDRTestMap(t, "whitelist_service_v4_a"),
+		"whitelist_service_v4_b":        newServiceCIDRTestMap(t, "whitelist_service_v4_b"),
+		"blacklist_v4_a":                newCIDRTestMap(t, "blacklist_v4_a", false),
+		"blacklist_v4_b":                newCIDRTestMap(t, "blacklist_v4_b", brokenBlacklist),
+		"blacklist_service_v4_a":        newServiceCIDRTestMap(t, "blacklist_service_v4_a"),
+		"blacklist_service_v4_b":        newServiceCIDRTestMap(t, "blacklist_service_v4_b"),
+		"udp_src_port_blocks_a":         newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_a"),
+		"udp_src_port_blocks_b":         newUDPSourcePortBlockTestMap(t, "udp_src_port_blocks_b"),
+		"udp_src_port_service_blocks_a": newServiceUDPSourcePortBlockTestMap(t, "udp_src_port_service_blocks_a"),
+		"udp_src_port_service_blocks_b": newServiceUDPSourcePortBlockTestMap(t, "udp_src_port_service_blocks_b"),
+		"service_allowlist_a":           newServiceTestMap(t, "service_allowlist_a"),
+		"service_allowlist_b":           newServiceTestMap(t, "service_allowlist_b"),
+		"rule_config_a":                 newRuleTestMap(t, "rule_config_a"),
+		"rule_config_b":                 newRuleTestMap(t, "rule_config_b"),
 		"tx_devmap": newTestMap(t, &ebpf.MapSpec{
 			Name:       "tx_devmap_test",
 			Type:       ebpf.Hash,
@@ -615,6 +718,18 @@ func newCIDRTestMap(t *testing.T, name string, brokenValue bool) *ebpf.Map {
 	})
 }
 
+func newServiceCIDRTestMap(t *testing.T, name string) *ebpf.Map {
+	t.Helper()
+	return newTestMap(t, &ebpf.MapSpec{
+		Name:       name,
+		Type:       ebpf.LPMTrie,
+		KeySize:    uint32(unsafe.Sizeof(ServiceLPMV4Key{})),
+		ValueSize:  uint32(unsafe.Sizeof(CIDRPolicyValue{})),
+		MaxEntries: 16,
+		Flags:      uint32(unix.BPF_F_NO_PREALLOC),
+	})
+}
+
 func newServiceTestMap(t *testing.T, name string) *ebpf.Map {
 	t.Helper()
 	return newTestMap(t, &ebpf.MapSpec{
@@ -632,6 +747,17 @@ func newUDPSourcePortBlockTestMap(t *testing.T, name string) *ebpf.Map {
 		Name:       name,
 		Type:       ebpf.Hash,
 		KeySize:    uint32(unsafe.Sizeof(uint32(0))),
+		ValueSize:  uint32(unsafe.Sizeof(UDPSourcePortBlockValue{})),
+		MaxEntries: 16,
+	})
+}
+
+func newServiceUDPSourcePortBlockTestMap(t *testing.T, name string) *ebpf.Map {
+	t.Helper()
+	return newTestMap(t, &ebpf.MapSpec{
+		Name:       name,
+		Type:       ebpf.Hash,
+		KeySize:    uint32(unsafe.Sizeof(ServiceUDPSourcePortKey{})),
 		ValueSize:  uint32(unsafe.Sizeof(UDPSourcePortBlockValue{})),
 		MaxEntries: 16,
 	})

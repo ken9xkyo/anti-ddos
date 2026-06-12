@@ -17,10 +17,10 @@ sequenceDiagram
     end
     loop Mỗi giây
         Agent->>XDP: Đọc drop_counters và map utilization
-        Agent->>Agent: Cập nhật Prometheus gauges/counters
+        Agent->>Agent: Refresh Prometheus gauges/counters
     end
     Metrics->>Agent: Scrape /metrics trên host
     Metrics->>API: Scrape /metrics trong compose
-    UI->>API: GET dashboard, events, alerts và anomaly endpoints
+    UI->>API: GET dashboard, events và alerts
     API->>DB: Query events, agents, policy và alert state
-    UI-->>Metrics: Operator xem Grafana dashboards
+    UI-->>Metrics: User xem Grafana dashboards

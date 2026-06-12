@@ -16,13 +16,13 @@ import (
 )
 
 func (s *Store) RebuildSnapshot(ctx context.Context, actor *Actor, reason string) (*SnapshotMetadata, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return nil, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +81,8 @@ func (s *Store) rebuildSnapshotInTx(ctx context.Context, tx pgx.Tx, actor *Actor
 	if rollbackFrom != nil {
 		rollbackValue = *rollbackFrom
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(version, checksum, object_checksum, snapshot, rollback_from, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)`,
+	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(owner_user_id, version, checksum, object_checksum, snapshot, rollback_from, created_by)
+VALUES (NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $1, $2, $3, $4, $5, $6)`,
 		signed.Version,
 		signed.Checksum,
 		signed.ObjectChecksum,
@@ -110,7 +110,7 @@ VALUES ($1, $2, $3, $4, $5, $6)`,
 }
 
 func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersion uint32, reason string) (SnapshotMetadata, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireConfigMutation(actor); err != nil {
 		return SnapshotMetadata{}, err
 	}
 	if targetVersion == 0 {
@@ -119,7 +119,7 @@ func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersio
 	if strings.TrimSpace(reason) == "" {
 		return SnapshotMetadata{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginActorOwnerTx(ctx, actor)
 	if err != nil {
 		return SnapshotMetadata{}, err
 	}
@@ -159,8 +159,8 @@ func (s *Store) RollbackSnapshot(ctx context.Context, actor *Actor, targetVersio
 		actorID = actor.ID
 	}
 	rollbackFrom := latest.Version
-	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(version, checksum, object_checksum, snapshot, rollback_from, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.ObjectChecksum, raw, rollbackFrom, actorID); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO policy_snapshots(owner_user_id, version, checksum, object_checksum, snapshot, rollback_from, created_by)
+VALUES (NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.ObjectChecksum, raw, rollbackFrom, actorID); err != nil {
 		return SnapshotMetadata{}, err
 	}
 	meta := SnapshotMetadata{
@@ -180,8 +180,15 @@ VALUES ($1, $2, $3, $4, $5, $6)`, signed.Version, signed.Checksum, signed.Object
 }
 
 func (s *Store) ListSnapshots(ctx context.Context, includeSnapshot bool) ([]SnapshotMetadata, error) {
-	rows, err := s.pool.Query(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
-FROM policy_snapshots ORDER BY version DESC`)
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
+FROM policy_snapshots
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY version DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -194,19 +201,38 @@ FROM policy_snapshots ORDER BY version DESC`)
 		}
 		out = append(out, meta)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) LatestPolicyVersion(ctx context.Context) (uint32, error) {
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
 	var version uint32
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots`).Scan(&version)
-	return version, err
+	err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM policy_snapshots
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`).Scan(&version)
+	if err != nil {
+		return 0, err
+	}
+	return version, tx.Commit(ctx)
 }
 
 func (s *Store) FetchSnapshot(ctx context.Context, activeVersion uint32) (*agent.PolicySnapshot, error) {
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
 	var raw []byte
 	var version uint32
-	err := s.pool.QueryRow(ctx, `SELECT version, snapshot FROM policy_snapshots ORDER BY version DESC LIMIT 1`).Scan(&version, &raw)
+	err = tx.QueryRow(ctx, `SELECT version, snapshot FROM policy_snapshots
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY version DESC LIMIT 1`).Scan(&version, &raw)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -220,12 +246,14 @@ func (s *Store) FetchSnapshot(ctx context.Context, activeVersion uint32) (*agent
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return nil, err
 	}
-	return &snapshot, nil
+	return &snapshot, tx.Commit(ctx)
 }
 
 func latestSnapshot(ctx context.Context, q dbQuerier) (*SnapshotMetadata, []byte, error) {
 	rows, err := q.Query(ctx, `SELECT version, checksum, object_checksum, snapshot, rollback_from, COALESCE(created_by::text, ''), created_at
-FROM policy_snapshots ORDER BY version DESC LIMIT 1`)
+FROM policy_snapshots
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY version DESC LIMIT 1`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -242,7 +270,8 @@ FROM policy_snapshots ORDER BY version DESC LIMIT 1`)
 
 func snapshotRaw(ctx context.Context, q dbQuerier, version uint32) ([]byte, error) {
 	var raw []byte
-	if err := q.QueryRow(ctx, `SELECT snapshot FROM policy_snapshots WHERE version = $1`, version).Scan(&raw); err != nil {
+	if err := q.QueryRow(ctx, `SELECT snapshot FROM policy_snapshots
+WHERE version = $1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid`, version).Scan(&raw); err != nil {
 		return nil, err
 	}
 	return raw, nil
@@ -306,6 +335,24 @@ func (s *Store) buildEffectiveSnapshot(ctx context.Context, q dbQuerier, version
 	if len(udpSourcePortBlocks) > 0 {
 		snapshot.FeatureFlags = append(snapshot.FeatureFlags, "udp_src_port_block")
 	}
+	for _, entry := range whitelist {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_whitelist_v4")
+			break
+		}
+	}
+	for _, entry := range blacklist {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_blacklist_v4")
+			break
+		}
+	}
+	for _, entry := range udpSourcePortBlocks {
+		if entry.Scope == PolicyScopeService {
+			snapshot.FeatureFlags = append(snapshot.FeatureFlags, "service_scoped_udp_src_port_block")
+			break
+		}
+	}
 	return snapshot, nil
 }
 
@@ -339,6 +386,8 @@ func (s *Store) snapshotServicesFromForwardingPolicies(ctx context.Context, q db
 FROM forwarding_policies fp
 JOIN backend_services bs ON bs.id = fp.service_id
 WHERE fp.enabled AND bs.enabled AND bs.deleted_at IS NULL
+  AND fp.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND bs.owner_user_id = fp.owner_user_id
 ORDER BY fp.priority, fp.ebpf_id`)
 	if err != nil {
 		return nil, err
@@ -378,6 +427,7 @@ func (s *Store) snapshotServicesFromBackendServices(ctx context.Context, q dbQue
        bs.resolved_ifindex, bs.resolved_next_hop_mac, bs.resolved_src_mac, bs.priority
 FROM backend_services bs
 WHERE bs.enabled AND bs.deleted_at IS NULL
+  AND bs.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
   AND NOT EXISTS (SELECT 1 FROM forwarding_policies fp WHERE fp.service_id = bs.id AND fp.enabled)
 ORDER BY bs.priority, bs.ebpf_id`)
 	if err != nil {
@@ -461,54 +511,86 @@ func (s *Store) makePolicyService(req agent.ServiceResolveRequest, ifindex uint3
 }
 
 func snapshotWhitelist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {
-	rows, err := q.Query(ctx, `SELECT w.ebpf_id, w.ip_or_cidr::text, w.priority, w.scope, COALESCE(bs.ebpf_id, 0), w.expires_at
+	rows, err := q.Query(ctx, `SELECT w.ebpf_id, w.ip_or_cidr::text, w.priority, w.scope_type, COALESCE(bs.ebpf_id, 0), w.expires_at
 FROM whitelist_entries w
 LEFT JOIN backend_services bs ON bs.id = w.service_id
-WHERE w.enabled AND (w.expires_at IS NULL OR w.expires_at > now())
+WHERE w.enabled
+  AND (w.scope_type = 'admin_global' OR w.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
+  AND (w.expires_at IS NULL OR w.expires_at > now())
 ORDER BY w.priority, w.ebpf_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]agent.PolicyCIDREntry, 0)
+	byKey := map[string]struct {
+		rank  int
+		entry agent.PolicyCIDREntry
+	}{}
 	for rows.Next() {
 		var entry agent.PolicyCIDREntry
-		var scope string
+		var scopeType string
 		var serviceID uint32
 		var expires *time.Time
-		if err := rows.Scan(&entry.EntryID, &entry.CIDR, &entry.Priority, &scope, &serviceID, &expires); err != nil {
+		if err := rows.Scan(&entry.EntryID, &entry.CIDR, &entry.Priority, &scopeType, &serviceID, &expires); err != nil {
 			return nil, err
 		}
+		prefix, err := parseCIDR(entry.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("whitelist entry %d: %w", entry.EntryID, err)
+		}
+		entry.CIDR = prefix.String()
 		entry.Action = ActionPass
 		entry.SourceType = 1
 		entry.Scope = PolicyScopeGlobal
-		if scope == "service" {
+		key := "global:" + entry.CIDR
+		if scopeType == ScopeTypeService {
 			entry.Scope = PolicyScopeService
 			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%s", serviceID, entry.CIDR)
 		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		out = append(out, entry)
+		next := struct {
+			rank  int
+			entry agent.PolicyCIDREntry
+		}{rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byKey[key]; !ok || cidrCandidatePreferred(next.rank, next.entry, current.rank, current.entry) {
+			byKey[key] = next
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]agent.PolicyCIDREntry, 0, len(byKey))
+	for _, candidate := range byKey {
+		out = append(out, candidate.entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return cidrEntrySnapshotLess(out[i], out[j]) })
+	return out, nil
 }
 
 type blacklistSnapshotCandidate struct {
 	manual bool
+	rank   int
 	entry  agent.PolicyCIDREntry
 }
 
 func snapshotBlacklist(ctx context.Context, q dbQuerier) ([]agent.PolicyCIDREntry, error) {
-	rows, err := q.Query(ctx, `SELECT true, b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
+	rows, err := q.Query(ctx, `SELECT true, b.scope_type, COALESCE(bs.ebpf_id, 0), b.ebpf_id, b.ip_or_cidr::text, b.score, COALESCE(r.ebpf_id, 0), b.expires_at
 FROM manual_blacklist_entries b
 LEFT JOIN rules r ON r.id = b.rule_id
-WHERE b.enabled AND (b.expires_at IS NULL OR b.expires_at > now())
+LEFT JOIN backend_services bs ON bs.id = b.service_id
+WHERE b.enabled
+  AND (b.scope_type = 'admin_global' OR b.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
+  AND (b.expires_at IS NULL OR b.expires_at > now())
 UNION ALL
-SELECT false, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
+SELECT false, 'admin_global', 0, r.ebpf_id, r.ip_or_cidr::text, r.score, 0, r.expires_at
 FROM reputation_entries r
 JOIN feed_sources fs ON fs.id = r.source_id
 WHERE fs.enabled
+  AND fs.owner_user_id IS NULL
+  AND r.owner_user_id IS NULL
   AND r.status = 'active'
   AND r.action = 'drop'
   AND (r.expires_at IS NULL OR r.expires_at > now())
@@ -520,9 +602,11 @@ ORDER BY 1`)
 	byCIDR := make(map[string]blacklistSnapshotCandidate)
 	for rows.Next() {
 		var manual bool
+		var scopeType string
+		var serviceID uint32
 		var entry agent.PolicyCIDREntry
 		var expires *time.Time
-		if err := rows.Scan(&manual, &entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
+		if err := rows.Scan(&manual, &scopeType, &serviceID, &entry.EntryID, &entry.CIDR, &entry.Score, &entry.RuleID, &expires); err != nil {
 			return nil, err
 		}
 		prefix, err := parseCIDR(entry.CIDR)
@@ -533,12 +617,18 @@ ORDER BY 1`)
 		entry.Action = ActionDrop
 		entry.SourceType = 1
 		entry.Scope = PolicyScopeGlobal
+		key := "global:" + entry.CIDR
+		if scopeType == ScopeTypeService {
+			entry.Scope = PolicyScopeService
+			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%s", serviceID, entry.CIDR)
+		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		next := blacklistSnapshotCandidate{manual: manual, entry: entry}
-		if current, ok := byCIDR[entry.CIDR]; !ok || blacklistCandidatePreferred(next, current) {
-			byCIDR[entry.CIDR] = next
+		next := blacklistSnapshotCandidate{manual: manual, rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byCIDR[key]; !ok || blacklistCandidatePreferred(next, current) {
+			byCIDR[key] = next
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -548,16 +638,14 @@ ORDER BY 1`)
 	for _, candidate := range byCIDR {
 		out = append(out, candidate.entry)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CIDR != out[j].CIDR {
-			return out[i].CIDR < out[j].CIDR
-		}
-		return out[i].EntryID < out[j].EntryID
-	})
+	sort.Slice(out, func(i, j int) bool { return cidrEntrySnapshotLess(out[i], out[j]) })
 	return out, nil
 }
 
 func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool {
+	if next.rank != current.rank {
+		return next.rank > current.rank
+	}
 	if next.manual != current.manual {
 		return next.manual
 	}
@@ -568,37 +656,79 @@ func blacklistCandidatePreferred(next, current blacklistSnapshotCandidate) bool 
 }
 
 func snapshotUDPSourcePortBlocks(ctx context.Context, q dbQuerier) ([]agent.PolicyUDPSourcePortBlock, error) {
-	rows, err := q.Query(ctx, `SELECT ebpf_id, port, expires_at
-FROM udp_source_port_blocks
-WHERE enabled AND (expires_at IS NULL OR expires_at > now())
-ORDER BY port, ebpf_id`)
+	rows, err := q.Query(ctx, `SELECT u.ebpf_id, u.port, u.scope_type, COALESCE(bs.ebpf_id, 0), u.expires_at
+FROM udp_source_port_blocks u
+LEFT JOIN backend_services bs ON bs.id = u.service_id
+WHERE u.enabled
+  AND (u.scope_type = 'admin_global' OR u.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
+  AND (expires_at IS NULL OR expires_at > now())
+ORDER BY u.port, u.ebpf_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]agent.PolicyUDPSourcePortBlock, 0)
+	byKey := map[string]struct {
+		rank  int
+		entry agent.PolicyUDPSourcePortBlock
+	}{}
 	for rows.Next() {
 		var entry agent.PolicyUDPSourcePortBlock
 		var port int32
+		var scopeType string
+		var serviceID uint32
 		var expires *time.Time
-		if err := rows.Scan(&entry.EntryID, &port, &expires); err != nil {
+		if err := rows.Scan(&entry.EntryID, &port, &scopeType, &serviceID, &expires); err != nil {
 			return nil, err
 		}
 		entry.Port = uint16(port)
+		entry.Scope = PolicyScopeGlobal
+		key := fmt.Sprintf("global:%d", entry.Port)
+		if scopeType == ScopeTypeService {
+			entry.Scope = PolicyScopeService
+			entry.ServiceID = serviceID
+			key = fmt.Sprintf("service:%d:%d", serviceID, entry.Port)
+		}
 		if expires != nil {
 			entry.ExpiresAtUnixNS = uint64(expires.UnixNano())
 		}
-		out = append(out, entry)
+		next := struct {
+			rank  int
+			entry agent.PolicyUDPSourcePortBlock
+		}{rank: scopeTypeRank(scopeType), entry: entry}
+		if current, ok := byKey[key]; !ok || udpBlockCandidatePreferred(next.rank, next.entry, current.rank, current.entry) {
+			byKey[key] = next
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]agent.PolicyUDPSourcePortBlock, 0, len(byKey))
+	for _, candidate := range byKey {
+		out = append(out, candidate.entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		if out[i].ServiceID != out[j].ServiceID {
+			return out[i].ServiceID < out[j].ServiceID
+		}
+		return out[i].EntryID < out[j].EntryID
+	})
+	return out, nil
 }
 
 func snapshotRules(ctx context.Context, q dbQuerier) ([]agent.PolicyRule, error) {
-	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.priority, r.action, r.mode, r.dimension, r.threshold_pps,
+	rows, err := q.Query(ctx, `SELECT r.ebpf_id, COALESCE(bs.ebpf_id, 0), r.scope_type, r.priority, r.action, r.mode, r.dimension, r.threshold_pps,
        r.threshold_bps, r.threshold_cps, r.burst_packets, r.burst_bytes, r.sample_denom, r.expires_at
 FROM rules r
 LEFT JOIN backend_services bs ON bs.id = r.service_id
-WHERE r.enabled AND (r.expires_at IS NULL OR r.expires_at > now())
+WHERE r.enabled
+  AND (r.scope_type = 'admin_global' OR r.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid)
+  AND (r.expires_at IS NULL OR r.expires_at > now())
 ORDER BY r.priority, r.ebpf_id`)
 	if err != nil {
 		return nil, err
@@ -609,7 +739,7 @@ ORDER BY r.priority, r.ebpf_id`)
 		var rule agent.PolicyRule
 		var action, mode, dimension string
 		var expires *time.Time
-		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.Priority, &action, &mode, &dimension, &rule.ThresholdPPS,
+		if err := rows.Scan(&rule.RuleID, &rule.ServiceID, &rule.ScopeType, &rule.Priority, &action, &mode, &dimension, &rule.ThresholdPPS,
 			&rule.ThresholdBPS, &rule.ThresholdCPS, &rule.BurstPackets, &rule.BurstBytes, &rule.SampleDenom, &expires); err != nil {
 			return nil, err
 		}
@@ -624,6 +754,36 @@ ORDER BY r.priority, r.ebpf_id`)
 	return out, rows.Err()
 }
 
+func cidrCandidatePreferred(nextRank int, next agent.PolicyCIDREntry, currentRank int, current agent.PolicyCIDREntry) bool {
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	if next.Priority != current.Priority {
+		return next.Priority < current.Priority
+	}
+	return next.EntryID < current.EntryID
+}
+
+func udpBlockCandidatePreferred(nextRank int, next agent.PolicyUDPSourcePortBlock, currentRank int, current agent.PolicyUDPSourcePortBlock) bool {
+	if nextRank != currentRank {
+		return nextRank > currentRank
+	}
+	return next.EntryID < current.EntryID
+}
+
+func cidrEntrySnapshotLess(left, right agent.PolicyCIDREntry) bool {
+	if left.CIDR != right.CIDR {
+		return left.CIDR < right.CIDR
+	}
+	if left.Scope != right.Scope {
+		return left.Scope < right.Scope
+	}
+	if left.ServiceID != right.ServiceID {
+		return left.ServiceID < right.ServiceID
+	}
+	return left.EntryID < right.EntryID
+}
+
 func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule) {
 	var global *agent.PolicyRule
 	serviceRules := map[uint32]agent.PolicyRule{}
@@ -632,16 +792,14 @@ func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule
 			continue
 		}
 		if rule.ServiceID == 0 {
-			if global == nil || rule.Priority < global.Priority ||
-				(rule.Priority == global.Priority && rule.RuleID < global.RuleID) {
+			if global == nil || rulePreferred(rule, *global) {
 				candidate := rule
 				global = &candidate
 			}
 			continue
 		}
 		current, ok := serviceRules[rule.ServiceID]
-		if !ok || rule.Priority < current.Priority ||
-			(rule.Priority == current.Priority && rule.RuleID < current.RuleID) {
+		if !ok || rulePreferred(rule, current) {
 			serviceRules[rule.ServiceID] = rule
 		}
 	}
@@ -652,6 +810,16 @@ func assignDefaultRules(services []agent.PolicyService, rules []agent.PolicyRule
 			services[i].DefaultRuleID = global.RuleID
 		}
 	}
+}
+
+func rulePreferred(next, current agent.PolicyRule) bool {
+	if scopeTypeRank(next.ScopeType) != scopeTypeRank(current.ScopeType) {
+		return scopeTypeRank(next.ScopeType) > scopeTypeRank(current.ScopeType)
+	}
+	if next.Priority != current.Priority {
+		return next.Priority < current.Priority
+	}
+	return next.RuleID < current.RuleID
 }
 
 func policyContentFingerprint(snapshot agent.PolicySnapshot) (string, error) {

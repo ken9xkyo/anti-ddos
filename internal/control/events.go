@@ -40,7 +40,7 @@ func (s *Store) IngestSecurityEvents(ctx context.Context, agentID string, batch 
 		return SecurityEventIngestResult{}, errors.New("event batch exceeds max 1000")
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginContextOwnerTx(ctx)
 	if err != nil {
 		return SecurityEventIngestResult{}, err
 	}
@@ -60,9 +60,9 @@ func (s *Store) IngestSecurityEvents(ctx context.Context, agentID string, batch 
 			return SecurityEventIngestResult{}, err
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO security_events(
-    id, event_time, agent_id, mono_ts_ns, policy_version, src_ip, src_prefix24, dst_ip, src_port, dst_port,
+    id, owner_user_id, event_time, agent_id, mono_ts_ns, policy_version, src_ip, src_prefix24, dst_ip, src_port, dst_port,
     protocol, tcp_flags, action, reason, service_id, rule_id, pkt_len, sample_rate, metadata
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+) VALUES ($1, NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 			id,
 			normalized.EventTime,
 			agentID,
@@ -108,7 +108,12 @@ func (s *Store) ListSecurityEvents(ctx context.Context, query SecurityEventQuery
        src_ip::text, src_prefix24::text, dst_ip::text, src_port, dst_port, protocol, tcp_flags, action, reason,
        service_id, rule_id, pkt_len, sample_rate, metadata
 FROM security_events ` + where + fmt.Sprintf(` ORDER BY event_time DESC LIMIT $%d`, len(args))
-	rows, err := s.pool.Query(ctx, sql, args...)
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +126,10 @@ FROM security_events ` + where + fmt.Sprintf(` ORDER BY event_time DESC LIMIT $%
 		}
 		out = append(out, event)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) SecurityEventSummary(ctx context.Context, query SecurityEventQuery) (SecurityEventSummary, error) {
@@ -135,26 +143,31 @@ func (s *Store) SecurityEventSummary(ctx context.Context, query SecurityEventQue
 	if err != nil {
 		return SecurityEventSummary{}, err
 	}
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return SecurityEventSummary{}, err
+	}
+	defer tx.Rollback(ctx)
 	summary := SecurityEventSummary{WindowSeconds: int(query.Until.Sub(query.Since).Seconds())}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM security_events `+where, args...).Scan(&summary.Total); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM security_events `+where, args...).Scan(&summary.Total); err != nil {
 		return SecurityEventSummary{}, err
 	}
-	summary.TopSources, err = s.securityEventTop(ctx, `src_prefix24::text`, where, args)
+	summary.TopSources, err = s.securityEventTop(ctx, tx, `src_prefix24::text`, where, args)
 	if err != nil {
 		return SecurityEventSummary{}, err
 	}
-	summary.TopPorts, err = s.securityEventTop(ctx, `dst_port::text`, where, args)
+	summary.TopPorts, err = s.securityEventTop(ctx, tx, `dst_port::text`, where, args)
 	if err != nil {
 		return SecurityEventSummary{}, err
 	}
-	summary.ByDecision, err = s.securityEventTop(ctx, `(action::text || ':' || reason::text)`, where, args)
+	summary.ByDecision, err = s.securityEventTop(ctx, tx, `(action::text || ':' || reason::text)`, where, args)
 	if err != nil {
 		return SecurityEventSummary{}, err
 	}
-	return summary, nil
+	return summary, tx.Commit(ctx)
 }
 
-func (s *Store) InvestigateSecurityEvents(ctx context.Context, target string, limit int) (map[string]any, error) {
+func (s *Store) InvestigateSecurityEvents(ctx context.Context, actor *Actor, target string, limit int) (map[string]any, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, errors.New("target is required")
@@ -164,11 +177,11 @@ func (s *Store) InvestigateSecurityEvents(ctx context.Context, target string, li
 	if err != nil {
 		return nil, err
 	}
-	whitelist, err := s.ListWhitelistEntries(ctx, WhitelistEntryQuery{})
+	whitelist, err := s.ListWhitelistEntries(ctx, actor, WhitelistEntryQuery{})
 	if err != nil {
 		return nil, err
 	}
-	blacklist, err := s.ListBlacklistEntries(ctx, BlacklistEntryQuery{})
+	blacklist, err := s.ListBlacklistEntries(ctx, actor, BlacklistEntryQuery{})
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +236,7 @@ func normalizeSecurityEvent(input SecurityEventInput, defaultSampleRate uint32) 
 }
 
 func securityEventWhere(query SecurityEventQuery) (string, []any, error) {
-	var clauses []string
+	clauses := []string{"owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
 	var args []any
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -261,13 +274,10 @@ func securityEventWhere(query SecurityEventQuery) (string, []any, error) {
 			add("src_ip = $%d::inet", src)
 		}
 	}
-	if len(clauses) == 0 {
-		return "", args, nil
-	}
 	return "WHERE " + strings.Join(clauses, " AND "), args, nil
 }
 
-func (s *Store) securityEventTop(ctx context.Context, keyExpr, where string, args []any) ([]SecurityEventTop, error) {
+func (s *Store) securityEventTop(ctx context.Context, q dbQuerier, keyExpr, where string, args []any) ([]SecurityEventTop, error) {
 	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, 10)
 	sql := fmt.Sprintf(`SELECT %s AS key, count(*)::bigint, COALESCE(sum(sample_rate), 0)::bigint, COALESCE(sum(pkt_len * sample_rate), 0)::bigint
@@ -275,7 +285,7 @@ FROM security_events %s
 GROUP BY key
 ORDER BY count(*) DESC
 LIMIT $%d`, keyExpr, where, len(queryArgs))
-	rows, err := s.pool.Query(ctx, sql, queryArgs...)
+	rows, err := q.Query(ctx, sql, queryArgs...)
 	if err != nil {
 		return nil, err
 	}

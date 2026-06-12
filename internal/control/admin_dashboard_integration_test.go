@@ -54,32 +54,35 @@ func TestDashboardAPIIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminActor := &Actor{User: admin}
-	if _, err := store.CreateUser(ctx, adminActor, "viewer", "viewer password phrase", RoleViewer, "create viewer"); err != nil {
+	adminCtx := contextWithOwner(ctx, admin.ID)
+	owner, err := store.CreateUser(ctx, adminActor, "user", "user password phrase", RoleUser, "create user")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUser(ctx, adminActor, "operator", "operator password phrase", RoleOperator, "create operator"); err != nil {
-		t.Fatal(err)
-	}
+	ownerCtx := contextWithOwner(ctx, owner.ID)
 
 	server := httptest.NewServer(NewServer(store, cfg, nil))
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
-	viewerToken := login(t, server.URL, "viewer", "viewer password phrase")
-	operatorToken := login(t, server.URL, "operator", "operator password phrase")
+	userToken := login(t, server.URL, "user", "user password phrase")
+	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
+	readOnlyToken := viewSession.Token
 
-	requireEmptyDashboardArrays(t, server.URL, viewerToken)
+	requireEmptyDashboardArrays(t, server.URL, readOnlyToken)
 
-	service := createDashboardService(t, server.URL, adminToken)
-	baseline := createDashboardBaseline(t, server.URL, adminToken, service.ID)
-	rule := createDashboardRule(t, server.URL, adminToken, service.ID)
+	service := createDashboardService(t, server.URL, userToken)
+	rule := createDashboardRule(t, server.URL, userToken, service.ID)
 	agentID := registerDashboardAgent(t, server.URL)
 	ingestDashboardEvent(t, server.URL, agentID, service.EBPFID, rule.EBPFID)
 
-	version, err := store.LatestPolicyVersion(ctx)
+	version, err := store.LatestPolicyVersion(ownerCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := agentJSON(t, http.MethodPost, server.URL+"/v1/agents/"+agentID+"/apply", "agent-secret", AgentApplyRequest{
+	resp = agentJSON(t, http.MethodPost, server.URL+"/v1/agents/"+agentID+"/apply", "agent-secret", AgentApplyRequest{
 		PolicyVersion: version,
 		Status:        "applied",
 		MapStats:      json.RawMessage(`{"service_allowlist":{"entries":1},"rule_config":{"entries":1}}`),
@@ -97,11 +100,10 @@ func TestDashboardAPIIntegration(t *testing.T) {
 		{"services", "/v1/dashboard/services", "api-https"},
 		{"rules", "/v1/dashboard/rules", "dashboard-ttl-rule"},
 		{"security events", "/v1/security-events?src=198.51.100.10", "198.51.100.10"},
-		{"baselines", "/v1/baselines", baseline.ID},
 	}
 	for _, tc := range readCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := authedJSON(t, http.MethodGet, server.URL+tc.path, viewerToken, nil)
+			resp := authedJSON(t, http.MethodGet, server.URL+tc.path, readOnlyToken, nil)
 			requireHTTPStatus(t, resp, http.StatusOK)
 			requireBodyContains(t, resp, tc.want)
 		})
@@ -111,14 +113,14 @@ func TestDashboardAPIIntegration(t *testing.T) {
 		"reason":   "create console user",
 		"username": "console-user",
 		"password": "temporary password phrase",
-		"role":     RoleViewer,
+		"role":     RoleUser,
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var consoleUser User
 	decodeTestBody(t, resp, &consoleUser)
 	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/users/"+consoleUser.ID, adminToken, UserUpdateInput{
 		Reason: "promote console user",
-		Role:   RoleOperator,
+		Role:   RoleUser,
 		Status: StatusActive,
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
@@ -133,7 +135,7 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/me", replacementToken, nil)
 	requireHTTPStatus(t, resp, http.StatusUnauthorized)
 
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/rules/"+rule.ID, operatorToken, RuleInput{
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/rules/"+rule.ID, userToken, RuleInput{
 		Reason:       "tighten dashboard rule",
 		ServiceID:    service.ID,
 		Name:         rule.Name,
@@ -151,13 +153,13 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	deleteReq, _ := http.NewRequest(http.MethodDelete, server.URL+"/v1/rules/"+rule.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	deleteReq.Header.Set("X-Audit-Reason", "disable dashboard rule")
 	resp = doTestHTTP(t, deleteReq)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"enabled":false`)
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", adminToken, WhitelistInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/whitelist", userToken, WhitelistInput{
 		Reason: "trusted customer source",
 		CIDR:   "192.0.2.10/32",
 		Scope:  "global",
@@ -166,7 +168,7 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var whitelist WhitelistEntry
 	decodeTestBody(t, resp, &whitelist)
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/whitelist/"+whitelist.ID, operatorToken, WhitelistInput{
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/whitelist/"+whitelist.ID, userToken, WhitelistInput{
 		Reason:  "extend trusted customer source",
 		CIDR:    "192.0.2.10/32",
 		Scope:   "global",
@@ -176,20 +178,20 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	})
 	requireHTTPStatus(t, resp, http.StatusOK)
 	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/whitelist/"+whitelist.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	deleteReq.Header.Set("X-Audit-Reason", "disable trusted customer source")
 	resp = doTestHTTP(t, deleteReq)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"enabled":false`)
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", viewerToken, BlacklistInput{
-		Reason: "viewer should not block",
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", readOnlyToken, BlacklistInput{
+		Reason: "read-only should not block",
 		CIDR:   "198.51.100.201/32",
 		Source: "manual",
 		Action: "drop",
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", adminToken, BlacklistInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/blacklist", userToken, BlacklistInput{
 		Reason:  "manual scanner block",
 		CIDR:    "198.51.100.200/32",
 		Source:  "manual",
@@ -200,10 +202,10 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var blacklist BlacklistEntry
 	decodeTestBody(t, resp, &blacklist)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?q=scanner&source=manual&state=enabled&expiry=none", viewerToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?q=scanner&source=manual&state=enabled&expiry=none", readOnlyToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, "198.51.100.200/32")
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+blacklist.ID, operatorToken, BlacklistInput{
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/blacklist/"+blacklist.ID, userToken, BlacklistInput{
 		Reason:  "raise scanner block score",
 		CIDR:    "198.51.100.200/32",
 		Source:  "manual",
@@ -214,26 +216,26 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"score":95`)
 	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/blacklist/"+blacklist.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	deleteReq.Header.Set("X-Audit-Reason", "disable scanner block")
 	resp = doTestHTTP(t, deleteReq)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"enabled":false`)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?state=disabled", viewerToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/blacklist?state=disabled", readOnlyToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, "198.51.100.200/32")
 
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/udp-source-port-blocks?q=NTP&state=disabled", viewerToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/udp-source-port-blocks?q=NTP&state=disabled", readOnlyToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"port":123`)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", viewerToken, UDPSourcePortBlockInput{
-		Reason: "viewer should not block UDP port",
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", readOnlyToken, UDPSourcePortBlockInput{
+		Reason: "read-only should not block UDP port",
 		Port:   65000,
 		Label:  "test-reflection",
 		Owner:  "soc",
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", adminToken, UDPSourcePortBlockInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/udp-source-port-blocks", userToken, UDPSourcePortBlockInput{
 		Reason:  "block UDP reflection source port",
 		Port:    65000,
 		Label:   "test-reflection",
@@ -243,11 +245,11 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	var udpPortBlock UDPSourcePortBlock
 	decodeTestBody(t, resp, &udpPortBlock)
-	activeSnapshot := latestPolicySnapshot(t, store, ctx)
+	activeSnapshot := latestPolicySnapshot(t, store, ownerCtx)
 	if len(activeSnapshot.UDPSourcePortBlocks) != 1 || activeSnapshot.UDPSourcePortBlocks[0].Port != 65000 {
 		t.Fatalf("active snapshot missing UDP source port block: %#v", activeSnapshot.UDPSourcePortBlocks)
 	}
-	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/udp-source-port-blocks/"+udpPortBlock.ID, operatorToken, UDPSourcePortBlockInput{
+	resp = authedJSON(t, http.MethodPatch, server.URL+"/v1/udp-source-port-blocks/"+udpPortBlock.ID, userToken, UDPSourcePortBlockInput{
 		Reason:  "rename UDP reflection source port",
 		Port:    65000,
 		Label:   "renamed-reflection",
@@ -257,13 +259,13 @@ func TestDashboardAPIIntegration(t *testing.T) {
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"label":"renamed-reflection"`)
 	deleteReq, _ = http.NewRequest(http.MethodDelete, server.URL+"/v1/udp-source-port-blocks/"+udpPortBlock.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+operatorToken)
+	deleteReq.Header.Set("Authorization", "Bearer "+userToken)
 	deleteReq.Header.Set("X-Audit-Reason", "disable UDP reflection source port")
 	resp = doTestHTTP(t, deleteReq)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"enabled":false`)
 
-	snapshots, err := store.ListSnapshots(ctx, false)
+	snapshots, err := store.ListSnapshots(ownerCtx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,15 +273,15 @@ func TestDashboardAPIIntegration(t *testing.T) {
 		t.Fatalf("expected at least two snapshots, got %d", len(snapshots))
 	}
 	latest, previous := snapshots[0].Version, snapshots[1].Version
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/"+uint32String(latest), viewerToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/"+uint32String(latest), readOnlyToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"snapshot":`)
-	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/diff?from="+uint32String(previous)+"&to="+uint32String(latest), viewerToken, nil)
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/snapshots/diff?from="+uint32String(previous)+"&to="+uint32String(latest), readOnlyToken, nil)
 	requireHTTPStatus(t, resp, http.StatusOK)
 	requireBodyContains(t, resp, `"from_version":`)
 	requireBodyContains(t, resp, `"rules":`)
 
-	audits, err := store.ListAuditEvents(ctx, 100)
+	audits, err := store.ListAuditEvents(adminCtx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,29 +316,6 @@ func createDashboardService(t *testing.T, baseURL, token string) Service {
 	var service Service
 	decodeTestBody(t, resp, &service)
 	return service
-}
-
-func createDashboardBaseline(t *testing.T, baseURL, token, serviceID string) BaselineProfile {
-	t.Helper()
-	resp := authedJSON(t, http.MethodPost, baseURL+"/v1/baselines", token, BaselineProfileInput{
-		Reason:       "create dashboard baseline",
-		ServiceID:    serviceID,
-		Interface:    "wan0",
-		Protocol:     "tcp",
-		Port:         443,
-		Window:       "5m",
-		ExpectedPPS:  100,
-		ExpectedBPS:  10000,
-		ExpectedCPS:  10,
-		HistoryHours: 24,
-		Confidence:   0.95,
-	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	var baseline BaselineProfile
-	decodeTestBody(t, resp, &baseline)
-	resp = authedJSON(t, http.MethodPost, baseURL+"/v1/baselines/"+baseline.ID+"/approve", token, map[string]string{"reason": "approve dashboard baseline"})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	return baseline
 }
 
 func createDashboardRule(t *testing.T, baseURL, token, serviceID string) Rule {

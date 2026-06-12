@@ -41,22 +41,30 @@ func (s *Store) BuildDashboardOverview(ctx context.Context, prom *PrometheusClie
 
 	status := PrometheusStatus{Configured: false, Healthy: false, Error: "prometheus is not configured"}
 	if prom != nil && prom.Configured() {
-		overview.Traffic.PPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{action=~"0|1|6"}[1m]))`)
-		overview.Traffic.BPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_bytes_total{action=~"0|1|6"}[1m])) * 8`)
-		overview.Traffic.CPS, status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{proto="6",tcp_syn="1",action=~"0|1|6"}[1m]))`)
-		overview.DecisionRates["drop"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_xdp_packets_total{action="1"}[1m]))`)
-		overview.DecisionRates["redirect"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_redirected_packets_total[1m]))`)
-		overview.DecisionRates["not_allowed_service"], status = prom.QueryScalar(ctx, `sum(rate(anti_ddos_not_allowed_service_total[1m]))`)
+		status = PrometheusStatus{Configured: true, Healthy: true, Error: "owner-scoped prometheus labels unavailable; using sampled events"}
+	}
+	if summary.WindowSeconds > 0 {
+		overview.Traffic.PPS = float64(summary.Total) / float64(summary.WindowSeconds)
+		for _, item := range summary.ByDecision {
+			overview.DecisionRates[item.Key] = float64(item.Packets) / float64(summary.WindowSeconds)
+		}
 	}
 	overview.Prometheus = status
 	return overview, nil
 }
 
 func (s *Store) LatestApplyStatuses(ctx context.Context) ([]DashboardApplyStatus, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT ON (pas.agent_id)
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT DISTINCT ON (pas.agent_id)
        pas.agent_id::text, a.hostname, pas.policy_version, pas.status, pas.error_stage, pas.error_reason, pas.reported_at
 FROM policy_apply_status pas
 JOIN agents a ON a.id = pas.agent_id
+WHERE pas.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND a.owner_user_id = pas.owner_user_id
 ORDER BY pas.agent_id, pas.reported_at DESC`)
 	if err != nil {
 		return nil, err
@@ -70,13 +78,23 @@ ORDER BY pas.agent_id, pas.reported_at DESC`)
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) ListDashboardAgents(ctx context.Context, staleAfter time.Duration) ([]DashboardAgent, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, hostname, status, COALESCE(NULLIF(xdp_mode, ''), 'unknown'), devmap_support,
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT id::text, hostname, status, COALESCE(NULLIF(xdp_mode, ''), 'unknown'), devmap_support,
        active_policy_version, last_seen_at, COALESCE(metadata->'map_utilization', '{}'::jsonb)
-FROM agents ORDER BY hostname`)
+FROM agents
+WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY hostname`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +160,9 @@ FROM agents ORDER BY hostname`)
 		}
 		agents[i].Interfaces = ifaces
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return agents, nil
 }
 
@@ -168,8 +189,8 @@ func (s *Store) ListDashboardServices(ctx context.Context) ([]DashboardService, 
 	return out, nil
 }
 
-func (s *Store) ListDashboardRules(ctx context.Context) ([]DashboardRule, error) {
-	rules, err := s.ListRules(ctx)
+func (s *Store) ListDashboardRules(ctx context.Context, actor *Actor) ([]DashboardRule, error) {
+	rules, err := s.ListRules(ctx, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +214,14 @@ func (s *Store) ListDashboardRules(ctx context.Context) ([]DashboardRule, error)
 }
 
 func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInterface, error) {
-	rows, err := s.pool.Query(ctx, `SELECT name, ifindex, mac, role, link_speed_bps FROM agent_interfaces WHERE agent_id=$1 ORDER BY name`, agentID)
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT name, ifindex, mac, role, link_speed_bps FROM agent_interfaces
+WHERE agent_id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+ORDER BY name`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +234,22 @@ func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInt
 		}
 		out = append(out, iface)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) recentCountersByService(ctx context.Context) (map[uint32]map[string]float64, error) {
-	rows, err := s.pool.Query(ctx, `SELECT service_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT service_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
 FROM security_events
 WHERE event_time > now() - interval '5 minutes' AND service_id > 0
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 GROUP BY service_id, action, reason`)
 	if err != nil {
 		return nil, err
@@ -231,13 +268,22 @@ GROUP BY service_id, action, reason`)
 		}
 		out[serviceID][decisionKey(action, reason)] = count
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func (s *Store) recentCountersByRule(ctx context.Context) (map[uint32]map[string]float64, error) {
-	rows, err := s.pool.Query(ctx, `SELECT rule_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
+	tx, err := s.beginContextOwnerTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT rule_id, action, reason, COALESCE(sum(sample_rate), 0)::float8
 FROM security_events
 WHERE event_time > now() - interval '5 minutes' AND rule_id > 0
+  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
 GROUP BY rule_id, action, reason`)
 	if err != nil {
 		return nil, err
@@ -256,7 +302,10 @@ GROUP BY rule_id, action, reason`)
 		}
 		out[ruleID][decisionKey(action, reason)] = count
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
 }
 
 func latestFleetApplyStatus(statuses []DashboardApplyStatus, version uint32) string {

@@ -11,14 +11,14 @@ import (
 )
 
 func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input UserUpdateInput, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
-		return User{}, errors.New("admin role required")
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
 	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -42,10 +42,10 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if err := validateUserRoleStatus(role, status); err != nil {
 		return User{}, err
 	}
+	var after User
 	if err := ensureActiveAdminRemains(ctx, tx, before, role, status); err != nil {
 		return User{}, err
 	}
-	var after User
 	if err := tx.QueryRow(ctx, `UPDATE app_users
 SET role=$2, status=$3, force_password_change=$4, updated_at=now()
 WHERE id=$1
@@ -54,6 +54,21 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
+	if status != StatusActive {
+		if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+			return User{}, err
+		}
+	}
+	if role == RoleUser {
+		if err := seedDefaultUDPSourcePortBlocks(ctx, tx, id); err != nil {
+			return User{}, err
+		}
+	}
+	if role != RoleAdmin {
+		if _, err := tx.Exec(ctx, `UPDATE user_sessions SET view_owner_user_id=NULL WHERE view_owner_user_id=$1`, id); err != nil {
+			return User{}, err
+		}
+	}
 	if err := insertAudit(ctx, tx, actor, "update_user", "user", id, before, after, reason, ""); err != nil {
 		return User{}, err
 	}
@@ -61,8 +76,8 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 }
 
 func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, input PasswordResetInput, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
-		return User{}, errors.New("admin role required")
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
 	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
@@ -79,7 +94,7 @@ func (s *Store) ResetUserPassword(ctx context.Context, actor *Actor, id string, 
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -100,6 +115,10 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
 		return User{}, err
 	}
+	after, err = s.getUser(ctx, tx, id)
+	if err != nil {
+		return User{}, err
+	}
 	if err := insertAudit(ctx, tx, actor, "reset_user_password", "user", id, before, after, reason, ""); err != nil {
 		return User{}, err
 	}
@@ -107,13 +126,13 @@ RETURNING id::text, username, role, status, force_password_change, created_at, l
 }
 
 func (s *Store) RevokeUserSessions(ctx context.Context, actor *Actor, id, reason string) (User, error) {
-	if actor == nil || actor.Role != RoleAdmin {
-		return User{}, errors.New("admin role required")
+	if err := requireAdmin(actor); err != nil {
+		return User{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return User{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -153,7 +172,7 @@ func (s *Store) ChangeOwnPassword(ctx context.Context, actor *Actor, input OwnPa
 	if err != nil {
 		return User{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -183,8 +202,13 @@ WHERE user_id=$1 AND token_hash <> $2 AND revoked_at IS NULL`, actor.ID, tokenHa
 }
 
 func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input RuleInput, reason string) (Rule, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return Rule{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateRuleInput(input); err != nil {
 		return Rule{}, err
@@ -196,12 +220,12 @@ func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input R
 	if input.TTLSeconds > 0 && input.ExpiresAt.IsZero() {
 		input.ExpiresAt = time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getRule(ctx, tx, id)
+	before, err := getRule(ctx, tx, id, scope)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -213,17 +237,23 @@ func (s *Store) UpdateRule(ctx context.Context, actor *Actor, id string, input R
 	if !input.ExpiresAt.IsZero() {
 		expires = input.ExpiresAt
 	}
+	if strings.TrimSpace(input.ServiceID) != "" {
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return Rule{}, err
+		}
+	}
 	rule := Rule{}
 	err = scanRule(tx.QueryRow(ctx, `UPDATE rules SET
-    service_id=$2, name=$3, priority=$4, match_expr=$5, action=$6, mode=$7,
-    threshold_pps=$8, threshold_bps=$9, threshold_cps=$10, dimension=$11,
-    burst_packets=$12, burst_bytes=$13, sample_denom=$14, ttl_seconds=$15,
-    expires_at=$16, evidence=$17, confidence=$18, enabled=$19, owner=$20, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+    scope_type=$2, service_id=$3, name=$4, priority=$5, match_expr=$6, action=$7, mode=$8,
+    threshold_pps=$9, threshold_bps=$10, threshold_cps=$11, dimension=$12,
+    burst_packets=$13, burst_bytes=$14, sample_denom=$15, ttl_seconds=$16,
+    expires_at=$17, evidence=$18, confidence=$19, enabled=$20, updated_at=now()
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at`,
+          confidence::float8, enabled, owner, true, created_at, updated_at`,
 		id,
+		scope.ScopeType,
 		serviceID,
 		input.Name,
 		defaultPriority(input.Priority),
@@ -242,7 +272,6 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 		defaultJSON(input.Evidence),
 		input.Confidence,
 		boolDefault(input.Enabled, before.Enabled),
-		input.Owner,
 	), &rule)
 	if err != nil {
 		return Rule{}, err
@@ -250,48 +279,55 @@ RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, mat
 	if err := insertAudit(ctx, tx, actor, "update_rule", "rule", id, before, rule, reason, ""); err != nil {
 		return Rule{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return Rule{}, err
 	}
-	return rule, tx.Commit(ctx)
+	return rule, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) DisableRule(ctx context.Context, actor *Actor, id, reason string) (Rule, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, "", "", "")
+	if err != nil {
 		return Rule{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return Rule{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return Rule{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getRule(ctx, tx, id)
+	before, err := getRule(ctx, tx, id, scope)
 	if err != nil {
 		return Rule{}, err
 	}
 	var rule Rule
 	if err := scanRule(tx.QueryRow(ctx, `UPDATE rules SET enabled=false, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at`, id), &rule); err != nil {
+          confidence::float8, enabled, owner, true, created_at, updated_at`, id), &rule); err != nil {
 		return Rule{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_rule", "rule", id, before, rule, strings.TrimSpace(reason), ""); err != nil {
 		return Rule{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return Rule{}, err
 	}
-	return rule, tx.Commit(ctx)
+	return rule, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id string, input WhitelistInput, reason string) (WhitelistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, input.Scope, input.ServiceID)
+	if err != nil {
 		return WhitelistEntry{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	input.Scope = legacyScopeForScopeType(scope.ScopeType)
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateWhitelistInput(input); err != nil {
 		return WhitelistEntry{}, err
@@ -300,18 +336,21 @@ func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getWhitelistEntry(ctx, tx, id)
+	before, err := getWhitelistEntry(ctx, tx, id, scope)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
 	var serviceID any
 	if strings.TrimSpace(input.ServiceID) != "" {
 		serviceID = strings.TrimSpace(input.ServiceID)
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return WhitelistEntry{}, err
+		}
 	}
 	var expires any
 	if !input.ExpiresAt.IsZero() {
@@ -319,18 +358,18 @@ func (s *Store) UpdateWhitelistEntry(ctx context.Context, actor *Actor, id strin
 	}
 	var entry WhitelistEntry
 	err = scanWhitelistEntry(tx.QueryRow(ctx, `UPDATE whitelist_entries SET
-    ip_or_cidr=$2, scope=$3, service_id=$4, label=$5, reason=$6, owner=$7,
+    ip_or_cidr=$2, scope=$3, scope_type=$4, service_id=$5, label=$6, reason=$7,
     priority=$8, expires_at=$9, enabled=$10, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-          expires_at, enabled, created_at, updated_at`,
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, scope_type, COALESCE(service_id::text, ''), label, reason, owner, priority,
+          expires_at, enabled, true, created_at, updated_at`,
 		id,
 		input.CIDR,
 		normalizeScope(input.Scope),
+		scope.ScopeType,
 		serviceID,
 		input.Label,
 		reason,
-		input.Owner,
 		defaultPriority(input.Priority),
 		expires,
 		boolDefault(input.Enabled, before.Enabled),
@@ -341,47 +380,53 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text,
 	if err := insertAudit(ctx, tx, actor, "update_whitelist", "whitelist_entry", id, before, entry, reason, ""); err != nil {
 		return WhitelistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return WhitelistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) DisableWhitelistEntry(ctx context.Context, actor *Actor, id, reason string) (WhitelistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, "", "", "")
+	if err != nil {
 		return WhitelistEntry{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return WhitelistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getWhitelistEntry(ctx, tx, id)
+	before, err := getWhitelistEntry(ctx, tx, id, scope)
 	if err != nil {
 		return WhitelistEntry{}, err
 	}
 	var entry WhitelistEntry
 	if err := scanWhitelistEntry(tx.QueryRow(ctx, `UPDATE whitelist_entries SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-          expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope, scope_type, COALESCE(service_id::text, ''), label, reason, owner, priority,
+          expires_at, enabled, true, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return WhitelistEntry{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_whitelist", "whitelist_entry", id, before, entry, strings.TrimSpace(reason), ""); err != nil {
 		return WhitelistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return WhitelistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id string, input BlacklistInput, reason string) (BlacklistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return BlacklistEntry{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateBlacklistInput(input); err != nil {
 		return BlacklistEntry{}, err
@@ -390,18 +435,28 @@ func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id strin
 	if reason == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getBlacklistEntry(ctx, tx, id)
+	before, err := getBlacklistEntry(ctx, tx, id, scope)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	var ruleID any
 	if strings.TrimSpace(input.RuleID) != "" {
 		ruleID = strings.TrimSpace(input.RuleID)
+		if _, err := getRule(ctx, tx, strings.TrimSpace(input.RuleID), scope); err != nil {
+			return BlacklistEntry{}, err
+		}
+	}
+	var serviceID any
+	if strings.TrimSpace(input.ServiceID) != "" {
+		serviceID = strings.TrimSpace(input.ServiceID)
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return BlacklistEntry{}, err
+		}
 	}
 	var expires any
 	if !input.ExpiresAt.IsZero() {
@@ -409,11 +464,13 @@ func (s *Store) UpdateBlacklistEntry(ctx context.Context, actor *Actor, id strin
 	}
 	var entry BlacklistEntry
 	err = scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET
-    ip_or_cidr=$2, score=$3, action=$4, source=$5, rule_id=$6, reason=$7,
-    expires_at=$8, enabled=$9, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`,
+    scope_type=$2, service_id=$3, ip_or_cidr=$4, score=$5, action=$6, source=$7, rule_id=$8, reason=$9,
+    expires_at=$10, enabled=$11, updated_at=now()
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope_type, COALESCE(service_id::text, ''), score, action, source, COALESCE(rule_id::text, ''), reason, owner, expires_at, enabled, true, created_at, updated_at`,
 		id,
+		scope.ScopeType,
+		serviceID,
 		input.CIDR,
 		input.Score,
 		normalizeBlacklistAction(input.Action),
@@ -429,46 +486,52 @@ RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(r
 	if err := insertAudit(ctx, tx, actor, "update_blacklist", "manual_blacklist_entry", id, before, entry, reason, ""); err != nil {
 		return BlacklistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return BlacklistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) DisableBlacklistEntry(ctx context.Context, actor *Actor, id, reason string) (BlacklistEntry, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, "", "", "")
+	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return BlacklistEntry{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getBlacklistEntry(ctx, tx, id)
+	before, err := getBlacklistEntry(ctx, tx, id, scope)
 	if err != nil {
 		return BlacklistEntry{}, err
 	}
 	var entry BlacklistEntry
 	if err := scanBlacklistEntry(tx.QueryRow(ctx, `UPDATE manual_blacklist_entries SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, ip_or_cidr::text, scope_type, COALESCE(service_id::text, ''), score, action, source, COALESCE(rule_id::text, ''), reason, owner, expires_at, enabled, true, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return BlacklistEntry{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_blacklist", "manual_blacklist_entry", id, before, entry, strings.TrimSpace(reason), ""); err != nil {
 		return BlacklistEntry{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return BlacklistEntry{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id string, input UDPSourcePortBlockInput, reason string) (UDPSourcePortBlock, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, input.ScopeType, "", input.ServiceID)
+	if err != nil {
 		return UDPSourcePortBlock{}, err
+	}
+	input.ScopeType = scope.ScopeType
+	if scope.ScopeType != ScopeTypeService {
+		input.ServiceID = ""
 	}
 	if err := validateUDPSourcePortBlockInput(input); err != nil {
 		return UDPSourcePortBlock{}, err
@@ -477,14 +540,21 @@ func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id s
 	if reason == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getUDPSourcePortBlock(ctx, tx, id)
+	before, err := getUDPSourcePortBlock(ctx, tx, id, scope)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
+	}
+	var serviceID any
+	if strings.TrimSpace(input.ServiceID) != "" {
+		serviceID = strings.TrimSpace(input.ServiceID)
+		if _, err := s.getService(ctx, tx, strings.TrimSpace(input.ServiceID)); err != nil {
+			return UDPSourcePortBlock{}, err
+		}
 	}
 	var expires any
 	if !input.ExpiresAt.IsZero() {
@@ -492,14 +562,15 @@ func (s *Store) UpdateUDPSourcePortBlock(ctx context.Context, actor *Actor, id s
 	}
 	var entry UDPSourcePortBlock
 	err = scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET
-    port=$2, label=$3, reason=$4, owner=$5, expires_at=$6, enabled=$7, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`,
+    scope_type=$2, service_id=$3, port=$4, label=$5, reason=$6, expires_at=$7, enabled=$8, updated_at=now()
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, port, scope_type, COALESCE(service_id::text, ''), label, reason, owner, expires_at, enabled, true, created_at, updated_at`,
 		id,
+		scope.ScopeType,
+		serviceID,
 		input.Port,
 		strings.TrimSpace(input.Label),
 		reason,
-		strings.TrimSpace(input.Owner),
 		expires,
 		boolDefault(input.Enabled, before.Enabled),
 	), &entry)
@@ -509,80 +580,86 @@ RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, cr
 	if err := insertAudit(ctx, tx, actor, "update_udp_source_port_block", "udp_source_port_block", id, before, entry, reason, ""); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) DisableUDPSourcePortBlock(ctx context.Context, actor *Actor, id, reason string) (UDPSourcePortBlock, error) {
-	if err := requireOperator(actor); err != nil {
+	scope, err := requirePolicyMutation(actor, "", "", "")
+	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return UDPSourcePortBlock{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginPolicyMutationTx(ctx, actor, scope)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	defer tx.Rollback(ctx)
-	before, err := getUDPSourcePortBlock(ctx, tx, id)
+	before, err := getUDPSourcePortBlock(ctx, tx, id, scope)
 	if err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	var entry UDPSourcePortBlock
 	if err := scanUDPSourcePortBlock(tx.QueryRow(ctx, `UPDATE udp_source_port_blocks SET enabled=false, reason=$2, updated_at=now()
-WHERE id=$1
-RETURNING id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
+WHERE id=$1 AND `+policyMutationWhere("", scope)+`
+RETURNING id::text, ebpf_id, port, scope_type, COALESCE(service_id::text, ''), label, reason, owner, expires_at, enabled, true, created_at, updated_at`, id, strings.TrimSpace(reason)), &entry); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_udp_source_port_block", "udp_source_port_block", id, before, entry, strings.TrimSpace(reason), ""); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := s.rebuildPolicyMutationInTx(ctx, tx, actor, scope, reason); err != nil {
 		return UDPSourcePortBlock{}, err
 	}
-	return entry, tx.Commit(ctx)
+	return entry, s.commitPolicyMutation(ctx, tx, actor, scope, reason)
 }
 
 func (s *Store) DisableFeedSource(ctx context.Context, actor *Actor, id, reason string) (FeedSource, error) {
-	if err := requireOperator(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		return FeedSource{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
 		return FeedSource{}, errors.New("reason is required")
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return FeedSource{}, err
-	}
-	defer tx.Rollback(ctx)
 	before, err := s.GetFeedSource(ctx, id)
 	if err != nil {
 		return FeedSource{}, err
 	}
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return FeedSource{}, err
+	}
+	defer tx.Rollback(ctx)
 	var source FeedSource
 	if err := scanFeedSource(tx.QueryRow(ctx, `UPDATE feed_sources
 SET enabled=false, status='disabled', next_run_at=NULL, updated_at=now()
-WHERE id=$1
+WHERE id=$1 AND owner_user_id IS NULL
 RETURNING `+feedSourceColumns(), id), &source); err != nil {
 		return FeedSource{}, err
 	}
 	if err := insertAudit(ctx, tx, actor, "disable_feed_source", "feed_source", id, maskFeedSourceCredential(before), maskFeedSourceCredential(source), strings.TrimSpace(reason), ""); err != nil {
 		return FeedSource{}, err
 	}
-	if _, err := s.rebuildSnapshotInTx(ctx, tx, actor, nil, reason); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return FeedSource{}, err
 	}
-	return source, tx.Commit(ctx)
+	if before.Enabled {
+		if _, err := s.rebuildAllActiveUserSnapshots(ctx, actor, strings.TrimSpace(reason)); err != nil {
+			return FeedSource{}, err
+		}
+	}
+	return source, nil
 }
 
 func validateUserRoleStatus(role, status string) error {
 	switch role {
-	case RoleAdmin, RoleOperator, RoleViewer:
+	case RoleAdmin, RoleUser:
 	default:
-		return errors.New("role must be admin, operator or viewer")
+		return errors.New("role must be admin or user")
 	}
 	switch status {
 	case StatusActive, StatusRevoked:
@@ -597,7 +674,8 @@ func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, before User, rol
 		return nil
 	}
 	var remaining int
-	if err := q.QueryRow(ctx, `SELECT count(*) FROM app_users WHERE id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM app_users
+WHERE id <> $1 AND role='admin' AND status='active'`, before.ID).Scan(&remaining); err != nil {
 		return err
 	}
 	if remaining == 0 {
@@ -606,34 +684,34 @@ func ensureActiveAdminRemains(ctx context.Context, q dbQuerier, before User, rol
 	return nil
 }
 
-func getRule(ctx context.Context, q dbQuerier, id string) (Rule, error) {
+func getRule(ctx context.Context, q dbQuerier, id string, scope policyMutationScope) (Rule, error) {
 	var rule Rule
-	err := scanRule(q.QueryRow(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), name, priority, match_expr, action, mode, threshold_pps,
+	err := scanRule(q.QueryRow(ctx, `SELECT id::text, ebpf_id, COALESCE(service_id::text, ''), scope_type, name, priority, match_expr, action, mode, threshold_pps,
           threshold_bps, threshold_cps, dimension, burst_packets, burst_bytes, sample_denom, ttl_seconds, expires_at, evidence,
-          confidence::float8, enabled, owner, created_at, updated_at
-FROM rules WHERE id=$1`, id), &rule)
+          confidence::float8, enabled, owner, true, created_at, updated_at
+FROM rules WHERE id=$1 AND `+policyMutationWhere("", scope), id), &rule)
 	return rule, err
 }
 
-func getWhitelistEntry(ctx context.Context, q dbQuerier, id string) (WhitelistEntry, error) {
+func getWhitelistEntry(ctx context.Context, q dbQuerier, id string, scope policyMutationScope) (WhitelistEntry, error) {
 	var entry WhitelistEntry
-	err := scanWhitelistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope, COALESCE(service_id::text, ''), label, reason, owner, priority,
-	          expires_at, enabled, created_at, updated_at
-FROM whitelist_entries WHERE id=$1`, id), &entry)
+	err := scanWhitelistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope, scope_type, COALESCE(service_id::text, ''), label, reason, owner, priority,
+	          expires_at, enabled, true, created_at, updated_at
+FROM whitelist_entries WHERE id=$1 AND `+policyMutationWhere("", scope), id), &entry)
 	return entry, err
 }
 
-func getBlacklistEntry(ctx context.Context, q dbQuerier, id string) (BlacklistEntry, error) {
+func getBlacklistEntry(ctx context.Context, q dbQuerier, id string, scope policyMutationScope) (BlacklistEntry, error) {
 	var entry BlacklistEntry
-	err := scanBlacklistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, score, action, source, COALESCE(rule_id::text, ''), reason, expires_at, enabled, created_at, updated_at
-FROM manual_blacklist_entries WHERE id=$1`, id), &entry)
+	err := scanBlacklistEntry(q.QueryRow(ctx, `SELECT id::text, ebpf_id, ip_or_cidr::text, scope_type, COALESCE(service_id::text, ''), score, action, source, COALESCE(rule_id::text, ''), reason, owner, expires_at, enabled, true, created_at, updated_at
+FROM manual_blacklist_entries WHERE id=$1 AND `+policyMutationWhere("", scope), id), &entry)
 	return entry, err
 }
 
-func getUDPSourcePortBlock(ctx context.Context, q dbQuerier, id string) (UDPSourcePortBlock, error) {
+func getUDPSourcePortBlock(ctx context.Context, q dbQuerier, id string, scope policyMutationScope) (UDPSourcePortBlock, error) {
 	var entry UDPSourcePortBlock
-	err := scanUDPSourcePortBlock(q.QueryRow(ctx, `SELECT id::text, ebpf_id, port, label, reason, owner, expires_at, enabled, created_at, updated_at
-FROM udp_source_port_blocks WHERE id=$1`, id), &entry)
+	err := scanUDPSourcePortBlock(q.QueryRow(ctx, `SELECT id::text, ebpf_id, port, scope_type, COALESCE(service_id::text, ''), label, reason, owner, expires_at, enabled, true, created_at, updated_at
+FROM udp_source_port_blocks WHERE id=$1 AND `+policyMutationWhere("", scope), id), &entry)
 	return entry, err
 }
 

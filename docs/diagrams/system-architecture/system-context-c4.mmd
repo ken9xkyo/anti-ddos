@@ -1,36 +1,24 @@
 %%{init: {'theme':'base','themeVariables': {'textColor':'#000000','titleColor':'#000000'}}}%%
 C4Context
-    title Ngữ cảnh hệ thống - Anti-DDoS Scrubbing Gateway
+    title Anti-DDoS System Context
 
-    Person(viewer, "Viewer", "Theo dõi sức khỏe, chính sách, sự kiện, cảnh báo và snapshot")
-    Person(operator, "Operator", "Thực hiện thay đổi vận hành và xử lý sự cố")
-    Person(admin, "Admin", "Quản trị người dùng, secret và cấu hình đặc quyền")
+    Person(user, "User", "Operates owner-scoped Anti-DDoS config")
+    Person(admin, "Admin", "Manages accounts, global feeds and read-only user views")
+    System_Boundary(system, "Anti-DDoS Scrubbing Gateway") {
+        System(gateway, "Scrubbing Gateway", "XDP/eBPF dataplane, Control API, Dashboard and Agent")
+    }
+    System_Ext(prom, "Prometheus / Grafana", "Metrics and operations dashboards")
 
-    System(gateway, "Anti-DDoS Scrubbing Gateway", "Gateway chống DDoS L3/L4 dùng XDP/eBPF, Control API và Admin Dashboard")
-    System_Ext(protected, "Dịch vụ backend được bảo vệ", "Dịch vụ IPv4 nhận lưu lượng sạch sau L2 rewrite và XDP redirect")
-    System_Ext(threatIntel, "Nguồn threat intelligence", "Nguồn reputation CIDR được đồng bộ định kỳ")
-    System_Ext(opsTools, "Tích hợp vận hành", "Prometheus, Grafana và Telegram alert delivery")
+    Rel(user, gateway, "Manages own services and policy", "HTTPS")
+    Rel(admin, gateway, "Manages accounts and feed sources", "HTTPS")
+    Rel(gateway, prom, "Exposes and scrapes metrics", "HTTP")
 
-    Rel(viewer, gateway, "Quan sát trạng thái hệ thống", "HTTPS")
-    Rel(operator, gateway, "Thay đổi service, rule và policy object", "HTTPS")
-    Rel(admin, gateway, "Quản trị access và secret", "HTTPS")
-    Rel(gateway, protected, "Chuyển tiếp lưu lượng hợp lệ", "XDP_REDIRECT / DEVMAP")
-    Rel(gateway, threatIntel, "Đồng bộ reputation entries", "HTTP(S)")
-    Rel(gateway, opsTools, "Xuất metrics và gửi cảnh báo", "Prometheus / HTTP")
-
-    UpdateElementStyle(viewer, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
-    UpdateElementStyle(operator, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
+    UpdateElementStyle(user, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
     UpdateElementStyle(admin, $fontColor="#000000", $bgColor="#f8fafc", $borderColor="#64748b")
     UpdateElementStyle(gateway, $fontColor="#000000", $bgColor="#e0f2fe", $borderColor="#0284c7")
-    UpdateElementStyle(protected, $fontColor="#000000", $bgColor="#dcfce7", $borderColor="#16a34a")
-    UpdateElementStyle(threatIntel, $fontColor="#000000", $bgColor="#fef3c7", $borderColor="#d97706")
-    UpdateElementStyle(opsTools, $fontColor="#000000", $bgColor="#f1f5f9", $borderColor="#64748b")
+    UpdateElementStyle(prom, $fontColor="#000000", $bgColor="#f1f5f9", $borderColor="#64748b")
 
-    UpdateRelStyle(viewer, gateway, $textColor="#000000", $lineColor="#64748b")
-    UpdateRelStyle(operator, gateway, $textColor="#000000", $lineColor="#64748b")
+    UpdateRelStyle(user, gateway, $textColor="#000000", $lineColor="#64748b")
     UpdateRelStyle(admin, gateway, $textColor="#000000", $lineColor="#64748b")
-    UpdateRelStyle(gateway, protected, $textColor="#000000", $lineColor="#64748b")
-    UpdateRelStyle(gateway, threatIntel, $textColor="#000000", $lineColor="#64748b")
-    UpdateRelStyle(gateway, opsTools, $textColor="#000000", $lineColor="#64748b")
-
+    UpdateRelStyle(gateway, prom, $textColor="#000000", $lineColor="#64748b")
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
