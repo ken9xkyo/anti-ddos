@@ -1109,7 +1109,7 @@ SELECT re.id::text AS id,
        re.status AS status,
        'feed'::text AS origin,
        false AS editable,
-       re.created_at AS created_at,
+       re.first_seen_at AS created_at,
        re.last_seen_at AS updated_at,
        NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid AS owner_user_id,
        ''::text AS rule_name

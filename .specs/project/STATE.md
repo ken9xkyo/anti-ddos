@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-06-03
+Last updated: 2026-06-12
 
 Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboard/Control API/eBPF enhancement after Phase 08; Phase 09 - Telegram ISP Runbook remains next.
 
@@ -70,3 +70,7 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 - Install PostgreSQL client/server components and Prometheus according to the deployment decision for the lab.
 - Keep real NIC XDP attach disabled until explicit execution approval and interface roles are confirmed; VETH-only lifecycle and forwarding tests are available through `make phase2-veth-test` and `make phase4-veth-test`.
 - Run benchmark matrix after production interface roles and backend service inventory are confirmed.
+
+## Quick Tasks
+
+- 2026-06-12: `001-blacklist-entries-created-at` fixed `/v1/blacklist/entries` SQL by mapping feed row `created_at` from `reputation_entries.first_seen_at`; verified with Go tests and threat-feed PostgreSQL integration.

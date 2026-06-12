@@ -20,6 +20,7 @@ Backend semantics:
 - Rule/whitelist/blacklist deletes are soft-disable and rebuild the owner policy snapshot.
 - Whitelist list supports optional `q`, `scope`, `service_id`, `state`, and `expiry` query params; `service_id` is an effective-service filter that includes global entries unless `scope=service`.
 - `/v1/blacklist` remains the manual-only array contract. `/v1/blacklist/entries` is the paginated combined manual/feed list with `q`, `source`, `origin`, `state`, `expiry`, `page`, and `page_size`; feed rows are read-only and feed configuration stays under `Reputation`.
+- Feed-origin blacklist rows come from `internal/control/policy_store.go:blacklistEntriesCTE()`; `reputation_entries` has `first_seen_at`/`last_seen_at`, not `created_at`.
 - Effective blacklist snapshots de-duplicate exact CIDRs. Enabled manual entries win over feed reputation for the same exact CIDR.
 - `/v1/feed-sources*`, `/v1/feed-runs`, and `/v1/feed-conflicts` are admin-only global endpoints; normal admin session required, user/admin view-user get `403`.
 - Feed sources/runs/reputation are global rows with `owner_user_id = NULL`; active global reputation is included in every active user's policy snapshot.
@@ -37,4 +38,4 @@ Frontend notes:
 - `AdminDrawer` and `ConfirmDialog` are in-tree overlays, not MUI Portal modals, to keep tests stable and avoid aria-hidden issues.
 - `JsonTextField` is native textarea because MUI TextareaAutosize hit jsdom selector issues with MUI X runtime ids.
 
-Updated: 2026-06-11
+Updated: 2026-06-12
