@@ -5,6 +5,7 @@ Tai lieu nay huong dan chay lab stack cho Anti-DDoS management/control plane. St
 ## Kien Truc Runtime
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
 flowchart LR
     Dashboard["Admin Dashboard 0.0.0.0:8088"] --> API["Control API 127.0.0.1:8080"]
     API --> DB["PostgreSQL 127.0.0.1:5432"]
