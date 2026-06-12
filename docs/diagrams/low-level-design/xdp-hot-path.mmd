@@ -1,33 +1,34 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','nodeTextColor':'#000000','labelTextColor':'#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4f46e5', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#3730a3', 'lineColor': '#94a3b8', 'secondaryColor': '#10b981', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
 flowchart TD
-    packet([Packet vào WAN NIC])
-    runtime{runtime_config hợp lệ?}
-    parse{Parse Ethernet/IPv4/L4}
-    pass[Pass non-IPv4]
-    malformed[Drop malformed/fragment]
-    service{Match service_allowlist?}
-    serviceMiss[Drop not allowed service]
-    whitelist{Whitelist match?}
-    threat{Blacklist hoặc UDP source port?}
-    threatDrop[Drop threat]
-    neighbor{Forwarding resolved?}
-    rule{Default rule action}
-    ruleDrop[Drop theo rule/rate limit]
-    redirect[Rewrite MAC + XDP_REDIRECT]
+    packet([WAN packet])
+    runtime{runtime_config valid?}
+    parse{Parse VLAN IPv4 L4}
+    pass[Pass non IPv4]
+    malformed[Drop malformed or fragment]
+    service{Service allowlist hit?}
+    serviceDrop[Drop not allowed service]
+    whitelist{Global or service whitelist?}
+    threat{Blacklist or UDP source port?}
+    threatDrop[Drop threat match]
+    neighbor{Neighbor resolved?}
+    neighborDrop[Drop unresolved neighbor]
+    rule{Default rule over limit or drop?}
+    ruleDrop[Drop rule or rate limit]
+    redirect[Rewrite MAC and XDP_REDIRECT]
 
     packet --> runtime
-    runtime -- Không --> serviceMiss
-    runtime -- Có --> parse
-    parse -- Non-IPv4 --> pass
-    parse -- Lỗi hoặc fragment --> malformed
-    parse -- IPv4 hợp lệ --> service
-    service -- Không --> serviceMiss
-    service -- Có --> whitelist
-    whitelist -- Có --> neighbor
-    whitelist -- Không --> threat
-    threat -- Có --> threatDrop
-    threat -- Không --> neighbor
-    neighbor -- Không --> ruleDrop
-    neighbor -- Có --> rule
-    rule -- Drop/over limit --> ruleDrop
-    rule -- Observe/sample/pass --> redirect
+    runtime -- No --> serviceDrop
+    runtime -- Yes --> parse
+    parse -- Non IPv4 --> pass
+    parse -- Bad IPv4 or fragment --> malformed
+    parse -- Valid IPv4 --> service
+    service -- No --> serviceDrop
+    service -- Yes --> whitelist
+    whitelist -- Yes --> neighbor
+    whitelist -- No --> threat
+    threat -- Yes --> threatDrop
+    threat -- No --> neighbor
+    neighbor -- No --> neighborDrop
+    neighbor -- Yes --> rule
+    rule -- Yes --> ruleDrop
+    rule -- No --> redirect

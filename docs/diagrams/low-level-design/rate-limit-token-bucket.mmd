@@ -1,0 +1,31 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4f46e5', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#3730a3', 'lineColor': '#94a3b8', 'secondaryColor': '#10b981', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155'}}}%%
+flowchart TD
+    packet([Packet reaches service rule])
+    rateRule{ACTION_RATE_LIMIT?}
+    key[Build rate_key]
+    lookup{rate_state_v2 hit?}
+    create[Create state or fail closed]
+    lock[Spin lock state]
+    refill[Refill PPS BPS CPS buckets]
+    check{Any bucket over limit?}
+    debit[Debit tokens and counters]
+    unlock[Unlock state]
+    enforce{Mode enforce?}
+    drop[Drop REASON_RATE_LIMIT]
+    observe[Observe or continue]
+
+    packet --> rateRule
+    rateRule -- No --> observe
+    rateRule -- Yes --> key
+    key --> lookup
+    lookup -- No --> create
+    lookup -- Yes --> lock
+    create --> lock
+    lock --> refill
+    refill --> check
+    check -- No --> debit
+    debit --> unlock
+    check -- Yes --> unlock
+    unlock --> enforce
+    enforce -- Yes and over limit --> drop
+    enforce -- No or under limit --> observe

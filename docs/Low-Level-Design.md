@@ -51,6 +51,8 @@ Global feed tables are the exception:
 
 ## Datapath Rules
 
+Detailed datapath documentation: [XDP-Data-Plane.md](XDP-Data-Plane.md).
+
 - Non-IPv4 traffic passes.
 - Malformed IPv4 and fragments are dropped.
 - IPv4 traffic must match a service allowlist entry before threat checks.

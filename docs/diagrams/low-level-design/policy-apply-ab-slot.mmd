@@ -1,4 +1,4 @@
-%%{init: {'theme':'base','themeVariables': {'primaryColor':'#f8fafc','primaryTextColor':'#000000','primaryBorderColor':'#94a3b8','lineColor':'#64748b','secondaryColor':'#e0f2fe','tertiaryColor':'#fef3c7','background':'#ffffff','mainBkg':'#ffffff','nodeBorder':'#94a3b8','clusterBkg':'#f8fafc','clusterBorder':'#cbd5e1','titleColor':'#000000','edgeLabelBackground':'#ffffff','textColor':'#000000','actorTextColor':'#000000','actorBkg':'#f8fafc','actorBorder':'#94a3b8','participantTextColor':'#000000','participantBkg':'#f8fafc','participantBorder':'#94a3b8','labelTextColor':'#000000','loopTextColor':'#000000','noteTextColor':'#000000'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4f46e5', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#3730a3', 'lineColor': '#94a3b8', 'secondaryColor': '#10b981', 'tertiaryColor': '#f59e0b', 'background': '#ffffff', 'mainBkg': '#f8fafc', 'nodeBorder': '#cbd5e1', 'clusterBkg': '#f1f5f9', 'clusterBorder': '#e2e8f0', 'titleColor': '#1e293b', 'edgeLabelBackground': '#ffffff', 'textColor': '#334155', 'actorTextColor': '#334155', 'actorBkg': '#f8fafc', 'actorBorder': '#cbd5e1', 'participantTextColor': '#334155', 'participantBkg': '#f8fafc', 'participantBorder': '#cbd5e1', 'labelTextColor': '#334155', 'loopTextColor': '#334155', 'noteTextColor': '#334155'}}}%%
 sequenceDiagram
     autonumber
     participant Agent
@@ -15,7 +15,8 @@ sequenceDiagram
     Resolver-->>Agent: output_ifindex, source MAC, next-hop MAC
     Agent->>Snapshot: Re-sign resolved snapshot
     Agent->>Maps: Clear inactive slot
-    Agent->>Maps: Populate CIDR, UDP, service, rule maps
+    Agent->>Maps: Split global/service whitelist
+    Agent->>Maps: Populate blacklist, UDP, service, rule maps
     Agent->>Devmap: Upsert devmap_key -> ifindex
     Agent->>Runtime: Flip active_slot and policy_version
     Agent->>Agent: Persist last-valid snapshot
