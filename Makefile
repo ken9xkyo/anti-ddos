@@ -155,6 +155,7 @@ help:
 	@printf 'Safety notes:\n'
 	@printf '  - Compose starts management/control services only; the Node Agent runs on host.\n'
 	@printf '  - agent-start runs in the background and can attach XDP. Use only approved WAN/output interfaces.\n'
+	@printf '  - agent-start leaves output xdp_pass attached after a failed start; use agent-remove to detach it.\n'
 	@printf '  - agent-start refuses to replace a non-xdp_pass program on output interfaces.\n'
 	@printf '  - agent-remove removes the pinned BPF link before using ip link xdp off on the WAN interface.\n'
 	@printf '  - agent-remove detaches output interfaces only when their XDP program is xdp_pass.\n'
@@ -229,7 +230,6 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 	if [ -n "$$control_url" ] && [ -z "$$token" ]; then \
 		echo "warning: ANTI_DDOS_AGENT_TOKEN is empty; Control API sync may be rejected" >&2; \
 	fi; \
-	attached_output_ifaces=""; \
 	if [ -n "$$output_ifaces" ]; then \
 		for output_iface in $$output_ifaces; do \
 			if [ "$$output_iface" = "$$iface" ]; then \
@@ -251,7 +251,6 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 			else \
 				echo "attaching xdp_pass on output interface $$output_iface with $$output_xdp_mode XDP"; \
 				$(SUDO) ip link set dev "$$output_iface" "$$output_xdp_attach_arg" obj "$(BPF_PASS_OBJ)" sec xdp; \
-				attached_output_ifaces="$$attached_output_ifaces $$output_iface"; \
 			fi; \
 		done; \
 	else \
@@ -277,13 +276,8 @@ agent-start: agent-build $(BPF_PASS_OBJ)
 		echo "$(AGENT_PROCESS) failed to stay running; launcher pid $$launcher_pid" >&2; \
 		echo "last log lines from $$log_file:" >&2; \
 		tail -n 40 "$$log_file" >&2 || true; \
-		if [ -n "$$attached_output_ifaces" ]; then \
-			for output_iface in $$attached_output_ifaces; do \
-				if ip -d link show dev "$$output_iface" 2>/dev/null | grep -q 'name xdp_pass'; then \
-					echo "detaching xdp_pass from $$output_iface after failed start"; \
-					$(SUDO) ip link set dev "$$output_iface" xdp off || true; \
-				fi; \
-			done; \
+		if [ -n "$$output_ifaces" ]; then \
+			echo "leaving output xdp_pass attached after failed start; run agent-remove to detach output XDP" >&2; \
 		fi; \
 		rm -f -- "$$pid_file"; \
 		exit 1; \
