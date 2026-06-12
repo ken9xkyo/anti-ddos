@@ -11,8 +11,7 @@ from support_servers import SupportServers
 
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "correct horse battery staple"
-VIEWER_PASSWORD = "viewer password phrase"
-OPERATOR_PASSWORD = "operator password phrase"
+USER_PASSWORD = "user password phrase"
 AGENT_TOKEN = "agent-secret"
 TELEGRAM_TOKEN_ENV = "ADMIN_DASHBOARD_TELEGRAM_TOKEN"
 TELEGRAM_TOKEN_VALUE = "123456:abcdefghijklmnopqrstuvwxyzABCDEF"
@@ -23,10 +22,8 @@ class SeedData:
     prefix: str
     admin_username: str
     admin_password: str
-    viewer_username: str
-    viewer_password: str
-    operator_username: str
-    operator_password: str
+    user_username: str
+    user_password: str
     service: dict[str, Any]
     rule: dict[str, Any]
     whitelist: dict[str, Any]
@@ -36,50 +33,44 @@ class SeedData:
 
 
 def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> SeedData:
-    viewer_username = f"{prefix}-viewer"
-    operator_username = f"{prefix}-operator"
+    user_username = f"{prefix}-user"
 
     api.post("/v1/users", {
-        "reason": "automation create viewer",
-        "username": viewer_username,
-        "password": VIEWER_PASSWORD,
-        "role": "viewer",
-    })
-    api.post("/v1/users", {
-        "reason": "automation create operator",
-        "username": operator_username,
-        "password": OPERATOR_PASSWORD,
-        "role": "operator",
+        "reason": "automation create owner user",
+        "username": user_username,
+        "password": USER_PASSWORD,
+        "role": "user",
     })
 
-    agent_id = register_agent(api)
-    service = api.post("/v1/services", service_payload(f"{prefix}-api-https", enabled=True))
-    rule = api.post("/v1/rules", rule_payload(f"{prefix}-ttl-rule", service["id"]))
+    user = ApiClient(api.base_url)
+    user.login(user_username, USER_PASSWORD)
+
+    agent_id = register_agent(api, user_username)
+    service = user.post("/v1/services", service_payload(f"{prefix}-api-https", enabled=True))
+    rule = user.post("/v1/rules", rule_payload(f"{prefix}-ttl-rule", service["id"]))
     api.agent_post(f"/v1/agents/{agent_id}/events", AGENT_TOKEN, security_event_payload(service["ebpf_id"], rule["ebpf_id"]))
 
-    whitelist = api.post("/v1/whitelist", whitelist_payload("192.0.2.10/32", "automation trusted customer source"))
+    whitelist = user.post("/v1/whitelist", whitelist_payload("192.0.2.10/32", "automation trusted customer source"))
     feed = api.post("/v1/feed-sources", feed_payload(f"{prefix}-internal-feed", support.feed.url))
-    operator = ApiClient(api.base_url)
-    operator.login(operator_username, OPERATOR_PASSWORD)
-    operator.post(f"/v1/feed-sources/{feed['id']}/sync", {"reason": "automation seed feed sync"})
+    api.post(f"/v1/feed-sources/{feed['id']}/sync", {"reason": "automation seed feed sync"})
 
-    api.post("/v1/telegram/config", {
+    user.post("/v1/telegram/config", {
         "reason": "automation configure Telegram",
         "bot_token_ref": TELEGRAM_TOKEN_VALUE,
         "chat_id": "1234",
         "parse_mode": "HTML",
         "enabled": True,
     })
-    operator.post("/v1/alerts/evaluate-isp-escalation", {
+    user.post("/v1/alerts/evaluate-isp-escalation", {
         "reason": "automation ISP runbook",
-        "service_id": service["id"],
+        "target": service["backend_cidr"],
         "vector": "udp_flood",
         "peak_bps": 8000000,
         "peak_pps": 1000,
         "packet_loss_ratio": 0.15,
     })
 
-    snapshots = wait_for_snapshots(api, 2)
+    snapshots = wait_for_snapshots(user, 2)
     latest = snapshots[0]["version"]
     api.agent_post(f"/v1/agents/{agent_id}/apply", AGENT_TOKEN, {
         "policy_version": latest,
@@ -92,10 +83,8 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
         prefix=prefix,
         admin_username=ADMIN_USERNAME,
         admin_password=ADMIN_PASSWORD,
-        viewer_username=viewer_username,
-        viewer_password=VIEWER_PASSWORD,
-        operator_username=operator_username,
-        operator_password=OPERATOR_PASSWORD,
+        user_username=user_username,
+        user_password=USER_PASSWORD,
         service=service,
         rule=rule,
         whitelist=whitelist,
@@ -105,14 +94,14 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
     )
 
 
-def register_agent(api: ApiClient) -> str:
+def register_agent(api: ApiClient, owner_username: str) -> str:
     response = api.agent_post("/v1/agents/register", AGENT_TOKEN, {
         "hostname": "auto-admin-dashboard-node-a",
         "xdp_mode": "native",
         "devmap_support": True,
         "agent_version": "automation",
         "interfaces": agent_interfaces(),
-    })
+    }, owner_username=owner_username)
     agent_id = response["agent_id"]
     api.agent_post(f"/v1/agents/{agent_id}/heartbeat", AGENT_TOKEN, {
         "status": "online",

@@ -1,6 +1,6 @@
 # RBAC Admin/User
 
-Trạng thái: cập nhật ngày 2026-06-11 theo mô hình không còn tenant.
+Trạng thái: cập nhật ngày 2026-06-12 theo mô hình không còn tenant và không còn Detections baselines/anomalies.
 
 Control Plane chỉ còn hai role public: `admin` và `user`. Tenant, tenant memberships, tenant switcher, `platform_role`, `operator` và `viewer` đã retired khỏi API/UI/session mới.
 
@@ -8,7 +8,7 @@ Control Plane chỉ còn hai role public: `admin` và `user`. Tenant, tenant mem
 
 | Role | Quyền chính |
 |---|---|
-| `user` | Đọc và mutation config vận hành thuộc chính mình: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Baselines/Anomalies, Agents/Events/Alerts và Telegram Channel. |
+| `user` | Đọc và mutation config vận hành thuộc chính mình: Services, Rules, Whitelist, Manual Blacklist, UDP Ports, Snapshots, Agents/Events/Alerts và Telegram Channel. |
 | `admin` | Quản lý account lifecycle: create/update/revoke/reset password/revoke sessions. Admin có thể mở dashboard read-only của một user qua Accounts nhưng không được mutation config của user đó. |
 
 ## Auth Và Session

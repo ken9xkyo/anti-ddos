@@ -51,8 +51,11 @@ class ApiClient:
         headers = {"X-Audit-Reason": reason} if reason else None
         return self.request("DELETE", path, headers=headers)
 
-    def agent_post(self, path: str, token: str, payload: Any) -> Any:
-        return self.request("POST", path, payload, authenticated=False, headers={"Authorization": f"Bearer {token}"})
+    def agent_post(self, path: str, token: str, payload: Any, *, owner_username: str = "") -> Any:
+        headers = {"Authorization": f"Bearer {token}"}
+        if owner_username:
+            headers["X-Owner-Username"] = owner_username
+        return self.request("POST", path, payload, authenticated=False, headers=headers)
 
     def request(
         self,
@@ -80,4 +83,3 @@ class ApiClient:
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
             raise APIError(method, path, exc.code, body_text) from exc
-
