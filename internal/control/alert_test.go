@@ -211,7 +211,27 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("read-only test alert should fail status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
+	// Regular user must get 403 Forbidden when accessing Alerts endpoints
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/alerts", userToken, nil)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
+		Severity:          "warning",
+		Type:              "operator_notice",
+		DedupeKey:         "manual:dedupe",
+		AffectedService:   "api",
+		Vector:            "udp_flood",
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts/evaluate-isp-escalation", userToken, ISPEscalationInput{
+		Reason:          "manual escalation fixture",
+		Target:          "203.0.113.10/32",
+		Vector:          "udp_flood",
+	})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", adminToken, AlertInput{
 		Severity:          "warning",
 		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
@@ -224,7 +244,7 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("create alert status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	before := calls.Load()
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", adminToken, AlertInput{
 		Severity:          "warning",
 		Type:              "operator_notice",
 		DedupeKey:         "manual:dedupe",
@@ -244,7 +264,7 @@ func TestAlertingIntegration(t *testing.T) {
 	}
 
 	mode.Store("retry")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", adminToken, AlertInput{
 		Severity:          "critical",
 		Type:              "redirect_failure",
 		DedupeKey:         "retry:redirect",
@@ -264,7 +284,7 @@ func TestAlertingIntegration(t *testing.T) {
 	}
 
 	mode.Store("auth")
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", adminToken, AlertInput{
 		Severity:        "critical",
 		Type:            "neighbor_unresolved",
 		DedupeKey:       "auth:neighbor",
@@ -309,7 +329,7 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts/evaluate-isp-escalation", userToken, ISPEscalationInput{
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts/evaluate-isp-escalation", adminToken, ISPEscalationInput{
 		Reason:          "manual escalation fixture",
 		Target:          "203.0.113.10/32",
 		Vector:          "udp_flood",

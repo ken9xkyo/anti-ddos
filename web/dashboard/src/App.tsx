@@ -42,6 +42,9 @@ export default function App() {
     if (activeTab === 'reputation' && user && (user.role !== 'admin' || user.read_only || user.viewing_user)) {
       setActiveTab('overview');
     }
+    if (activeTab === 'incidents' && user && user.role !== 'admin') {
+      setActiveTab('overview');
+    }
   }, [activeTab, user]);
 
   useEffect(() => {

@@ -733,7 +733,7 @@ func errorClass(err error) string {
 }
 
 func (s *Store) EvaluateISPEscalation(ctx context.Context, actor *Actor, input ISPEscalationInput) (Alert, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireAdmin(actor); err != nil {
 		return Alert{}, err
 	}
 	payload, err := s.buildISPEscalationPayload(ctx, input)

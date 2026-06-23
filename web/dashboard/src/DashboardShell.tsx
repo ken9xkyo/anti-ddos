@@ -55,6 +55,7 @@ export function DashboardShell({
     items: group.items.filter((item) => {
       if (item.id === 'access') return isAdmin;
       if (item.id === 'reputation') return canManageReputation;
+      if (item.id === 'incidents') return isAdmin;
       return true;
     })
   })).filter((group) => group.items.length > 0), [canManageReputation, isAdmin]);

@@ -52,10 +52,11 @@ describe('DashboardShell RBAC', () => {
     for (const group of ['Operation', 'Configuration', 'Setting']) {
       expect(screen.getByText(group)).toBeInTheDocument();
     }
-    for (const label of ['Dashboard', 'Incidents', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Snapshots', 'Nodes']) {
+    for (const label of ['Dashboard', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Snapshots', 'Nodes']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
+    expect(screen.queryByRole('button', { name: 'Incidents' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accounts' })).not.toBeInTheDocument();
     expect(screen.queryByText('Threat Intelligence')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reputation' })).not.toBeInTheDocument();

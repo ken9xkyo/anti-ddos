@@ -67,6 +67,10 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -85,7 +89,12 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAlertSubroute(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/alerts/")
@@ -111,7 +120,7 @@ func (s *Server) handleISPEscalation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireAdmin(actor); err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}

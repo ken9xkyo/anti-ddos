@@ -71,14 +71,14 @@ export class ApiClient {
 
   async dashboard(user?: User): Promise<DashboardData> {
     const canLoadFeed = user?.role === 'admin' && !user.read_only && !user.viewing_user;
-    const canLoadTelegram = user?.role === 'admin';
+    const canLoadAdminOnly = user?.role === 'admin';
     const baseRequests = Promise.all([
       this.request<DashboardOverview>('/v1/dashboard/overview'),
       this.request<Agent[] | null>('/v1/dashboard/agents'),
       this.request<Service[] | null>('/v1/dashboard/services'),
       this.request<Rule[] | null>('/v1/dashboard/rules'),
       this.request<SecurityEvent[] | null>('/v1/security-events?limit=50'),
-      canLoadTelegram
+      canLoadAdminOnly
         ? this.request<TelegramConfig>('/v1/telegram/config')
         : Promise.resolve<TelegramConfig>({
             bot_token_ref: '',
@@ -89,7 +89,9 @@ export class ApiClient {
             created_at: '',
             updated_at: ''
           }),
-      this.request<Alert[] | null>('/v1/alerts?limit=30')
+      canLoadAdminOnly
+        ? this.request<Alert[] | null>('/v1/alerts?limit=30')
+        : Promise.resolve<Alert[]>([]),
     ]);
     const feedRequests = canLoadFeed
       ? Promise.all([this.feedSources(), this.feedRuns(), this.feedConflicts()])

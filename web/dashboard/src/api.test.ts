@@ -78,8 +78,8 @@ describe('ApiClient', () => {
     const loaded = await client.dashboard(normalUser);
 
     expect(loaded.overview.traffic.pps).toBe(1200);
-    expect(loaded.alerts[0].type).toBe('isp_escalation_needed');
-    const expectedKeys = Object.keys(responses).filter((path) => path !== '/v1/telegram/config');
+    expect(loaded.alerts).toEqual([]);
+    const expectedKeys = Object.keys(responses).filter((path) => path !== '/v1/telegram/config' && path !== '/v1/alerts?limit=30');
     expect(seen.sort()).toEqual(expectedKeys.sort());
     expect(seen.some((path) => path.includes('/v1/tenants'))).toBe(false);
     expect(seen.some((path) => path.includes('/v1/feed-'))).toBe(false);
@@ -109,6 +109,8 @@ describe('ApiClient', () => {
     expect(seen).toContain('/v1/feed-sources');
     expect(seen).toContain('/v1/feed-runs?limit=50');
     expect(seen).toContain('/v1/feed-conflicts');
+    expect(seen).toContain('/v1/telegram/config');
+    expect(seen).toContain('/v1/alerts?limit=30');
   });
 
   it('normalizes null dashboard lists to empty arrays', async () => {
