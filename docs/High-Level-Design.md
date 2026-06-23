@@ -8,8 +8,8 @@ The current system is IPv4-focused, owner-scoped by `owner_user_id`, and exposes
 
 | Actor | Goal | Permissions |
 |---|---|---|
-| `user` | Operate Anti-DDoS configuration for their own account | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, agents/events/alerts and Telegram config |
-| `admin` | Manage accounts and global threat feeds; assist users | Mutate account lifecycle, manage global feed sources/runs/conflicts, and open read-only dashboard context for a user |
+| `user` | Operate Anti-DDoS configuration for their own account | Read/mutate owner-scoped services, rules, whitelist, manual blacklist, UDP ports, snapshots, and events |
+| `admin` | Manage accounts, global threat feeds, and Telegram/incident alerts; assist users | Mutate account lifecycle, manage global feed sources/runs/conflicts, configure and test Telegram integrations, manage and trigger platform alerts, and open read-only dashboard context for a user |
 | Node Agent | Apply dataplane policy for one owner account | Register with owner identity, fetch snapshots, apply eBPF maps, report heartbeat/apply status/events |
 
 ## Architecture
@@ -41,8 +41,10 @@ Current sessions, API payloads and dashboard navigation use owner-user context o
 
 ## Safety
 
-- Operational mutations require `role=user` in the user's own owner context.
-- Admin view-user sessions can read target config but config mutations return `403`.
+- Operational mutations require `role=user` in the user's own owner context (except for alerts, incident evaluations, and Telegram configs which are admin-only).
+- Admin view-user sessions can read target user configuration but configuration mutations return `403`.
 - Global active reputation from admin-managed feeds is unioned into every active user's snapshot; feed-origin blacklist rows are read-only in user views.
+- Telegram configurations, alerts endpoints, and the Incidents interface are restricted exclusively to normal admin sessions. Regular users receive a `403 Forbidden` if they try to access these endpoints directly, and these components are hidden/bypassed in their UI console.
+- Telegram configurations are stored globally in the admin context, and delivery of system-wide notifications is resolved dynamically by fetching the active admin user's configuration in a tenant-independent scope.
 - Telegram bot tokens and feed credentials are write-only/masked in API responses and audit payloads.
 - Compose starts the management/control stack only. Host Agent execution and XDP attachment require explicit interface selection.
