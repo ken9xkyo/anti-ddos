@@ -45,10 +45,7 @@ func TestAdminUserRBACNoTenant(t *testing.T) {
 		ParseMode:   "HTML",
 		Enabled:     boolPtr(true),
 	})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	if strings.Contains(resp.Body.String(), rawTelegramToken) || !strings.Contains(resp.Body.String(), telegramTokenMask) {
-		t.Fatalf("telegram response masking failed: %s", resp.Body.String())
-	}
+	requireHTTPStatus(t, resp, http.StatusForbidden)
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: user.ID})
 	requireHTTPStatus(t, resp, http.StatusOK)
@@ -59,8 +56,7 @@ func TestAdminUserRBACNoTenant(t *testing.T) {
 	}
 
 	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/telegram/config", viewSession.Token, nil)
-	requireHTTPStatus(t, resp, http.StatusOK)
-	requireBodyContains(t, resp, telegramTokenMask)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", viewSession.Token, TelegramConfigInput{
 		Reason:      "admin read-only should not mutate",
@@ -68,6 +64,16 @@ func TestAdminUserRBACNoTenant(t *testing.T) {
 		ChatID:      "9999",
 	})
 	requireHTTPStatus(t, resp, http.StatusForbidden)
+
+	// Admin must succeed in configuring Telegram
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+		Reason:      "admin configures Telegram",
+		BotTokenRef: rawTelegramToken,
+		ChatID:      "1234",
+		ParseMode:   "HTML",
+		Enabled:     boolPtr(true),
+	})
+	requireHTTPStatus(t, resp, http.StatusOK)
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/tenants", adminToken, map[string]string{"slug": "customer-a"})
 	requireHTTPStatus(t, resp, http.StatusNotFound)

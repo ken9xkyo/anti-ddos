@@ -139,11 +139,10 @@ func TestAlertingIntegration(t *testing.T) {
 	defer server.Close()
 	adminToken := login(t, server.URL, "admin", "correct horse battery staple")
 	userToken := login(t, server.URL, "user", "user password phrase")
-	resp := authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
-	requireHTTPStatus(t, resp, http.StatusOK)
-	var viewSession Session
-	decodeTestBody(t, resp, &viewSession)
-	readOnlyToken := viewSession.Token
+
+	// Regular user must get 403 Forbidden when accessing Telegram config/test
+	resp := authedJSON(t, http.MethodGet, server.URL+"/v1/telegram/config", userToken, nil)
+	requireHTTPStatus(t, resp, http.StatusForbidden)
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
 		Reason:      "user configures Telegram",
@@ -151,28 +150,31 @@ func TestAlertingIntegration(t *testing.T) {
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
-	if resp.Code != http.StatusOK {
-		t.Fatalf("user Telegram config status=%d body=%s", resp.Code, resp.Body.String())
-	}
-	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) || strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
-		t.Fatalf("user Telegram config masking failed: %s", resp.Body.String())
-	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
-		Reason:      "configure Telegram",
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", userToken, map[string]string{"reason": "user test"})
+	requireHTTPStatus(t, resp, http.StatusForbidden)
+
+	// Admin must succeed in configuring Telegram
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
+		Reason:      "admin configures Telegram",
 		BotTokenRef: telegramToken,
 		ChatID:      "1234",
 		Enabled:     boolPtr(true),
 	})
 	if resp.Code != http.StatusOK {
-		t.Fatalf("configure Telegram status=%d body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("admin Telegram config status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) {
-		t.Fatalf("telegram config response did not mask token: %s", resp.Body.String())
+	if !strings.Contains(resp.Body.String(), `"bot_token_ref":"*****"`) || strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("admin Telegram config masking failed: %s", resp.Body.String())
 	}
-	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
-		t.Fatalf("telegram token leaked in config response: %s", resp.Body.String())
+
+	resp = authedJSON(t, http.MethodGet, server.URL+"/v1/telegram/config", adminToken, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("admin get Telegram config status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", userToken, TelegramConfigInput{
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/config", adminToken, TelegramConfigInput{
 		Reason:      "keep Telegram token",
 		BotTokenRef: "*****",
 		ChatID:      "1234",
@@ -184,11 +186,8 @@ func TestAlertingIntegration(t *testing.T) {
 	if strings.Contains(resp.Body.String(), "abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("telegram token leaked in masked config response: %s", resp.Body.String())
 	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", readOnlyToken, map[string]string{"reason": "read-only"})
-	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {
-		t.Fatalf("read-only test alert should fail status=%d body=%s", resp.Code, resp.Body.String())
-	}
-	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", userToken, map[string]string{"reason": "user test"})
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", adminToken, map[string]string{"reason": "admin test"})
 	if resp.Code != http.StatusOK {
 		t.Fatalf("test alert status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -198,6 +197,18 @@ func TestAlertingIntegration(t *testing.T) {
 	}
 	if testAlert.Status != alertStatusSent || len(testAlert.Deliveries) == 0 || testAlert.Deliveries[0].Status != alertStatusSent {
 		t.Fatalf("test alert not sent: %#v", testAlert)
+	}
+
+	// Create a viewing/read-only session for the admin
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/admin/view-user", adminToken, AdminViewUserInput{UserID: owner.ID})
+	requireHTTPStatus(t, resp, http.StatusOK)
+	var viewSession Session
+	decodeTestBody(t, resp, &viewSession)
+	readOnlyToken := viewSession.Token
+
+	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/telegram/test", readOnlyToken, map[string]string{"reason": "read-only"})
+	if resp.Code != http.StatusForbidden && resp.Code != http.StatusBadRequest {
+		t.Fatalf("read-only test alert should fail status=%d body=%s", resp.Code, resp.Body.String())
 	}
 
 	resp = authedJSON(t, http.MethodPost, server.URL+"/v1/alerts", userToken, AlertInput{
@@ -317,12 +328,20 @@ func TestAlertingIntegration(t *testing.T) {
 		t.Fatalf("bad isp alert: %#v", isp)
 	}
 
+	seen := map[string]bool{}
 	alerts, err := store.ListAlerts(ownerCtx, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
 	for _, alert := range alerts {
+		seen[alert.Type] = true
+	}
+	adminCtx := contextWithOwner(ctx, admin.ID)
+	adminAlerts, err := store.ListAlerts(adminCtx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alert := range adminAlerts {
 		seen[alert.Type] = true
 	}
 	for _, typ := range []string{"test_alert", "operator_notice", "feed_failure", "neighbor_unresolved", "isp_escalation_needed"} {

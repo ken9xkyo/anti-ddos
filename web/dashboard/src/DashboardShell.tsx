@@ -126,7 +126,7 @@ export function DashboardShell({
         ) : null}
 
         {data && activeTab === 'overview' ? <OverviewView data={data} /> : null}
-        {data && activeTab === 'incidents' ? <IncidentsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={canMutateUserConfig} onRefresh={onRefresh} /> : null}
+        {data && activeTab === 'incidents' ? <IncidentsView alerts={data.alerts} config={data.telegramConfig} user={user} canMutate={isAdmin && !user.read_only && !user.viewing_user} onRefresh={onRefresh} /> : null}
         {data && activeTab === 'services' ? <ServicesView services={data.services} agents={data.agents} applyStatuses={data.overview.latest_apply_status} canMutate={canMutateUserConfig} onRefresh={onRefresh} /> : null}
         {data && activeTab === 'rules' ? <RulesAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
         {data && activeTab === 'whitelist' ? <WhitelistAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}

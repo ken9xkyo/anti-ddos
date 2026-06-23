@@ -79,7 +79,8 @@ describe('ApiClient', () => {
 
     expect(loaded.overview.traffic.pps).toBe(1200);
     expect(loaded.alerts[0].type).toBe('isp_escalation_needed');
-    expect(seen.sort()).toEqual(Object.keys(responses).sort());
+    const expectedKeys = Object.keys(responses).filter((path) => path !== '/v1/telegram/config');
+    expect(seen.sort()).toEqual(expectedKeys.sort());
     expect(seen.some((path) => path.includes('/v1/tenants'))).toBe(false);
     expect(seen.some((path) => path.includes('/v1/feed-'))).toBe(false);
   });

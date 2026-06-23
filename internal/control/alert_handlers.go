@@ -11,6 +11,10 @@ func (s *Server) handleTelegramConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := requireGlobalFeedAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		cfg, err := s.store.GetTelegramConfig(r.Context())
@@ -32,7 +36,7 @@ func (s *Server) handleTelegramTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}

@@ -31,7 +31,7 @@ export function IncidentsView({
   const [working, setWorking] = useState('');
   const [result, setResult] = useState('');
   const [telegramForm, setTelegramForm] = useState<TelegramFormState>(() => telegramFormFromConfig(config));
-  const canConfigureTelegram = canMutate && user.role === 'user';
+  const canConfigureTelegram = canMutate && user.role === 'admin';
 
   useEffect(() => {
     setTelegramForm(telegramFormFromConfig(config));
@@ -119,7 +119,7 @@ export function IncidentsView({
             </div>
           </form>
         ) : (
-          <p className="muted">Telegram configuration changes require user access.</p>
+          <p className="muted">Telegram configuration changes require admin access.</p>
         )}
 
         <div className="button-row">

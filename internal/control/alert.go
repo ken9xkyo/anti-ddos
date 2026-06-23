@@ -129,7 +129,7 @@ func safeJSONResponse(raw []byte) json.RawMessage {
 }
 
 func (s *Store) UpsertTelegramConfig(ctx context.Context, actor *Actor, input TelegramConfigInput, reason string) (TelegramConfig, error) {
-	if err := requireConfigMutation(actor); err != nil {
+	if err := requireGlobalFeedAdmin(actor); err != nil {
 		return TelegramConfig{}, err
 	}
 	tokenInput := strings.TrimSpace(input.BotTokenRef)
@@ -204,6 +204,23 @@ WHERE id=1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id',
 	return cfg, tx.Commit(ctx)
 }
 
+func (s *Store) getAdminTelegramConfigRaw(ctx context.Context) (TelegramConfig, error) {
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return TelegramConfig{}, err
+	}
+	defer tx.Rollback(ctx)
+	cfg, err := scanTelegramConfig(tx.QueryRow(ctx, `SELECT tc.bot_token_ref, tc.chat_id, tc.parse_mode, tc.enabled, tc.created_at, tc.updated_at
+FROM telegram_configs tc
+JOIN app_users u ON u.id = tc.owner_user_id
+WHERE tc.id = 1 AND u.role = 'admin' AND u.status = 'active'`))
+	if err != nil {
+		return TelegramConfig{}, err
+	}
+	return cfg, tx.Commit(ctx)
+}
+
+
 func scanTelegramConfig(row rowScanner) (TelegramConfig, error) {
 	var cfg TelegramConfig
 	if err := row.Scan(&cfg.BotTokenRef, &cfg.ChatID, &cfg.ParseMode, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt); err != nil {
@@ -267,7 +284,9 @@ func normalizeTelegramParseMode(value string) string {
 
 func (s *Store) CreateAlert(ctx context.Context, actor *Actor, input AlertInput) (Alert, error) {
 	if err := requireConfigMutation(actor); err != nil {
-		return Alert{}, err
+		if requireAdmin(actor) != nil {
+			return Alert{}, err
+		}
 	}
 	return s.createAlert(ctx, actor, input)
 }
@@ -436,8 +455,18 @@ func (s *Store) deliverAlert(ctx context.Context, alert Alert) (Alert, error) {
 		}
 		return s.setAlertStatus(ctx, alert.ID, alertStatusDeduped)
 	}
-	cfg, err := s.getTelegramConfigRaw(ctx)
+	cfg, err := s.getAdminTelegramConfigRaw(ctx)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			msg := "telegram config is not configured for admin"
+			if _, err := s.recordAlertDelivery(ctx, alert.ID, "telegram", alertStatusFailed, 0, msg, nil); err != nil {
+				return alert, err
+			}
+			if s.metrics != nil {
+				s.metrics.alertsFailed.WithLabelValues("telegram", "config").Inc()
+			}
+			return s.setAlertStatus(ctx, alert.ID, alertStatusFailed)
+		}
 		return alert, err
 	}
 	token, status := resolveTelegramBotToken(cfg.BotTokenRef)
@@ -508,15 +537,16 @@ func (s *Store) alertRetryDelay(attempt uint32) time.Duration {
 
 func (s *Store) alertPolicy(ctx context.Context, alertType, severity string) (alertPolicy, error) {
 	policy := alertPolicy{RateLimitSeconds: defaultAlertRateLimitSeconds, MaxAttempts: defaultAlertMaxAttempts, Enabled: true}
-	tx, err := s.beginContextOwnerTx(ctx)
+	tx, err := s.beginUnscopedTx(ctx)
 	if err != nil {
 		return policy, err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT rate_limit_seconds, max_attempts, template, enabled
-FROM alert_policies
-WHERE alert_type=$1 AND severity=$2 AND channel='telegram'
-  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+	err = tx.QueryRow(ctx, `SELECT ap.rate_limit_seconds, ap.max_attempts, ap.template, ap.enabled
+FROM alert_policies ap
+JOIN app_users u ON u.id = ap.owner_user_id
+WHERE ap.alert_type=$1 AND ap.severity=$2 AND ap.channel='telegram'
+  AND u.role = 'admin' AND u.status = 'active'
 LIMIT 1`, alertType, severity).Scan(&policy.RateLimitSeconds, &policy.MaxAttempts, &policy.Template, &policy.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policy, nil
