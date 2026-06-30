@@ -773,7 +773,12 @@ func (s *Server) handleFeedConflicts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -786,7 +791,12 @@ func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSnapshotByVersion(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -809,7 +819,12 @@ func (s *Server) handleSnapshotByVersion(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -835,6 +850,10 @@ func (s *Server) handleBuildSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 		return
@@ -856,6 +875,10 @@ func (s *Server) handleBuildSnapshot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodPost {

@@ -49,13 +49,17 @@ describe('DashboardShell RBAC', () => {
   it('renders the user dashboard without tenant or reputation navigation', () => {
     renderShell(normalUser);
 
-    for (const group of ['Operation', 'Configuration', 'Setting']) {
+    for (const group of ['Operation', 'Configuration']) {
       expect(screen.getByText(group)).toBeInTheDocument();
     }
-    for (const label of ['Dashboard', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports', 'Snapshots', 'Nodes']) {
+    expect(screen.queryByText('Setting')).not.toBeInTheDocument();
+
+    for (const label of ['Dashboard', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
 
+    expect(screen.queryByRole('button', { name: 'Snapshots' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Nodes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Incidents' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accounts' })).not.toBeInTheDocument();
     expect(screen.queryByText('Threat Intelligence')).not.toBeInTheDocument();

@@ -76,7 +76,7 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
         "packet_loss_ratio": 0.15,
     })
 
-    snapshots = wait_for_snapshots(user, 2)
+    snapshots = wait_for_snapshots(api, 2)
     latest = snapshots[0]["version"]
     api.agent_post(f"/v1/agents/{agent_id}/apply", AGENT_TOKEN, {
         "policy_version": latest,

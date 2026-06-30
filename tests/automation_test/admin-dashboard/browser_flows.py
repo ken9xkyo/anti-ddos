@@ -44,8 +44,6 @@ def run_browser_suite(
             assert_services_workflow(page, seed)
             assert_rules_workflow(page, seed)
             assert_whitelist_workflow(page, seed)
-            assert_snapshots_workflow(page)
-            assert_fleet(page)
             assert_investigation(page)
             page.context.close()
 
@@ -116,12 +114,12 @@ def assert_user_shell_navigation(page: Page) -> None:
         "Whitelist",
         "Blacklist",
         "UDP Ports",
-        "Snapshots",
-        "Nodes",
     ]:
         goto_tab(page, tab)
     expect(page.get_by_role("button", name=re.compile(r"^Reputation\b", re.I))).to_have_count(0)
     expect(page.get_by_role("button", name=re.compile(r"^Accounts\b", re.I))).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile(r"^Snapshots\b", re.I))).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile(r"^Nodes\b", re.I))).to_have_count(0)
     goto_tab(page, "Dashboard")
 
 
@@ -170,6 +168,9 @@ def assert_admin_view_user_read_only(page: Page, seed: SeedData) -> None:
     goto_tab(page, "Incidents")
     expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_disabled()
     expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_have_count(0)
+
+    assert_snapshots_workflow(page)
+    assert_fleet(page)
 
 
 def assert_incidents_user_actions(page: Page) -> None:
@@ -305,10 +306,7 @@ def assert_snapshots_workflow(page: Page) -> None:
     page.get_by_role("button", name=re.compile(r"Load diff", re.I)).click()
     expect_visible_text(page, re.compile(r"diff v\d+ -> v\d+ loaded", re.I), timeout=20000)
     expect_visible_text(page, "Semantic Diff")
-    page.get_by_role("button", name=re.compile(r"^Rollback$", re.I)).first.click()
-    page.get_by_label(re.compile(r"^Reason", re.I)).fill("automation rollback snapshot")
-    page.get_by_role("button", name=re.compile(r"Create rollback", re.I)).click()
-    expect(page.locator(".confirm-dialog")).to_have_count(0, timeout=20000)
+    expect_visible_text(page, "read only")
 
 
 def assert_fleet(page: Page) -> None:
@@ -391,7 +389,7 @@ def assert_responsive_smoke(browser, base_url: str, seed: SeedData) -> None:
         page = context.new_page()
         try:
             login(page, base_url, seed.user_username, seed.user_password)
-            for tab in ("Dashboard", "Services", "Nodes"):
+            for tab in ("Dashboard", "Services", "Rules"):
                 goto_tab(page, tab)
                 expect(page.locator(".topbar h1")).to_be_visible()
             has_overlap = page.evaluate("""() => {
