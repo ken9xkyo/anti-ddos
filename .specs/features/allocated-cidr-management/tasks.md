@@ -47,10 +47,10 @@ Phase 3 (Parallel):
   - MCP: `filesystem`
   - Skill: `golang-pro`
 - **Done when**:
-  - [ ] Migration Version 8 is added to the migration slice in Go.
-  - [ ] Running integration tests applies the migration cleanly.
-  - [ ] Database contains the `allocated_cidrs` table with unique constraint and GIST indices.
-  - [ ] Pre-existing services have their CIDR allocated automatically to their owners.
+  - [x] Migration Version 8 is added to the migration slice in Go.
+  - [x] Running integration tests applies the migration cleanly.
+  - [x] Database contains the `allocated_cidrs` table with unique constraint and GIST indices.
+  - [x] Pre-existing services have their CIDR allocated automatically to their owners.
 - **Tests**: Go Database Integration
 - **Gate**: Full (`make test-all`)
 
@@ -71,8 +71,8 @@ Verify that all migration logs report success and that the database schema compi
 - **Tools**:
   - MCP: `filesystem`
 - **Done when**:
-  - [ ] Struct `AllocatedCIDR` is defined with json mappings for JSON Marshalling/Unmarshalling.
-  - [ ] Backend Go code compiles cleanly without syntax errors.
+  - [x] Struct `AllocatedCIDR` is defined with json mappings for JSON Marshalling/Unmarshalling.
+  - [x] Backend Go code compiles cleanly without syntax errors.
 - **Tests**: none
 - **Gate**: Build (`make build`)
 
@@ -93,9 +93,9 @@ go build ./cmd/control-api/...
   - MCP: `filesystem`
   - Skill: `golang-pro`
 - **Done when**:
-  - [ ] Storage methods are implemented.
-  - [ ] `CreateAllocatedCIDR` rejects overlapping allocations for other users.
-  - [ ] Unit/Integration tests are written in Go covering lists, overlap conflicts, and creation.
+  - [x] Storage methods are implemented.
+  - [x] `CreateAllocatedCIDR` rejects overlapping allocations for other users.
+  - [x] Unit/Integration tests are written in Go covering lists, overlap conflicts, and creation.
 - **Tests**: Go Database Integration
 - **Gate**: Full (`make test-all`)
 
@@ -116,9 +116,9 @@ go test -run TestAllocatedCIDRStorage ./internal/control/...
   - MCP: `filesystem`
   - Skill: `golang-pro`
 - **Done when**:
-  - [ ] `ValidateServiceCIDR` checks that service CIDR is contained inside owner's allocations.
-  - [ ] Service creation/update is rejected with bad request error if containment check fails.
-  - [ ] Go tests cover valid, invalid, and admin configurations.
+  - [x] `ValidateServiceCIDR` checks that service CIDR is contained inside owner's allocations.
+  - [x] Service creation/update is rejected with bad request error if containment check fails.
+  - [x] Go tests cover valid, invalid, and admin configurations.
 - **Tests**: Go Database Integration
 - **Gate**: Full (`make test-all`)
 
@@ -139,9 +139,9 @@ go test -run TestServiceCIDRValidation ./internal/control/...
   - MCP: `filesystem`
   - Skill: `golang-pro`
 - **Done when**:
-  - [ ] Deletion of allocation is blocked when containing active services.
-  - [ ] Database returns error listing blocking services.
-  - [ ] Integration tests verify blocked and successful deletions.
+  - [x] Deletion of allocation is blocked when containing active services.
+  - [x] Database returns error listing blocking services.
+  - [x] Integration tests verify blocked and successful deletions.
 - **Tests**: Go Database Integration
 - **Gate**: Full (`make test-all`)
 
@@ -161,10 +161,10 @@ go test -run TestDeleteAllocationBlocked ./internal/control/...
 - **Tools**:
   - MCP: `filesystem`
 - **Done when**:
-  - [ ] Routing endpoints are registered in server initialization.
-  - [ ] Admins are permitted to perform user allocation CRUD, non-admins receive 403.
-  - [ ] Standard user can list their own allocations.
-  - [ ] HTTP API integration tests verify these requirements.
+  - [x] Routing endpoints are registered in server initialization.
+  - [x] Admins are permitted to perform user allocation CRUD, non-admins receive 403.
+  - [x] Standard user can list their own allocations.
+  - [x] HTTP API integration tests verify these requirements.
 - **Tests**: Go Database Integration
 - **Gate**: Full (`make test-all`)
 
@@ -184,8 +184,8 @@ go test -run TestAllocatedCIDRAPI ./internal/control/...
 - **Tools**:
   - MCP: `filesystem`
 - **Done when**:
-  - [ ] TypeScript types are compiled.
-  - [ ] Client requests compile and pass vitest unit checks.
+  - [x] TypeScript types are compiled.
+  - [x] Client requests compile and pass vitest unit checks.
 - **Tests**: Vitest React Testing
 - **Gate**: Quick (`make test`)
 
@@ -205,8 +205,8 @@ npm --prefix web/dashboard run build
 - **Tools**:
   - MCP: `filesystem`
 - **Done when**:
-  - [ ] Accounts grid shows a "CIDRs" action button for user accounts.
-  - [ ] Drawer loads and displays active user allocations, permits creating and deleting with confirmation.
+  - [x] Accounts grid shows a "CIDRs" action button for user accounts.
+  - [x] Drawer loads and displays active user allocations, permits creating and deleting with confirmation.
 - **Tests**: Vitest React Testing
 - **Gate**: Quick (`make test`)
 
@@ -226,9 +226,9 @@ npm --prefix web/dashboard test -- --run
 - **Tools**:
   - MCP: `filesystem`
 - **Done when**:
-  - [ ] Service creation UI pulls allocations for the active target owner.
-  - [ ] Active allocations are shown as guidance text.
-  - [ ] Input validates format and displays containment warnings.
+  - [x] Service creation UI pulls allocations for the active target owner.
+  - [x] Active allocations are shown as guidance text.
+  - [x] Input validates format and displays containment warnings.
 - **Tests**: Vitest React Testing
 - **Gate**: Quick (`make test`)
 
@@ -309,8 +309,8 @@ Phase 3 (Parallel):
 
 ## Success Criteria
 
-- [ ] Existing backend services have their CIDRs automatically registered to their owners.
-- [ ] Database contains disjoint allocated CIDRs per user.
-- [ ] Control Plane rejects service modifications out of owner allocations.
-- [ ] Deletion of allocated CIDRs is prevented when active services reside inside.
-- [ ] UI visual panels allow admins to manage user allocations and guide users during service creation.
+- [x] Existing backend services have their CIDRs automatically registered to their owners.
+- [x] Database contains disjoint allocated CIDRs per user.
+- [x] Control Plane rejects service modifications out of owner allocations.
+- [x] Deletion of allocated CIDRs is prevented when active services reside inside.
+- [x] UI visual panels allow admins to manage user allocations and guide users during service creation.
