@@ -32,15 +32,15 @@ def run_browser_suite(
             login(page, base_url, seed.admin_username, seed.admin_password)
             assert_admin_shell_navigation(page)
             assert_admin_only_visibility(page)
+            assert_user_telegram_config(page)
+            assert_incidents_user_actions(page)
             assert_admin_view_user_read_only(page, seed)
             page.context.close()
 
             page = browser.new_context(viewport=DESKTOP_VIEWPORT).new_page()
             login(page, base_url, seed.user_username, seed.user_password)
             assert_user_shell_navigation(page)
-            assert_overview(page, seed)
-            assert_incidents_user_actions(page)
-            assert_user_telegram_config(page)
+            assert_overview(page, seed, expect_alerts=False)
             assert_services_workflow(page, seed)
             assert_rules_workflow(page, seed)
             assert_whitelist_workflow(page, seed)
@@ -110,7 +110,6 @@ def assert_admin_shell_navigation(page: Page) -> None:
 def assert_user_shell_navigation(page: Page) -> None:
     for tab in [
         "Dashboard",
-        "Incidents",
         "Events",
         "Services",
         "Rules",
@@ -126,12 +125,13 @@ def assert_user_shell_navigation(page: Page) -> None:
     goto_tab(page, "Dashboard")
 
 
-def assert_overview(page: Page, seed: SeedData) -> None:
+def assert_overview(page: Page, seed: SeedData, *, expect_alerts: bool = True) -> None:
     goto_tab(page, "Dashboard")
     expect_visible_text(page, "prometheus healthy")
     expect_visible_text(page, "198.51.100.0/24")
     expect_visible_text(page, "auto-admin-dashboard-node-a")
-    expect_visible_text(page, re.compile(r"isp_escalation_needed|test_alert"))
+    if expect_alerts:
+        expect_visible_text(page, re.compile(r"isp_escalation_needed|test_alert"))
     page.wait_for_function("document.querySelectorAll('.chart-panel svg').length >= 2")
 
 
@@ -139,8 +139,8 @@ def assert_admin_only_visibility(page: Page) -> None:
     goto_tab(page, "Accounts")
     expect(page.get_by_role("button", name=re.compile(r"Add user", re.I))).to_be_visible(timeout=15000)
     goto_tab(page, "Incidents")
-    expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_disabled()
-    expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile(r"Test alert", re.I))).to_be_enabled()
+    expect(page.get_by_role("button", name=re.compile(r"Save config", re.I))).to_be_visible()
     goto_tab(page, "Reputation")
     page.get_by_role("button", name=re.compile(r"Add feed", re.I)).click()
     drawer = page.locator(".admin-drawer")
@@ -193,7 +193,6 @@ def assert_services_workflow(page: Page, seed: SeedData) -> None:
     form.locator("label", has_text="Backend CIDR").locator("input").fill("203.0.113.20/32")
     form.locator("label", has_text="Allowed ports").locator("input").fill("443, 8443")
     form.locator("label", has_text="Output interface").locator("select").select_option("backend0")
-    form.locator("label", has_text="Owner").locator("input").fill("automation")
     form.locator("label", has_text="Reason").locator("input").fill("automation create UI service")
     form.get_by_role("button", name=re.compile(r"Save service", re.I)).click()
     expect_visible_text(page, f"{name} created", timeout=20000)
@@ -227,7 +226,6 @@ def assert_rules_workflow(page: Page, seed: SeedData) -> None:
     drawer = page.locator(".admin-drawer")
     drawer.get_by_label(re.compile(r"^Name", re.I)).fill(name)
     drawer.get_by_label(re.compile(r"^PPS", re.I)).fill("1200")
-    drawer.get_by_label(re.compile(r"^Owner", re.I)).fill("soc")
     drawer.locator("label.json-textarea-field", has_text="Match expression").locator("textarea").fill("{invalid")
     drawer.get_by_label(re.compile(r"^Reason", re.I)).fill("automation create UI rule")
     drawer.get_by_role("button", name=re.compile(r"Save rule", re.I)).click()
@@ -260,7 +258,6 @@ def assert_whitelist_workflow(page: Page, seed: SeedData) -> None:
     select_mui_option(page, drawer, "Scope", "Service")
     select_mui_option(page, drawer, "Service", seed.service["name"])
     drawer.get_by_label(re.compile(r"^Label", re.I)).fill("ui-partner")
-    drawer.get_by_label(re.compile(r"^Owner", re.I)).fill("noc")
     drawer.get_by_label(re.compile(r"^Reason", re.I)).fill("automation create UI whitelist")
     drawer.get_by_role("button", name=re.compile(r"Save whitelist", re.I)).click()
     data_grid_row(page, cidr)

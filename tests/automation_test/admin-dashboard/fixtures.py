@@ -35,12 +35,13 @@ class SeedData:
 def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> SeedData:
     user_username = f"{prefix}-user"
 
-    api.post("/v1/users", {
+    created_user = api.post("/v1/users", {
         "reason": "automation create owner user",
         "username": user_username,
         "password": USER_PASSWORD,
         "role": "user",
     })
+    user_id = created_user["id"]
 
     user = ApiClient(api.base_url)
     user.login(user_username, USER_PASSWORD)
@@ -54,14 +55,19 @@ def seed_environment(api: ApiClient, support: SupportServers, prefix: str) -> Se
     feed = api.post("/v1/feed-sources", feed_payload(f"{prefix}-internal-feed", support.feed.url))
     api.post(f"/v1/feed-sources/{feed['id']}/sync", {"reason": "automation seed feed sync"})
 
-    user.post("/v1/telegram/config", {
+    api.post("/v1/telegram/config", {
         "reason": "automation configure Telegram",
         "bot_token_ref": TELEGRAM_TOKEN_VALUE,
         "chat_id": "1234",
         "parse_mode": "HTML",
         "enabled": True,
     })
-    user.post("/v1/alerts/evaluate-isp-escalation", {
+
+    # Switch admin context to view the standard user's tenant
+    api.post("/v1/admin/view-user", {"user_id": user_id})
+
+    # Evaluate the ISP alert in the user's tenant context
+    api.post("/v1/alerts/evaluate-isp-escalation", {
         "reason": "automation ISP runbook",
         "target": service["backend_cidr"],
         "vector": "udp_flood",

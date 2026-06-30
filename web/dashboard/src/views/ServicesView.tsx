@@ -3,7 +3,7 @@ import { AlertTriangle, Pencil, Plus, Router, Save, Trash2 } from 'lucide-react'
 import { api } from '../client';
 import { DataToolbar, EmptyTableRow, PanelHeader, SearchField, StatusPill, TablePanel } from '../components';
 import { formatDateTime, numberValue } from '../format';
-import type { Agent, ApplyStatus, Service, ServiceInput } from '../types';
+import type { Agent, ApplyStatus, Service, ServiceInput, User } from '../types';
 
 type ServiceFormState = {
   reason: string;
@@ -36,12 +36,14 @@ export function ServicesView({
   agents,
   applyStatuses,
   canMutate,
+  user,
   onRefresh
 }: {
   services: Service[];
   agents: Agent[];
   applyStatuses: ApplyStatus[];
   canMutate: boolean;
+  user?: User;
   onRefresh: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState('');
@@ -49,7 +51,7 @@ export function ServicesView({
   const [stateFilter, setStateFilter] = useState('all');
   const [formMode, setFormMode] = useState<'create' | 'edit' | ''>('');
   const [editingService, setEditingService] = useState<Service | null>(null);
-  const [form, setForm] = useState<ServiceFormState>(() => emptyServiceForm());
+  const [form, setForm] = useState<ServiceFormState>(() => emptyServiceForm(user));
   const [disableTarget, setDisableTarget] = useState<Service | null>(null);
   const [disableReason, setDisableReason] = useState('disable protected service');
   const [working, setWorking] = useState('');
@@ -90,7 +92,7 @@ export function ServicesView({
   const openCreate = () => {
     setFormMode('create');
     setEditingService(null);
-    setForm(emptyServiceForm());
+    setForm(emptyServiceForm(user));
     setResult('');
   };
 
@@ -264,10 +266,12 @@ export function ServicesView({
               <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
             )}
           </label>
-          <label>
-            Owner
-            <input value={form.owner} onChange={(event) => setForm({ ...form, owner: event.target.value })} />
-          </label>
+          {formMode === 'edit' && (
+            <label>
+              Owner
+              <input value={form.owner} disabled />
+            </label>
+          )}
           <label>
             Criticality
             <input value={form.criticality} onChange={(event) => setForm({ ...form, criticality: event.target.value })} placeholder="high" />
@@ -382,7 +386,7 @@ export function ServicesView({
   );
 }
 
-function emptyServiceForm(): ServiceFormState {
+function emptyServiceForm(user?: User): ServiceFormState {
   return {
     reason: 'update protected service',
     name: '',
@@ -391,7 +395,7 @@ function emptyServiceForm(): ServiceFormState {
     protocol: 'tcp',
     allowed_ports: '',
     output_interface: '',
-    owner: '',
+    owner: user?.username || '',
     criticality: 'high',
     protection_mode: 'enforce',
     enabled: false,
