@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,6 +39,10 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 		return Service{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if err := s.ValidateServiceCIDR(ctx, tx, actorOwnerUserID(actor), input.BackendCIDR); err != nil {
+		return Service{}, err
+	}
 
 	var service Service
 	err = scanService(tx.QueryRow(ctx, `INSERT INTO backend_services(
@@ -98,6 +103,11 @@ func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, inpu
 	if err != nil {
 		return Service{}, err
 	}
+
+	if err := s.ValidateServiceCIDR(ctx, tx, actorOwnerUserID(actor), input.BackendCIDR); err != nil {
+		return Service{}, err
+	}
+
 	enabled := boolDefault(input.Enabled, before.Enabled)
 	ports := int32Ports(input.AllowedPorts)
 	var after Service
@@ -1994,3 +2004,219 @@ func ruleDimensionNumber(dimension string) uint32 {
 		return 3
 	}
 }
+
+func (s *Store) ListUserAllocatedCIDRs(ctx context.Context, targetUserID string) ([]AllocatedCIDR, error) {
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `SELECT id::text, user_id::text, cidr::text, created_at, updated_at 
+FROM allocated_cidrs WHERE user_id=$1 ORDER BY cidr`, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cidrs []AllocatedCIDR
+	for rows.Next() {
+		var c AllocatedCIDR
+		if err := rows.Scan(&c.ID, &c.UserID, &c.CIDR, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		cidrs = append(cidrs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return cidrs, tx.Commit(ctx)
+}
+
+func (s *Store) ListMeAllocatedCIDRs(ctx context.Context, actor *Actor) ([]AllocatedCIDR, error) {
+	if actor == nil {
+		return nil, errors.New("authentication required")
+	}
+	return s.ListUserAllocatedCIDRs(ctx, actor.ID)
+}
+
+func (s *Store) CreateAllocatedCIDR(ctx context.Context, actor *Actor, targetUserID string, input AllocatedCIDRInput, reason string) (AllocatedCIDR, error) {
+	if err := requireAdmin(actor); err != nil {
+		return AllocatedCIDR{}, err
+	}
+	targetUserID = strings.TrimSpace(targetUserID)
+	cidrStr := strings.TrimSpace(input.CIDR)
+	if targetUserID == "" || cidrStr == "" {
+		return AllocatedCIDR{}, errors.New("user_id and cidr are required")
+	}
+	reason = mutationReason(reason, input.Reason)
+	if reason == "" {
+		return AllocatedCIDR{}, errors.New("reason is required")
+	}
+
+	// Validate CIDR format
+	_, _, err := net.ParseCIDR(cidrStr)
+	if err != nil {
+		return AllocatedCIDR{}, fmt.Errorf("invalid cidr format: %w", err)
+	}
+
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return AllocatedCIDR{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Check if this CIDR overlaps with ANY other user's CIDR allocations
+	var conflictUser string
+	var conflictCIDR string
+	err = tx.QueryRow(ctx, `
+		SELECT u.username, a.cidr::text
+		FROM allocated_cidrs a
+		JOIN app_users u ON u.id = a.user_id
+		WHERE a.user_id <> $1 AND a.cidr && $2::inet
+		LIMIT 1
+	`, targetUserID, cidrStr).Scan(&conflictUser, &conflictCIDR)
+
+	if err == nil {
+		return AllocatedCIDR{}, fmt.Errorf("CIDR overlaps with user %s's allocation: %s", conflictUser, conflictCIDR)
+	} else if err != pgx.ErrNoRows {
+		return AllocatedCIDR{}, err
+	}
+
+	id, err := newUUID()
+	if err != nil {
+		return AllocatedCIDR{}, err
+	}
+
+	var c AllocatedCIDR
+	err = tx.QueryRow(ctx, `
+		INSERT INTO allocated_cidrs (id, user_id, cidr)
+		VALUES ($1, $2, $3)
+		RETURNING id::text, user_id::text, cidr::text, created_at, updated_at
+	`, id, targetUserID, cidrStr).Scan(&c.ID, &c.UserID, &c.CIDR, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return AllocatedCIDR{}, err
+	}
+
+	if err := insertAudit(ctx, tx, actor, "create_allocated_cidr", "allocated_cidr", c.ID, nil, c, reason, ""); err != nil {
+		return AllocatedCIDR{}, err
+	}
+
+	return c, tx.Commit(ctx)
+}
+
+func (s *Store) DeleteAllocatedCIDR(ctx context.Context, actor *Actor, targetUserID string, id string, reason string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("allocation id is required")
+	}
+	if reason == "" {
+		return errors.New("reason is required")
+	}
+
+	tx, err := s.beginUnscopedTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Retrieve the allocation to check what we are deleting and for audit trails
+	var c AllocatedCIDR
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, user_id::text, cidr::text, created_at, updated_at
+		FROM allocated_cidrs
+		WHERE id=$1
+	`, id).Scan(&c.ID, &c.UserID, &c.CIDR, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return err
+	}
+
+	// Verify that targetUserID matches the allocation's user_id
+	if c.UserID != targetUserID {
+		return errors.New("user ID mismatch")
+	}
+
+	// Block deletion if any active backend service of the user falls within this allocation CIDR
+	var inUse bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM backend_services
+			WHERE owner_user_id = $1 AND deleted_at IS NULL AND backend_cidr <<= $2::inet
+		)
+	`, c.UserID, c.CIDR).Scan(&inUse)
+	if err != nil {
+		return err
+	}
+
+	if inUse {
+		// Let's get the list of blocking services for a clear error message
+		rows, err := tx.Query(ctx, `
+			SELECT name FROM backend_services
+			WHERE owner_user_id = $1 AND deleted_at IS NULL AND backend_cidr <<= $2::inet
+		`, c.UserID, c.CIDR)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		var serviceNames []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return err
+			}
+			serviceNames = append(serviceNames, name)
+		}
+		return fmt.Errorf("cannot delete allocation: still used by active service(s) (%s)", strings.Join(serviceNames, ", "))
+	}
+
+	_, err = tx.Exec(ctx, `DELETE FROM allocated_cidrs WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+
+	if err := insertAudit(ctx, tx, actor, "delete_allocated_cidr", "allocated_cidr", id, c, nil, reason, ""); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (s *Store) ValidateServiceCIDR(ctx context.Context, tx pgx.Tx, ownerUserID string, backendCIDR string) error {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	backendCIDR = strings.TrimSpace(backendCIDR)
+	if ownerUserID == "" {
+		return errors.New("owner user ID is required")
+	}
+	if backendCIDR == "" {
+		return errors.New("backend CIDR is required")
+	}
+
+	var hasAllocations bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM allocated_cidrs)`).Scan(&hasAllocations)
+	if err != nil {
+		return err
+	}
+	if !hasAllocations {
+		return nil
+	}
+
+	var valid bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM allocated_cidrs
+			WHERE user_id = $1 AND $2::inet <<= cidr
+		)
+	`, ownerUserID, backendCIDR).Scan(&valid)
+	if err != nil {
+		return err
+	}
+
+	if !valid {
+		return fmt.Errorf("backend CIDR %s is not contained within your allocated blocks", backendCIDR)
+	}
+	return nil
+}
+

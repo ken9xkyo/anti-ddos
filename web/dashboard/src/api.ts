@@ -32,7 +32,9 @@ import type {
   UserUpdateInput,
   WhitelistEntry,
   WhitelistFilters,
-  WhitelistInput
+  WhitelistInput,
+  AllocatedCIDR,
+  AllocatedCIDRInput
 } from './types';
 
 export class ApiClient {
@@ -156,6 +158,28 @@ export class ApiClient {
     return this.request<User>(`/v1/users/${encodeURIComponent(id)}/sessions/revoke`, {
       method: 'POST',
       body: JSON.stringify({ reason })
+    });
+  }
+
+  async meAllocatedCIDRs(): Promise<AllocatedCIDR[]> {
+    return asArray(await this.request<AllocatedCIDR[] | null>('/v1/me/allocated-cidrs'));
+  }
+
+  async userAllocatedCIDRs(userID: string): Promise<AllocatedCIDR[]> {
+    return asArray(await this.request<AllocatedCIDR[] | null>(`/v1/users/${encodeURIComponent(userID)}/allocated-cidrs`));
+  }
+
+  async createAllocatedCIDR(userID: string, input: AllocatedCIDRInput): Promise<AllocatedCIDR> {
+    return this.request<AllocatedCIDR>(`/v1/users/${encodeURIComponent(userID)}/allocated-cidrs`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+  }
+
+  async deleteAllocatedCIDR(userID: string, id: string, reason: string): Promise<void> {
+    await this.request<any>(`/v1/users/${encodeURIComponent(userID)}/allocated-cidrs/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Audit-Reason': reason }
     });
   }
 

@@ -58,6 +58,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/v1/me", s.handleMe)
 	s.mux.HandleFunc("/v1/me/password", s.handleMePassword)
+	s.mux.HandleFunc("/v1/me/allocated-cidrs", s.handleMeAllocatedCIDRs)
 	s.mux.HandleFunc("/v1/admin/view-user", s.handleAdminViewUser)
 	s.mux.HandleFunc("/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/v1/users/", s.handleUserByID)
@@ -185,6 +186,65 @@ func (s *Server) handleMePassword(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, user, err)
 }
 
+func (s *Server) handleMeAllocatedCIDRs(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	cidrs, err := s.store.ListMeAllocatedCIDRs(r.Context(), actor)
+	writeResult(w, cidrs, err)
+}
+
+func (s *Server) handleUserAllocatedCIDRs(w http.ResponseWriter, r *http.Request, userID string, parts []string) {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
+
+	if len(parts) == 2 {
+		switch r.Method {
+		case http.MethodGet:
+			cidrs, err := s.store.ListUserAllocatedCIDRs(r.Context(), userID)
+			writeResult(w, cidrs, err)
+		case http.MethodPost:
+			var req AllocatedCIDRInput
+			if !decodeJSON(w, r, &req) {
+				return
+			}
+			cidr, err := s.store.CreateAllocatedCIDR(r.Context(), actor, userID, req, r.Header.Get("X-Audit-Reason"))
+			writeResult(w, cidr, err)
+		default:
+			methodNotAllowed(w)
+		}
+		return
+	}
+
+	if len(parts) == 3 {
+		if r.Method != http.MethodDelete {
+			methodNotAllowed(w)
+			return
+		}
+		id := parts[2]
+		err := s.store.DeleteAllocatedCIDR(r.Context(), actor, userID, id, r.Header.Get("X-Audit-Reason"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
+	writeError(w, http.StatusNotFound, errors.New("route not found"))
+}
+
 func (s *Server) handleAdminViewUser(w http.ResponseWriter, r *http.Request) {
 	actor, ok := s.requireActor(w, r)
 	if !ok {
@@ -240,6 +300,10 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parts[0]
+	if len(parts) >= 2 && parts[1] == "allocated-cidrs" {
+		s.handleUserAllocatedCIDRs(w, r, id, parts)
+		return
+	}
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "password-reset":

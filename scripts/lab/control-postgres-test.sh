@@ -7,6 +7,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 run_control_postgres_test \
   "control domain" \
-  '^Test(ControlCoreIntegration|ObservabilityHandlersIntegration|FeedSyncIntegration|AlertingIntegration|DashboardAPIIntegration)$' \
+  '^Test(ControlCoreIntegration|ObservabilityHandlersIntegration|FeedSyncIntegration|AlertingIntegration|DashboardAPIIntegration|AllocatedCIDRIntegration|ExistingServicesMigrationAutoAllocate)$' \
   "control" \
   "control_test_password"

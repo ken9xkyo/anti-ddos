@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField } from '@mui/material';
+import { Alert, Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { GridColDef } from '@mui/x-data-grid';
 import { Eye, KeyRound, Plus, RotateCcw, ShieldCheck, Users } from 'lucide-react';
 import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { PanelHeader, StatusPill } from '../components';
 import { formatDateTime } from '../format';
-import type { Role, User } from '../types';
+import type { Role, User, AllocatedCIDR } from '../types';
 
 type UserForm = {
   reason: string;
@@ -30,11 +30,15 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
-  const [mode, setMode] = useState<'create' | 'edit' | 'reset' | ''>('');
+  const [mode, setMode] = useState<'create' | 'edit' | 'reset' | 'cidrs' | ''>('');
   const [target, setTarget] = useState<User | null>(null);
   const [form, setForm] = useState<UserForm>(emptyUserForm);
   const [revokeTarget, setRevokeTarget] = useState<User | null>(null);
   const [reason, setReason] = useState('revoke user sessions');
+  const [cidrs, setCidrs] = useState<AllocatedCIDR[]>([]);
+  const [newCidr, setNewCidr] = useState('');
+  const [cidrReason, setCidrReason] = useState('');
+  const [cidrError, setCidrError] = useState('');
   const isAdmin = currentUser.role === 'admin';
 
   const load = async () => {
@@ -73,7 +77,7 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
     {
       field: 'actions',
       headerName: 'Actions',
-      width: 220,
+      width: 290,
       sortable: false,
       renderCell: (params) => {
         const row = params.row as User;
@@ -81,6 +85,7 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
         return (
           <Stack direction="row" spacing={0.75}>
             <Button size="small" variant="outlined" disabled={row.role !== 'user' || row.status === 'revoked' || !onViewUserConfig} onClick={() => onViewUserConfig?.(row.id)}><Eye size={14} />View config</Button>
+            <Button size="small" variant="outlined" disabled={row.role !== 'user' || row.status === 'revoked'} onClick={() => openCidrs(row)}>CIDRs</Button>
             <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
             <Button size="small" variant="outlined" onClick={() => openReset(row)}>Reset</Button>
             <Button size="small" variant="outlined" color="warning" onClick={() => {
@@ -120,6 +125,44 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
     setTarget(user);
     setForm({ ...emptyUserForm, reason: `reset ${user.username} password`, username: user.username, role: user.role });
     setMode('reset');
+  };
+
+  const openCidrs = async (user: User) => {
+    setTarget(user);
+    setCidrError('');
+    setNewCidr('');
+    setCidrReason(`allocate CIDR to ${user.username}`);
+    setMode('cidrs');
+    try {
+      setCidrs(await api.userAllocatedCIDRs(user.id));
+    } catch (err) {
+      setCidrError(err instanceof Error ? err.message : 'failed to load CIDRs');
+    }
+  };
+
+  const addCidr = async () => {
+    if (!target) return;
+    setCidrError('');
+    try {
+      const added = await api.createAllocatedCIDR(target.id, { cidr: newCidr, reason: cidrReason });
+      setCidrs([...cidrs, added]);
+      setNewCidr('');
+    } catch (err) {
+      setCidrError(err instanceof Error ? err.message : 'failed to add CIDR');
+    }
+  };
+
+  const deleteCidr = async (id: string) => {
+    if (!target) return;
+    setCidrError('');
+    const reasonStr = prompt('Enter audit reason for deletion:', `delete CIDR for ${target.username}`);
+    if (reasonStr === null) return;
+    try {
+      await api.deleteAllocatedCIDR(target.id, id, reasonStr || 'delete CIDR');
+      setCidrs(cidrs.filter(c => c.id !== id));
+    } catch (err) {
+      setCidrError(err instanceof Error ? err.message : 'failed to delete CIDR');
+    }
   };
 
   const submit = async () => {
@@ -181,7 +224,7 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
       <AdminGrid rows={users} columns={columns} loading={loading} emptyText="No users" height={520} />
 
       <AdminDrawer
-        open={mode !== ''}
+        open={mode === 'create' || mode === 'edit' || mode === 'reset'}
         title={mode === 'create' ? 'Add User' : mode === 'reset' ? `Reset ${target?.username ?? 'user'} Password` : `Edit ${target?.username ?? 'user'}`}
         onClose={() => setMode('')}
         actions={<>
@@ -205,6 +248,48 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
         ) : null}
         <FormControlLabel control={<Checkbox checked={form.force_password_change} onChange={(event) => setForm({ ...form, force_password_change: event.target.checked })} />} label="Force password change" />
         <ReasonField value={form.reason} onChange={(value) => setForm({ ...form, reason: value })} />
+      </AdminDrawer>
+
+      <AdminDrawer
+        open={mode === 'cidrs'}
+        title={`Manage ${target?.username ?? 'user'}'s CIDR Allocations`}
+        onClose={() => setMode('')}
+        actions={<Button onClick={() => setMode('')}>Close</Button>}
+      >
+        {cidrError ? <Alert severity="error">{cidrError}</Alert> : null}
+        
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>Allocated CIDRs</Typography>
+          {cidrs.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">No CIDR blocks allocated.</Typography>
+          ) : (
+            cidrs.map((c) => (
+              <Stack key={c.id} direction="row" spacing={2} sx={{ borderBottom: '1px solid rgba(148,163,184,0.1)', pb: 1, alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{c.cidr}</Typography>
+                <Button size="small" variant="text" color="error" onClick={() => deleteCidr(c.id)}>Delete</Button>
+              </Stack>
+            ))
+          )}
+        </Stack>
+
+        <Stack spacing={1.5} sx={{ borderTop: '1px solid rgba(148,163,184,0.2)', pt: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>Allocate New CIDR</Typography>
+          <TextField
+            label="CIDR (e.g. 192.168.1.0/24)"
+            value={newCidr}
+            onChange={(e) => setNewCidr(e.target.value)}
+            fullWidth
+            size="small"
+          />
+          <TextField
+            label="Audit Reason"
+            value={cidrReason}
+            onChange={(e) => setCidrReason(e.target.value)}
+            fullWidth
+            size="small"
+          />
+          <Button variant="contained" onClick={addCidr} disabled={!newCidr.trim()}>Allocate CIDR</Button>
+        </Stack>
       </AdminDrawer>
 
       <ConfirmDialog

@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Pencil, Plus, Router, Save, Trash2 } from 'lucide-react';
 import { api } from '../client';
 import { DataToolbar, EmptyTableRow, PanelHeader, SearchField, StatusPill, TablePanel } from '../components';
@@ -54,6 +54,15 @@ export function ServicesView({
   const [disableReason, setDisableReason] = useState('disable protected service');
   const [working, setWorking] = useState('');
   const [result, setResult] = useState('');
+  const [allocatedCidrs, setAllocatedCidrs] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (canMutate) {
+      api.meAllocatedCIDRs()
+        .then((list) => setAllocatedCidrs(list.map((c) => c.cidr)))
+        .catch((err) => console.error('failed to load allocated CIDRs', err));
+    }
+  }, [canMutate]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -220,6 +229,15 @@ export function ServicesView({
           <label>
             Backend CIDR
             <input value={form.backend_cidr} onChange={(event) => setForm({ ...form, backend_cidr: event.target.value })} placeholder="203.0.113.10/32" />
+            {allocatedCidrs.length > 0 ? (
+              <span className="field-hint" style={{ fontSize: '0.78rem', color: 'rgba(148, 163, 184, 0.7)', marginTop: '0.25rem' }}>
+                Allocated bounds: {allocatedCidrs.join(', ')}
+              </span>
+            ) : (
+              <span className="field-hint" style={{ fontSize: '0.78rem', color: 'rgba(239, 68, 68, 0.8)', marginTop: '0.25rem' }}>
+                No active CIDR allocations found.
+              </span>
+            )}
           </label>
           <label>
             Protocol

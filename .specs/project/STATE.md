@@ -1,8 +1,8 @@
 # Project State
 
-Last updated: 2026-06-12
+Last updated: 2026-06-30
 
-Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboard/Control API/eBPF enhancement after Phase 08; Phase 09 - Telegram ISP Runbook remains next.
+Current work: Allocated CIDR Management completed as an Admin Dashboard/Control API/PostgreSQL database enhancement. Phase 09 - Telegram ISP Runbook remains next.
 
 ## Decisions
 
@@ -40,8 +40,12 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 - UDP Reflection Source-Port Blocking uses global `udp_source_port_blocks`, seeds common reflection/amplification source ports disabled by default, allows Operator/Admin mutation, keeps Viewer read-only, and only includes enabled/non-expired entries in snapshots.
 - UDP source-port blocking adds eBPF ABI reason `REASON_UDP_AMP_SOURCE_PORT = 11` and A/B maps `udp_src_port_blocks_a/b`. XDP applies it after protected service match, whitelist precedence and blacklist precedence; whitelisted sources bypass it.
 - Snapshot feature flag `udp_src_port_block` is emitted only when active UDP source-port blocks exist. Rollout guard: deploy the new BPF/Agent first, then enable entries deliberately; no real NIC attach during verification.
+- Allocated CIDR Management requires a new database table `allocated_cidrs` and utilizes subnet containment (`<<=`) and overlap checks (`&&`) in Go/PostgreSQL.
+- Admin deletion of a CIDR allocation is strictly blocked if there are active backend services configured within that block.
+- Service validation applies to all configurations, requiring that any configured service's `backend_cidr` is equal to or a subnet of the owner's allocated CIDRs. Both standard users and admins configuring on behalf of users are subject to this check.
 
 ## Current Host Facts
+
 
 - OS: Ubuntu 24.04.3 LTS (`noble`).
 - Kernel: `6.8.0-106-generic` on `x86_64`.
@@ -76,3 +80,4 @@ Current work: UDP Reflection Source-Port Blocking completed as an Admin Dashboar
 - 2026-06-12: `001-blacklist-entries-created-at` fixed `/v1/blacklist/entries` SQL by mapping feed row `created_at` from `reputation_entries.first_seen_at`; verified with Go tests and threat-feed PostgreSQL integration.
 - 2026-06-12: `002-agent-start-output-xdp-pass-failure` changed `agent-start` to preserve output `xdp_pass` after a failed Agent launch; verified with dry-run shell syntax checks and `make agent-build`.
 - 2026-06-12: `003-agent-start-explicit-control-sync` changed `agent-start` to keep Control sync disabled unless explicitly configured and to validate missing owner config before output XDP attach; verified with dry-run syntax, Agent tests, `make agent-build`, and a safe missing-owner guard run.
+- 2026-06-30: `004-allocated-cidr-management` implemented Admin Allocated CIDR controls (disjoint check, containment checks, auto-migration, Admin Drawer, and ServicesView guides); verified with integration tests and frontend build.

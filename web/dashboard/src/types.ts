@@ -7,6 +7,20 @@ export interface ViewingUser {
   username: string;
 }
 
+export interface AllocatedCIDR {
+  id: string;
+  user_id: string;
+  cidr: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AllocatedCIDRInput {
+  reason: string;
+  cidr: string;
+}
+
+
 export interface User {
   id: string;
   username: string;

@@ -1140,7 +1140,30 @@ WHERE u.role='user' AND u.status='active'
 ON CONFLICT (id) DO NOTHING;
 	`,
 	},
+	{
+		Version: 12,
+		Name:    "allocated_cidr_management",
+		SQL: `
+CREATE TABLE IF NOT EXISTS allocated_cidrs (
+    id uuid PRIMARY KEY,
+    user_id uuid NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    cidr inet NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT allocated_cidrs_user_cidr_unique UNIQUE (user_id, cidr)
+);
+CREATE INDEX IF NOT EXISTS allocated_cidrs_user_idx ON allocated_cidrs(user_id);
+CREATE INDEX IF NOT EXISTS allocated_cidrs_cidr_idx ON allocated_cidrs USING gist (cidr inet_ops);
+
+INSERT INTO allocated_cidrs (id, user_id, cidr)
+SELECT gen_random_uuid(), owner_user_id, backend_cidr
+FROM backend_services
+WHERE deleted_at IS NULL
+ON CONFLICT (user_id, cidr) DO NOTHING;
+	`,
+	},
 }
+
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if pool == nil {
