@@ -187,7 +187,6 @@ def assert_services_workflow(page: Page, seed: SeedData) -> None:
     page.get_by_role("button", name=re.compile(r"Add service", re.I)).click()
     form = page.locator("form.service-form")
     expect(form.locator("label", has_text="Name").locator("input")).to_be_visible()
-    expect(form.locator("label.checkbox-field input[type='checkbox']")).not_to_be_checked()
     expect(page.get_by_label(re.compile(r"next-hop mac", re.I))).to_have_count(0)
     form.locator("label", has_text="Name").locator("input").fill(name)
     form.locator("label", has_text="Backend CIDR").locator("input").fill("203.0.113.20/32")
@@ -199,11 +198,11 @@ def assert_services_workflow(page: Page, seed: SeedData) -> None:
 
     toolbar = page.locator(".data-toolbar")
     toolbar.locator("label", has_text="Search").locator("input").fill(name)
-    toolbar.locator("label", has_text="State").locator("select").select_option("disabled")
-    expect(page.locator("tbody tr", has_text=name)).to_be_visible(timeout=15000)
     toolbar.locator("label", has_text="State").locator("select").select_option("enabled")
-    expect(page.locator("tbody tr", has_text=name)).to_have_count(0)
+    expect(page.locator("tbody tr", has_text=name)).to_be_visible(timeout=15000)
     toolbar.locator("label", has_text="State").locator("select").select_option("disabled")
+    expect(page.locator("tbody tr", has_text=name)).to_have_count(0)
+    toolbar.locator("label", has_text="State").locator("select").select_option("enabled")
 
     page.get_by_role("button", name=re.compile(rf"edit {re.escape(name)}", re.I)).click()
     form.locator("label", has_text="Allowed ports").locator("input").fill("443, 8443, 9443")

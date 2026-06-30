@@ -57,6 +57,7 @@ export function ServicesView({
   const [working, setWorking] = useState('');
   const [result, setResult] = useState('');
   const [allocatedCidrs, setAllocatedCidrs] = useState<string[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     if (canMutate) {
@@ -92,13 +93,22 @@ export function ServicesView({
   const openCreate = () => {
     setFormMode('create');
     setEditingService(null);
-    setForm(emptyServiceForm(user));
+    setShowAdvanced(false);
+    const initialForm = emptyServiceForm(user);
+    if (outputInterfaces.length > 0) {
+      const defaultIface = outputInterfaces[0];
+      initialForm.output_interface = defaultIface.name;
+      initialForm.resolved_ifindex = defaultIface.ifindex ? String(defaultIface.ifindex) : '';
+      initialForm.resolved_src_mac = defaultIface.mac || '';
+    }
+    setForm(initialForm);
     setResult('');
   };
 
   const openEdit = (service: Service) => {
     setFormMode('edit');
     setEditingService(service);
+    setShowAdvanced(false);
     setForm(serviceFormFromService(service));
     setResult('');
   };
@@ -266,58 +276,70 @@ export function ServicesView({
               <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
             )}
           </label>
-          {formMode === 'edit' && (
-            <label>
-              Owner
-              <input value={form.owner} disabled />
-            </label>
-          )}
-          <label>
-            Criticality
-            <input value={form.criticality} onChange={(event) => setForm({ ...form, criticality: event.target.value })} placeholder="high" />
-          </label>
-          <label>
-            Protection mode
-            <select value={form.protection_mode} onChange={(event) => setForm({ ...form, protection_mode: event.target.value })}>
-              <option value="observe">Observe</option>
-              <option value="enforce">Enforce</option>
-            </select>
-          </label>
-          <label>
-            Priority
-            <input value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} inputMode="numeric" />
-          </label>
-          <label>
-            Neighbor status
-            <select value={form.neighbor_resolution_status} onChange={(event) => setForm({ ...form, neighbor_resolution_status: event.target.value })}>
-              <option value="unresolved">Unresolved</option>
-              <option value="resolved">Resolved</option>
-            </select>
-          </label>
-          <label className="wide-field">
-            Description
-            <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
-          </label>
-          <label>
-            Tags
-            <input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="prod, edge" />
-          </label>
-          <label>
-            Resolved ifindex
-            <input value={form.resolved_ifindex} onChange={(event) => setForm({ ...form, resolved_ifindex: event.target.value })} inputMode="numeric" />
-          </label>
-          <label>
-            Source MAC
-            <input value={form.resolved_src_mac} onChange={(event) => setForm({ ...form, resolved_src_mac: event.target.value })} />
-          </label>
           <label className="wide-field">
             Reason
             <input value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
           </label>
-          <label className="checkbox-field">
-            <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
-            Enabled
-          </label>
+          {formMode === 'edit' && (
+            <button
+              type="button"
+              className="secondary-action toggle-advanced-btn"
+              style={{ gridColumn: '1 / -1', justifySelf: 'start', display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0', border: '1px solid rgba(255, 255, 255, 0.1)', background: 'rgba(255, 255, 255, 0.05)', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.875rem' }}
+              onClick={() => setShowAdvanced(!showAdvanced)}
+            >
+              <span>{showAdvanced ? '▼ Hide Advanced Settings' : '▶ Show Advanced Settings'}</span>
+            </button>
+          )}
+          {formMode === 'edit' && showAdvanced && (
+            <div style={{ display: 'contents' }}>
+              <label>
+                Owner
+                <input value={form.owner} disabled />
+              </label>
+              <label>
+                Criticality
+                <input value={form.criticality} onChange={(event) => setForm({ ...form, criticality: event.target.value })} placeholder="high" />
+              </label>
+              <label>
+                Protection mode
+                <select value={form.protection_mode} onChange={(event) => setForm({ ...form, protection_mode: event.target.value })}>
+                  <option value="observe">Observe</option>
+                  <option value="enforce">Enforce</option>
+                </select>
+              </label>
+              <label>
+                Priority
+                <input value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} inputMode="numeric" />
+              </label>
+              <label>
+                Neighbor status
+                <select value={form.neighbor_resolution_status} onChange={(event) => setForm({ ...form, neighbor_resolution_status: event.target.value })}>
+                  <option value="unresolved">Unresolved</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </label>
+              <label className="wide-field">
+                Description
+                <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+              </label>
+              <label>
+                Tags
+                <input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="prod, edge" />
+              </label>
+              <label>
+                Resolved ifindex
+                <input value={form.resolved_ifindex} onChange={(event) => setForm({ ...form, resolved_ifindex: event.target.value })} inputMode="numeric" />
+              </label>
+              <label>
+                Source MAC
+                <input value={form.resolved_src_mac} onChange={(event) => setForm({ ...form, resolved_src_mac: event.target.value })} />
+              </label>
+              <label className="checkbox-field">
+                <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
+                Enabled
+              </label>
+            </div>
+          )}
           <div className="form-actions">
             <button type="submit" className="primary-action" disabled={working !== ''}>
               <Save size={15} />{working === 'service' ? 'Saving' : 'Save service'}
@@ -388,7 +410,7 @@ export function ServicesView({
 
 function emptyServiceForm(user?: User): ServiceFormState {
   return {
-    reason: 'update protected service',
+    reason: 'create protected service',
     name: '',
     description: '',
     backend_cidr: '',
@@ -398,7 +420,7 @@ function emptyServiceForm(user?: User): ServiceFormState {
     owner: user?.username || '',
     criticality: 'high',
     protection_mode: 'enforce',
-    enabled: false,
+    enabled: true,
     priority: '',
     tags: '',
     resolved_ifindex: '',
@@ -451,15 +473,6 @@ function serviceInputFromForm(form: ServiceFormState): ServiceInput {
 }
 
 function enabledServiceMetadataError(form: ServiceFormState): string {
-  if (!form.enabled) {
-    return '';
-  }
-  if (!form.resolved_ifindex.trim()) {
-    return 'resolved ifindex is required before enabling a service';
-  }
-  if (!form.resolved_src_mac.trim()) {
-    return 'source MAC is required before enabling a service';
-  }
   return '';
 }
 
