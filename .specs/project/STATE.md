@@ -2,10 +2,12 @@
 
 Last updated: 2026-06-30
 
-Current work: Allocated CIDR Management completed as an Admin Dashboard/Control API/PostgreSQL database enhancement. Phase 09 - Telegram ISP Runbook remains next.
+Current work: Initialized project requirements (PROJECT.md, ROADMAP.md) and defined the Phase 09 Telegram ISP Runbook specification. Phase 09 implementation remains next.
 
 ## Decisions
 
+- Project vision, goals, and roadmap have been formalized under `.specs/project/PROJECT.md` and `.specs/project/ROADMAP.md` based on active code and existing docs.
+- The feature requirements for Phase 09 - Telegram ISP Runbook are specified under `.specs/features/telegram-isp-runbook/spec.md`.
 - Current host `cyberrange02` is the Phase 0 lab target.
 - Backend services are not inferred from route or neighbor entries. The official service list must come from Network/SRE.
 - Phase 0 creates project memory and lab readiness documentation only. It does not attach XDP, create runtime source directories, or implement Agent/API/dashboard code.
