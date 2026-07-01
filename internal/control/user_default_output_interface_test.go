@@ -103,4 +103,41 @@ func TestUserDefaultOutputInterface(t *testing.T) {
 	if updatedSvc.OutputInterface != defaultIface {
 		t.Fatalf("expected output interface to remain %q, but it changed to %q", defaultIface, updatedSvc.OutputInterface)
 	}
+
+	// 7. Register an agent and interfaces for this user to test auto-calculation
+	agentRegisterReq := AgentRegisterRequest{
+		Hostname: "test-agent-host",
+		Interfaces: []AgentInterface{
+			{
+				Name:         "backend0",
+				Ifindex:      42,
+				MAC:          "02:00:00:00:00:42",
+				Role:         "wan",
+				LinkSpeedBPS: 1000000000,
+			},
+		},
+	}
+	_, err = store.RegisterAgentForOwner(ctx, userNoIface.ID, agentRegisterReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 8. Create a new service under this user. It should auto-calculate ResolvedIfindex and ResolvedSourceMAC from the registered interface.
+	svc2, err := store.CreateService(ctx, userNoIfaceActor, ServiceInput{
+		Name:           "svc2",
+		BackendCIDR:    "10.10.2.2/32",
+		Protocol:       "tcp",
+		AllowedPorts:   []uint16{80},
+		Owner:          "noiface",
+		ProtectionMode: "observe",
+	}, "create svc2 to verify auto-calculation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc2.ResolvedIfindex != 42 {
+		t.Fatalf("expected ResolvedIfindex to be auto-calculated as 42, got %d", svc2.ResolvedIfindex)
+	}
+	if svc2.ResolvedSourceMAC != "02:00:00:00:00:42" {
+		t.Fatalf("expected ResolvedSourceMAC to be auto-calculated as 02:00:00:00:00:42, got %q", svc2.ResolvedSourceMAC)
+	}
 }

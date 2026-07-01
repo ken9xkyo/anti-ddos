@@ -43,6 +43,23 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 		}
 	}
 
+	if input.OutputInterface != "" && (input.ResolvedIfindex == 0 || input.ResolvedSourceMAC == "") {
+		var ifaceIfindex int
+		var ifaceMAC string
+		err := tx.QueryRow(ctx, `SELECT ifindex, mac FROM agent_interfaces WHERE name = $1 AND owner_user_id = $2 LIMIT 1`,
+			input.OutputInterface, actorOwnerUserID(actor)).Scan(&ifaceIfindex, &ifaceMAC)
+		if err == nil {
+			if input.ResolvedIfindex == 0 {
+				input.ResolvedIfindex = uint32(ifaceIfindex)
+			}
+			if input.ResolvedSourceMAC == "" {
+				input.ResolvedSourceMAC = ifaceMAC
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return Service{}, fmt.Errorf("lookup agent interface: %w", err)
+		}
+	}
+
 	if err := validateServiceInput(input); err != nil {
 		return Service{}, err
 	}
