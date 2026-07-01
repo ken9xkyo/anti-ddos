@@ -57,6 +57,7 @@
 - **UDP Reflection Source-Port Blocking** - COMPLETE
 - **Whitelist Search & Filter** - COMPLETE
 - **Allocated CIDR Management** - COMPLETE
+- **Dashboard & Events RBAC Access Protection** - COMPLETE
 
 ---
 

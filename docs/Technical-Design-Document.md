@@ -141,7 +141,7 @@ Quá trình phát triển dự án được chia làm 10 giai đoạn (Phases):
 - Khách hàng (`RoleUser`):
   - Bị giới hạn hoàn toàn trong phạm vi tài khoản của họ dựa trên `owner_user_id`.
   - Chỉ có quyền đọc/ghi các Services, Rules, Whitelist, Blacklist và Snapshots của chính họ.
-  - Không được phép xem hoặc thay đổi cấu hình Telegram hoặc xem nhật ký sự kiện Incidents của hệ thống.
+  - Không được phép cấu hình/kiểm thử Telegram, truy cập Dashboard (Tổng quan hệ thống), xem Events (Nhật ký sự kiện bảo mật), hoặc xem nhật ký sự kiện Incidents của hệ thống (các API endpoints này sẽ trả về 403 Forbidden và UI sẽ ẩn đi).
 - Quản trị viên (`RoleAdmin`):
   - Quyền truy cập toàn cục để quản lý tài khoản người dùng, cấu hình threat feeds toàn hệ thống, và xem toàn bộ Incidents/Telegram configurations.
   - Có chức năng "View Config" (impersonation): Tạo phiên JWT tạm thời với cờ `read_only = true` và `view_owner_user_id` của khách hàng để chẩn đoán lỗi cấu hình mà không làm lộ thông tin nhạy cảm của khách hàng. Tất cả API POST/PUT/DELETE sẽ trả về `403 Forbidden` trong phiên này.

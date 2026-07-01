@@ -63,7 +63,7 @@ The system operates under strict access isolation, preventing cross-tenant data 
 1. **User** (`RoleUser`):
    - Access is strictly isolated using their account ID (`owner_user_id`).
    - Can manage their own protected Services, custom Rules, Whitelist, Manual Blacklist, UDP port blockages, and backup Snapshots.
-   - **Bypasses:** Bypasses Telegram alerts configuration and Incidents/Alerts endpoints entirely. The UI suppresses these items, and direct API endpoints return `403 Forbidden`.
+   - **Bypasses:** Bypasses Telegram alerts configuration, Incidents/Alerts endpoints, the Dashboard Overview, and Security Events log endpoints entirely. The UI suppresses these items, and direct API endpoints return `403 Forbidden`.
 2. **Admin** (`RoleAdmin`):
    - System-wide scope. Accesses global tables (threat feeds, audit trails) and can manage admin-global firewall configurations.
    - Full control over platform-wide alerting, Telegram integration parameters, and ISP Escalation alerts.
