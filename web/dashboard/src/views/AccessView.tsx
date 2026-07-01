@@ -6,7 +6,7 @@ import { api } from '../client';
 import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
 import { PanelHeader, StatusPill } from '../components';
 import { formatDateTime } from '../format';
-import type { Role, User, AllocatedCIDR } from '../types';
+import type { Role, User, AllocatedCIDR, Agent } from '../types';
 
 type UserForm = {
   reason: string;
@@ -15,6 +15,7 @@ type UserForm = {
   role: Role;
   status: string;
   force_password_change: boolean;
+  default_output_interface: string;
 };
 
 const emptyUserForm: UserForm = {
@@ -23,10 +24,19 @@ const emptyUserForm: UserForm = {
   password: '',
   role: 'user',
   status: 'active',
-  force_password_change: true
+  force_password_change: true,
+  default_output_interface: ''
 };
 
-export function AccessView({ currentUser, onViewUserConfig }: { currentUser: User; onViewUserConfig?: (userID: string) => void | Promise<void> }) {
+export function AccessView({
+  currentUser,
+  onViewUserConfig,
+  agents = []
+}: {
+  currentUser: User;
+  onViewUserConfig?: (userID: string) => void | Promise<void>;
+  agents?: Agent[];
+}) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
@@ -40,6 +50,20 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
   const [cidrReason, setCidrReason] = useState('');
   const [cidrError, setCidrError] = useState('');
   const isAdmin = currentUser.role === 'admin';
+
+  const outputInterfaces = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const agent of agents) {
+      for (const iface of agent.interfaces ?? []) {
+        const name = iface.name.trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        out.push(name);
+      }
+    }
+    return out.sort();
+  }, [agents]);
 
   const load = async () => {
     try {
@@ -116,7 +140,8 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
       username: user.username,
       role: user.role,
       status: user.status ?? 'active',
-      force_password_change: Boolean(user.force_password_change)
+      force_password_change: Boolean(user.force_password_change),
+      default_output_interface: user.default_output_interface ?? ''
     });
     setMode('edit');
   };
@@ -169,7 +194,13 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
     try {
       if (mode === 'create') {
         if (!isAdmin) return;
-        await api.createUser({ reason: form.reason, username: form.username, password: form.password, role: form.role });
+        await api.createUser({
+          reason: form.reason,
+          username: form.username,
+          password: form.password,
+          role: form.role,
+          default_output_interface: form.role === 'user' ? form.default_output_interface : ''
+        });
         setResult(`${form.username} created`);
       } else if (mode === 'edit' && target) {
         if (!canManageUser(target)) return;
@@ -177,7 +208,8 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
           reason: form.reason,
           role: form.role,
           status: form.status,
-          force_password_change: form.force_password_change
+          force_password_change: form.force_password_change,
+          default_output_interface: form.role === 'user' ? form.default_output_interface : ''
         });
         setResult(`${target.username} updated`);
       } else if (mode === 'reset' && target) {
@@ -244,6 +276,23 @@ export function AccessView({ currentUser, onViewUserConfig }: { currentUser: Use
               <MenuItem value="active">Active</MenuItem>
               <MenuItem value="revoked">Revoked</MenuItem>
             </TextField>
+            {form.role === 'user' ? (
+              <TextField
+                select
+                label="Default output interface"
+                value={form.default_output_interface}
+                onChange={(event) => setForm({ ...form, default_output_interface: event.target.value })}
+                fullWidth
+                helperText="Default network interface assigned for user services"
+              >
+                <MenuItem value="">None / Not Assigned</MenuItem>
+                {outputInterfaces.map((iface) => (
+                  <MenuItem key={iface} value={iface}>
+                    {iface}
+                  </MenuItem>
+                ))}
+              </TextField>
+            ) : null}
           </>
         ) : null}
         <FormControlLabel control={<Checkbox checked={form.force_password_change} onChange={(event) => setForm({ ...form, force_password_change: event.target.checked })} />} label="Force password change" />

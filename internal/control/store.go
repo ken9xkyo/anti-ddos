@@ -236,7 +236,7 @@ func (s *Store) AuthenticateToken(ctx context.Context, token string) (*Actor, er
 	}
 	var user User
 	var viewOwnerUserID string
-	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.status, u.force_password_change, u.created_at, u.last_login_at, COALESCE(s.view_owner_user_id::text, '')
+	err := s.pool.QueryRow(ctx, `SELECT u.id::text, u.username, u.role, u.status, u.force_password_change, u.default_output_interface, u.created_at, u.last_login_at, COALESCE(s.view_owner_user_id::text, '')
 FROM user_sessions s
 JOIN app_users u ON u.id = s.user_id
 WHERE s.token_hash = $1
@@ -244,7 +244,7 @@ WHERE s.token_hash = $1
 	AND s.expires_at > now()
 	AND u.status = 'active'`,
 		hashToken(token),
-	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &viewOwnerUserID)
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.DefaultOutputInterface, &user.CreatedAt, &user.LastLoginAt, &viewOwnerUserID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("invalid or expired session")
@@ -335,9 +335,9 @@ ON CONFLICT (username) DO UPDATE SET
     status='active',
     force_password_change=true,
     updated_at=now()
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at, (xmax = 0)`,
+RETURNING id::text, username, role, status, force_password_change, default_output_interface, created_at, last_login_at, (xmax = 0)`,
 		id, username, string(hash), role,
-	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt, &created)
+	).Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.DefaultOutputInterface, &user.CreatedAt, &user.LastLoginAt, &created)
 	if err != nil {
 		return User{}, false, err
 	}
@@ -350,7 +350,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+	rows, err := tx.Query(ctx, `SELECT id::text, username, role, status, force_password_change, default_output_interface, created_at, last_login_at
 FROM app_users
 ORDER BY username`)
 	if err != nil {
@@ -360,7 +360,7 @@ ORDER BY username`)
 	users := make([]User, 0)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.DefaultOutputInterface, &user.CreatedAt, &user.LastLoginAt); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -411,10 +411,10 @@ WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
 
 func (s *Store) getUser(ctx context.Context, q dbQuerier, id string) (User, error) {
 	var user User
-	err := q.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, created_at, last_login_at
+	err := q.QueryRow(ctx, `SELECT id::text, username, role, status, force_password_change, default_output_interface, created_at, last_login_at
 FROM app_users
 WHERE id = $1`, id).Scan(
-		&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.CreatedAt, &user.LastLoginAt,
+		&user.ID, &user.Username, &user.Role, &user.Status, &user.ForcePasswordChange, &user.DefaultOutputInterface, &user.CreatedAt, &user.LastLoginAt,
 	)
 	return user, err
 }

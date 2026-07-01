@@ -27,6 +27,7 @@ export interface User {
   role: Role;
   status?: string;
   force_password_change?: boolean;
+  default_output_interface?: string;
   created_at?: string;
   last_login_at?: string;
   viewing_user?: ViewingUser;
@@ -38,6 +39,7 @@ export interface UserUpdateInput {
   role?: Role;
   status?: string;
   force_password_change?: boolean;
+  default_output_interface?: string;
 }
 
 export interface PasswordResetInput {

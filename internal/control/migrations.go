@@ -1162,6 +1162,13 @@ WHERE deleted_at IS NULL
 ON CONFLICT (user_id, cidr) DO NOTHING;
 	`,
 	},
+	{
+		Version: 13,
+		Name:    "user_default_output_interface",
+		SQL: `
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS default_output_interface text NOT NULL DEFAULT '';
+`,
+	},
 }
 
 

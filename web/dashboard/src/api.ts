@@ -154,7 +154,7 @@ export class ApiClient {
     return session;
   }
 
-  async createUser(input: { reason: string; username: string; password: string; role: string }): Promise<User> {
+  async createUser(input: { reason: string; username: string; password: string; role: string; default_output_interface?: string }): Promise<User> {
     return this.request<User>('/v1/users', {
       method: 'POST',
       body: JSON.stringify(input)

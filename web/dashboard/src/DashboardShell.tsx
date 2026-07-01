@@ -147,7 +147,7 @@ export function DashboardShell({
         ) : null}
         {data && activeTab === 'udpPorts' ? <UDPPortsAdminView services={data.services} canMutate={canMutatePolicy} scopeOptions={policyScopeOptions} /> : null}
         {data && activeTab === 'snapshots' ? <SnapshotsView canMutate={canMutateUserConfig} /> : null}
-        {data && activeTab === 'access' && isAdmin ? <AccessView currentUser={user} onViewUserConfig={onViewUserConfig} /> : null}
+        {data && activeTab === 'access' && isAdmin ? <AccessView currentUser={user} onViewUserConfig={onViewUserConfig} agents={data.agents} /> : null}
         {data && activeTab === 'fleet' ? <FleetView agents={data.agents} /> : null}
         {data && activeTab === 'investigation' ? <InvestigationView events={data.events} /> : null}
       </section>

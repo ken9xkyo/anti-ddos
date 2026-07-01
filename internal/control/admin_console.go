@@ -39,6 +39,10 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 	if input.ForcePasswordChange != nil {
 		forcePasswordChange = *input.ForcePasswordChange
 	}
+	defaultOutputInterface := before.DefaultOutputInterface
+	if input.DefaultOutputInterface != nil {
+		defaultOutputInterface = strings.TrimSpace(*input.DefaultOutputInterface)
+	}
 	if err := validateUserRoleStatus(role, status); err != nil {
 		return User{}, err
 	}
@@ -47,11 +51,11 @@ func (s *Store) UpdateUser(ctx context.Context, actor *Actor, id string, input U
 		return User{}, err
 	}
 	if err := tx.QueryRow(ctx, `UPDATE app_users
-SET role=$2, status=$3, force_password_change=$4, updated_at=now()
+SET role=$2, status=$3, force_password_change=$4, default_output_interface=$5, updated_at=now()
 WHERE id=$1
-RETURNING id::text, username, role, status, force_password_change, created_at, last_login_at`,
-		id, role, status, forcePasswordChange,
-	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.CreatedAt, &after.LastLoginAt); err != nil {
+RETURNING id::text, username, role, status, force_password_change, default_output_interface, created_at, last_login_at`,
+		id, role, status, forcePasswordChange, defaultOutputInterface,
+	).Scan(&after.ID, &after.Username, &after.Role, &after.Status, &after.ForcePasswordChange, &after.DefaultOutputInterface, &after.CreatedAt, &after.LastLoginAt); err != nil {
 		return User{}, err
 	}
 	if status != StatusActive {

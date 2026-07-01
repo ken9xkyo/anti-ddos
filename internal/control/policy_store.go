@@ -19,13 +19,34 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 	if err := requireConfigMutation(actor); err != nil {
 		return Service{}, err
 	}
-	if err := validateServiceInput(input); err != nil {
-		return Service{}, err
-	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return Service{}, errors.New("reason is required")
 	}
+
+	tx, err := s.beginActorOwnerTx(ctx, actor)
+	if err != nil {
+		return Service{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if actor.Role == RoleUser {
+		ownerID := actorOwnerUserID(actor)
+		user, err := s.getUser(ctx, tx, ownerID)
+		if err != nil {
+			return Service{}, fmt.Errorf("fetch owner user: %w", err)
+		}
+		if strings.TrimSpace(user.DefaultOutputInterface) != "" {
+			input.OutputInterface = user.DefaultOutputInterface
+		} else if strings.TrimSpace(input.OutputInterface) == "" {
+			return Service{}, errors.New("default output interface not assigned by administrator")
+		}
+	}
+
+	if err := validateServiceInput(input); err != nil {
+		return Service{}, err
+	}
+
 	id, err := newUUID()
 	if err != nil {
 		return Service{}, err
@@ -33,12 +54,6 @@ func (s *Store) CreateService(ctx context.Context, actor *Actor, input ServiceIn
 	enabled := boolDefault(input.Enabled, true)
 	ports := int32Ports(input.AllowedPorts)
 	tags := textArray(input.Tags)
-
-	tx, err := s.beginActorOwnerTx(ctx, actor)
-	if err != nil {
-		return Service{}, err
-	}
-	defer tx.Rollback(ctx)
 
 	if err := s.ValidateServiceCIDR(ctx, tx, actorOwnerUserID(actor), input.BackendCIDR); err != nil {
 		return Service{}, err
@@ -87,9 +102,6 @@ func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, inpu
 	if err := requireConfigMutation(actor); err != nil {
 		return Service{}, err
 	}
-	if err := validateServiceInput(input); err != nil {
-		return Service{}, err
-	}
 	reason = mutationReason(reason, input.Reason)
 	if reason == "" {
 		return Service{}, errors.New("reason is required")
@@ -101,6 +113,14 @@ func (s *Store) UpdateService(ctx context.Context, actor *Actor, id string, inpu
 	defer tx.Rollback(ctx)
 	before, err := s.getService(ctx, tx, id)
 	if err != nil {
+		return Service{}, err
+	}
+
+	if actor.Role == RoleUser {
+		input.OutputInterface = before.OutputInterface
+	}
+
+	if err := validateServiceInput(input); err != nil {
 		return Service{}, err
 	}
 

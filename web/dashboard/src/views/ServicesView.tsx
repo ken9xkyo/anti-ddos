@@ -322,27 +322,29 @@ export function ServicesView({
             disabled={form.protocol === 'icmp'}
           />
 
-          {formOutputInterfaces.length > 0 ? (
-            <TextField
-              select
-              label="Output interface"
-              value={form.output_interface}
-              onChange={(event) => selectOutputInterface(event.target.value)}
-              fullWidth
-            >
-              <MenuItem value="">Select interface</MenuItem>
-              {formOutputInterfaces.map((item) => (
-                <MenuItem key={item.name} value={item.name}>{item.label}</MenuItem>
-              ))}
-            </TextField>
-          ) : (
-            <TextField
-              label="Output interface"
-              value={form.output_interface}
-              onChange={(event) => setForm({ ...form, output_interface: event.target.value })}
-              placeholder="backend0"
-              fullWidth
-            />
+          {user?.role !== 'user' && (
+            formOutputInterfaces.length > 0 ? (
+              <TextField
+                select
+                label="Output interface"
+                value={form.output_interface}
+                onChange={(event) => selectOutputInterface(event.target.value)}
+                fullWidth
+              >
+                <MenuItem value="">Select interface</MenuItem>
+                {formOutputInterfaces.map((item) => (
+                  <MenuItem key={item.name} value={item.name}>{item.label}</MenuItem>
+                ))}
+              </TextField>
+            ) : (
+              <TextField
+                label="Output interface"
+                value={form.output_interface}
+                onChange={(event) => setForm({ ...form, output_interface: event.target.value })}
+                placeholder="backend0"
+                fullWidth
+              />
+            )
           )}
 
           <ReasonField value={form.reason} onChange={(value) => setForm({ ...form, reason: value })} />

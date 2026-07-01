@@ -49,22 +49,24 @@ type AllocatedCIDRInput struct {
 
 
 type User struct {
-	ID                  string       `json:"id"`
-	Username            string       `json:"username"`
-	Role                string       `json:"role"`
-	Status              string       `json:"status"`
-	ForcePasswordChange bool         `json:"force_password_change"`
-	CreatedAt           time.Time    `json:"created_at"`
-	LastLoginAt         *time.Time   `json:"last_login_at,omitempty"`
-	ViewingUser         *ViewingUser `json:"viewing_user,omitempty"`
-	ReadOnly            bool         `json:"read_only,omitempty"`
+	ID                     string       `json:"id"`
+	Username               string       `json:"username"`
+	Role                   string       `json:"role"`
+	Status                 string       `json:"status"`
+	ForcePasswordChange    bool         `json:"force_password_change"`
+	DefaultOutputInterface string       `json:"default_output_interface"`
+	CreatedAt              time.Time    `json:"created_at"`
+	LastLoginAt            *time.Time   `json:"last_login_at,omitempty"`
+	ViewingUser            *ViewingUser `json:"viewing_user,omitempty"`
+	ReadOnly               bool         `json:"read_only,omitempty"`
 }
 
 type UserUpdateInput struct {
-	Reason              string `json:"reason"`
-	Role                string `json:"role,omitempty"`
-	Status              string `json:"status,omitempty"`
-	ForcePasswordChange *bool  `json:"force_password_change,omitempty"`
+	Reason                 string  `json:"reason"`
+	Role                   string  `json:"role,omitempty"`
+	Status                 string  `json:"status,omitempty"`
+	ForcePasswordChange    *bool   `json:"force_password_change,omitempty"`
+	DefaultOutputInterface *string `json:"default_output_interface,omitempty"`
 }
 
 type PasswordResetInput struct {
