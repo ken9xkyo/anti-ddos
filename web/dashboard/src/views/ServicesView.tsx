@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Pencil, Plus, Router, Save, Trash2 } from 'lucide-react';
+import { Button, Checkbox, FormControlLabel, MenuItem, Stack, TextField } from '@mui/material';
+import { GridColDef } from '@mui/x-data-grid';
+import { AlertTriangle, Plus, Router, Save, Trash2 } from 'lucide-react';
 import { api } from '../client';
-import { DataToolbar, EmptyTableRow, PanelHeader, SearchField, StatusPill, TablePanel } from '../components';
+import { AdminDrawer, AdminGrid, ConfirmDialog, InlineResult, ReasonField } from '../adminUi';
+import { DataToolbar, PanelHeader, SearchField, StatusPill } from '../components';
 import { formatDateTime, numberValue } from '../format';
 import type { Agent, ApplyStatus, Service, ServiceInput, User } from '../types';
 
@@ -141,8 +144,8 @@ export function ServicesView({
     });
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const submit = async (event?: FormEvent) => {
+    if (event) event.preventDefault();
     if (!canMutate) return;
     const metadataError = enabledServiceMetadataError(form);
     if (metadataError) {
@@ -183,10 +186,48 @@ export function ServicesView({
     }
   };
 
+  const columns = useMemo<GridColDef[]>(() => [
+    { field: 'name', headerName: 'Name', flex: 1, minWidth: 120 },
+    { field: 'backend_cidr', headerName: 'Backend', width: 140 },
+    { field: 'protocol', headerName: 'Protocol', width: 90, valueFormatter: (value) => String(value).toUpperCase() },
+    { field: 'allowed_ports', headerName: 'Ports', width: 120, valueGetter: (_, row) => row.allowed_ports.join(', ') || '0' },
+    { field: 'output_interface', headerName: 'Output', width: 110 },
+    { field: 'owner', headerName: 'Owner', width: 110 },
+    { field: 'protection_mode', headerName: 'Mode', width: 90 },
+    { field: 'neighbor_resolution_status', headerName: 'Neighbor', width: 110, renderCell: (params) => <StatusPill state={params.value === 'resolved' ? 'ok' : 'warn'} text={String(params.value)} /> },
+    { field: 'counters', headerName: 'Counters', width: 100, valueGetter: (_, row) => row.counters ? Object.values(row.counters).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0) : 0, valueFormatter: (value) => numberValue(Number(value) || 0) },
+    { field: 'apply_status', headerName: 'Apply', width: 110, valueGetter: (_, row) => row.apply_status ?? row.sync_status },
+    { field: 'enabled', headerName: 'State', width: 105, renderCell: (params) => <StatusPill state={params.value ? 'ok' : 'off'} text={params.value ? 'enabled' : 'disabled'} /> },
+    {
+      field: 'actions',
+      headerName: 'Actions',
+      width: 150,
+      sortable: false,
+      renderCell: (params) => {
+        const row = params.row as Service;
+        if (!canMutate) return <span className="muted">read only</span>;
+        return (
+          <Stack direction="row" spacing={0.75}>
+            <Button size="small" variant="outlined" onClick={() => openEdit(row)}>Edit</Button>
+            <Button size="small" variant="outlined" color="warning" onClick={() => {
+              setDisableTarget(row);
+              setDisableReason(`disable ${row.name}`);
+            }}>Disable</Button>
+          </Stack>
+        );
+      }
+    }
+  ], [canMutate]);
+
   return (
     <section className="content-stack">
       <section className="wide-panel">
-        <PanelHeader icon={<Router size={18} />} title="Protected Services" eyebrow="allowlist and DEVMAP forwarding registry" />
+        <PanelHeader
+          icon={<Router size={18} />}
+          title="Protected Services"
+          eyebrow="allowlist and DEVMAP forwarding registry"
+          actions={canMutate ? <button type="button" className="primary-action" onClick={openCreate}><Plus size={15} />Add service</button> : null}
+        />
         <DataToolbar>
           <SearchField label="Search" value={query} onChange={setQuery} placeholder="name, owner, backend, output" />
           <label>
@@ -206,15 +247,8 @@ export function ServicesView({
               <option value="disabled">Disabled</option>
             </select>
           </label>
-          {canMutate ? (
-            <div className="toolbar-actions">
-              <button type="button" className="primary-action" onClick={openCreate}>
-                <Plus size={15} />Add service
-              </button>
-            </div>
-          ) : null}
         </DataToolbar>
-        {result ? <div className={result.includes('failed') || result.includes('required') || result.includes('invalid') || result.includes('must') ? 'error-line inline-message' : 'success-line inline-message'}>{result}</div> : null}
+        <InlineResult result={result} />
       </section>
 
       {failedApplies.length > 0 ? (
@@ -231,179 +265,208 @@ export function ServicesView({
         </section>
       ) : null}
 
-      {formMode ? (
-        <form className="wide-panel form-grid service-form" onSubmit={submit}>
-        <PanelHeader icon={<Pencil size={18} />} title={formMode === 'edit' ? 'Edit Service' : 'Add Service'} eyebrow={form.enabled ? 'requires Agent-reported interface metadata' : 'new services default disabled'} />
-          <label>
-            Name
-            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          </label>
-          <label>
-            Backend CIDR
-            <input value={form.backend_cidr} onChange={(event) => setForm({ ...form, backend_cidr: event.target.value })} placeholder="203.0.113.10/32" />
-            {allocatedCidrs.length > 0 ? (
-              <span className="field-hint" style={{ fontSize: '0.78rem', color: 'rgba(148, 163, 184, 0.7)', marginTop: '0.25rem' }}>
-                Allocated bounds: {allocatedCidrs.join(', ')}
-              </span>
-            ) : (
-              <span className="field-hint" style={{ fontSize: '0.78rem', color: 'rgba(239, 68, 68, 0.8)', marginTop: '0.25rem' }}>
-                No active CIDR allocations found.
-              </span>
-            )}
-          </label>
-          <label>
-            Protocol
-            <select value={form.protocol} onChange={(event) => setForm({ ...form, protocol: event.target.value })}>
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-              <option value="icmp">ICMP</option>
-            </select>
-          </label>
-          <label>
-            Allowed ports
-            <input value={form.allowed_ports} onChange={(event) => setForm({ ...form, allowed_ports: event.target.value })} placeholder="443, 8443" disabled={form.protocol === 'icmp'} />
-          </label>
-          <label>
-            Output interface
-            {formOutputInterfaces.length > 0 ? (
-              <select value={form.output_interface} onChange={(event) => selectOutputInterface(event.target.value)}>
-                <option value="">Select interface</option>
-                {formOutputInterfaces.map((item) => (
-                  <option key={item.name} value={item.name}>{item.label}</option>
-                ))}
-              </select>
-            ) : (
-              <input value={form.output_interface} onChange={(event) => setForm({ ...form, output_interface: event.target.value })} placeholder="backend0" />
-            )}
-          </label>
-          <label className="wide-field">
-            Reason
-            <input value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
-          </label>
+      <AdminDrawer
+        open={formMode !== ''}
+        title={formMode === 'edit' ? `Edit ${editingService?.name ?? 'Service'}` : 'Add Service'}
+        onClose={closeForm}
+        actions={<>
+          <Button onClick={closeForm}>Cancel</Button>
+          <Button variant="contained" onClick={() => submit()} startIcon={<Save size={16} />} disabled={working !== ''}>
+            {working === 'service' ? 'Saving' : 'Save service'}
+          </Button>
+        </>}
+      >
+        <form className="service-form" onSubmit={submit} style={{ display: 'contents' }}>
+          <TextField
+            label="Name"
+            value={form.name}
+            onChange={(event) => setForm({ ...form, name: event.target.value })}
+            fullWidth
+            required
+          />
+          <TextField
+            label="Backend CIDR"
+            value={form.backend_cidr}
+            onChange={(event) => setForm({ ...form, backend_cidr: event.target.value })}
+            placeholder="203.0.113.10/32"
+            fullWidth
+            required
+            helperText={
+              allocatedCidrs.length > 0
+                ? `Allocated bounds: ${allocatedCidrs.join(', ')}`
+                : "No active CIDR allocations found."
+            }
+            slotProps={{
+              formHelperText: {
+                style: { color: allocatedCidrs.length > 0 ? 'rgba(148, 163, 184, 0.7)' : 'rgba(239, 68, 68, 0.8)' }
+              }
+            }}
+          />
+          <TextField
+            select
+            label="Protocol"
+            value={form.protocol}
+            onChange={(event) => setForm({ ...form, protocol: event.target.value })}
+            fullWidth
+          >
+            <MenuItem value="tcp">TCP</MenuItem>
+            <MenuItem value="udp">UDP</MenuItem>
+            <MenuItem value="icmp">ICMP</MenuItem>
+          </TextField>
+          <TextField
+            label="Allowed ports"
+            value={form.allowed_ports}
+            onChange={(event) => setForm({ ...form, allowed_ports: event.target.value })}
+            placeholder="443, 8443"
+            fullWidth
+            disabled={form.protocol === 'icmp'}
+          />
+
+          {formOutputInterfaces.length > 0 ? (
+            <TextField
+              select
+              label="Output interface"
+              value={form.output_interface}
+              onChange={(event) => selectOutputInterface(event.target.value)}
+              fullWidth
+            >
+              <MenuItem value="">Select interface</MenuItem>
+              {formOutputInterfaces.map((item) => (
+                <MenuItem key={item.name} value={item.name}>{item.label}</MenuItem>
+              ))}
+            </TextField>
+          ) : (
+            <TextField
+              label="Output interface"
+              value={form.output_interface}
+              onChange={(event) => setForm({ ...form, output_interface: event.target.value })}
+              placeholder="backend0"
+              fullWidth
+            />
+          )}
+
+          <ReasonField value={form.reason} onChange={(value) => setForm({ ...form, reason: value })} />
+
           {formMode === 'edit' && (
             <button
               type="button"
               className="secondary-action toggle-advanced-btn"
-              style={{ gridColumn: '1 / -1', justifySelf: 'start', display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0', border: '1px solid rgba(255, 255, 255, 0.1)', background: 'rgba(255, 255, 255, 0.05)', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.875rem' }}
+              style={{
+                alignSelf: 'flex-start',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                margin: '8px 0',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                background: 'rgba(255, 255, 255, 0.05)',
+                padding: '6px 12px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.875rem'
+              }}
               onClick={() => setShowAdvanced(!showAdvanced)}
             >
               <span>{showAdvanced ? '▼ Hide Advanced Settings' : '▶ Show Advanced Settings'}</span>
             </button>
           )}
+
           {formMode === 'edit' && showAdvanced && (
-            <div style={{ display: 'contents' }}>
-              <label>
-                Owner
-                <input value={form.owner} disabled />
-              </label>
-              <label>
-                Criticality
-                <input value={form.criticality} onChange={(event) => setForm({ ...form, criticality: event.target.value })} placeholder="high" />
-              </label>
-              <label>
-                Protection mode
-                <select value={form.protection_mode} onChange={(event) => setForm({ ...form, protection_mode: event.target.value })}>
-                  <option value="observe">Observe</option>
-                  <option value="enforce">Enforce</option>
-                </select>
-              </label>
-              <label>
-                Priority
-                <input value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} inputMode="numeric" />
-              </label>
-              <label>
-                Neighbor status
-                <select value={form.neighbor_resolution_status} onChange={(event) => setForm({ ...form, neighbor_resolution_status: event.target.value })}>
-                  <option value="unresolved">Unresolved</option>
-                  <option value="resolved">Resolved</option>
-                </select>
-              </label>
-              <label className="wide-field">
-                Description
-                <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
-              </label>
-              <label>
-                Tags
-                <input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.target.value })} placeholder="prod, edge" />
-              </label>
-              <label>
-                Resolved ifindex
-                <input value={form.resolved_ifindex} onChange={(event) => setForm({ ...form, resolved_ifindex: event.target.value })} inputMode="numeric" />
-              </label>
-              <label>
-                Source MAC
-                <input value={form.resolved_src_mac} onChange={(event) => setForm({ ...form, resolved_src_mac: event.target.value })} />
-              </label>
-              <label className="checkbox-field">
-                <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />
-                Enabled
-              </label>
-            </div>
+            <Stack spacing={1.5}>
+              <TextField
+                label="Owner"
+                value={form.owner}
+                fullWidth
+                disabled
+              />
+              <TextField
+                label="Criticality"
+                value={form.criticality}
+                onChange={(event) => setForm({ ...form, criticality: event.target.value })}
+                placeholder="high"
+                fullWidth
+              />
+              <TextField
+                select
+                label="Protection mode"
+                value={form.protection_mode}
+                onChange={(event) => setForm({ ...form, protection_mode: event.target.value })}
+                fullWidth
+              >
+                <MenuItem value="observe">Observe</MenuItem>
+                <MenuItem value="enforce">Enforce</MenuItem>
+              </TextField>
+              <TextField
+                label="Priority"
+                value={form.priority}
+                onChange={(event) => setForm({ ...form, priority: event.target.value })}
+                inputMode="numeric"
+                fullWidth
+              />
+              <TextField
+                select
+                label="Neighbor status"
+                value={form.neighbor_resolution_status}
+                onChange={(event) => setForm({ ...form, neighbor_resolution_status: event.target.value })}
+                fullWidth
+              >
+                <MenuItem value="unresolved">Unresolved</MenuItem>
+                <MenuItem value="resolved">Resolved</MenuItem>
+              </TextField>
+              <TextField
+                label="Description"
+                value={form.description}
+                onChange={(event) => setForm({ ...form, description: event.target.value })}
+                fullWidth
+              />
+              <TextField
+                label="Tags"
+                value={form.tags}
+                onChange={(event) => setForm({ ...form, tags: event.target.value })}
+                placeholder="prod, edge"
+                fullWidth
+              />
+              <TextField
+                label="Resolved ifindex"
+                value={form.resolved_ifindex}
+                onChange={(event) => setForm({ ...form, resolved_ifindex: event.target.value })}
+                inputMode="numeric"
+                fullWidth
+              />
+              <TextField
+                label="Source MAC"
+                value={form.resolved_src_mac}
+                onChange={(event) => setForm({ ...form, resolved_src_mac: event.target.value })}
+                fullWidth
+              />
+              <FormControlLabel
+                control={<Checkbox checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} />}
+                label="Enabled"
+              />
+            </Stack>
           )}
-          <div className="form-actions">
-            <button type="submit" className="primary-action" disabled={working !== ''}>
-              <Save size={15} />{working === 'service' ? 'Saving' : 'Save service'}
-            </button>
-            <button type="button" className="secondary-action" onClick={closeForm} disabled={working !== ''}>
-              Cancel
-            </button>
-          </div>
         </form>
-      ) : null}
+      </AdminDrawer>
 
-      {disableTarget ? (
-        <section className="wide-panel">
-          <PanelHeader icon={<Trash2 size={18} />} title={`Disable ${disableTarget.name}`} />
-          <label>
-            Reason
-            <input value={disableReason} onChange={(event) => setDisableReason(event.target.value)} />
-          </label>
-          <div className="button-row">
-            <button type="button" className="danger-action" disabled={working !== ''} onClick={confirmDisable}>
-              <Trash2 size={15} />{working === 'disable' ? 'Disabling' : 'Confirm disable'}
-            </button>
-            <button type="button" className="secondary-action" onClick={() => setDisableTarget(null)} disabled={working !== ''}>
-              Cancel
-            </button>
-          </div>
-        </section>
-      ) : null}
+      <ConfirmDialog
+        open={Boolean(disableTarget)}
+        title={`Disable ${disableTarget?.name ?? 'service'}`}
+        confirmText="Disable service"
+        onCancel={() => setDisableTarget(null)}
+        onConfirm={confirmDisable}
+        busy={working === 'disable'}
+      >
+        <ReasonField value={disableReason} onChange={setDisableReason} />
+        <div className="muted">
+          <Trash2 size={14} /> Service remains visible and is removed from the next active snapshot.
+        </div>
+      </ConfirmDialog>
 
-      <TablePanel icon={<Router size={18} />} title={`Service Registry (${filtered.length})`} eyebrow="searchable read model">
-        <thead><tr><th>Name</th><th>Backend</th><th>Protocol</th><th>Ports</th><th>Output</th><th>Owner</th><th>Mode</th><th>Neighbor</th><th>Counters</th><th>Apply</th><th>State</th><th>Actions</th></tr></thead>
-        <tbody>{filtered.length === 0 ? (
-          <EmptyTableRow colSpan={12} text={services.length === 0 ? 'No protected services configured' : 'No services match the current filters'} />
-        ) : filtered.map((service) => (
-          <tr key={service.id}>
-            <td>{service.name}</td>
-            <td>{service.backend_cidr}</td>
-            <td>{service.protocol}</td>
-            <td>{service.allowed_ports.join(', ') || '0'}</td>
-            <td>{service.output_interface}</td>
-            <td>{service.owner}</td>
-            <td>{service.protection_mode}</td>
-            <td><StatusPill state={service.neighbor_resolution_status === 'resolved' ? 'ok' : 'warn'} text={service.neighbor_resolution_status} /></td>
-            <td>{service.counters ? numberValue(Object.values(service.counters).reduce((sum, value) => sum + value, 0)) : '0'}</td>
-            <td>{service.apply_status ?? service.sync_status}</td>
-            <td><StatusPill state={service.enabled ? 'ok' : 'off'} text={service.enabled ? 'enabled' : 'disabled'} /></td>
-            <td>
-              {canMutate ? (
-                <div className="row-actions">
-                  <button type="button" className="icon-action" aria-label={`edit ${service.name}`} onClick={() => openEdit(service)}>
-                    <Pencil size={15} />
-                  </button>
-                  <button type="button" className="icon-action" aria-label={`disable ${service.name}`} onClick={() => {
-                    setDisableTarget(service);
-                    setDisableReason(`disable ${service.name}`);
-                  }}>
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ) : <span className="muted">read only</span>}
-            </td>
-          </tr>
-        ))}</tbody>
-      </TablePanel>
+      <AdminGrid
+        rows={filtered}
+        columns={columns}
+        emptyText={services.length === 0 ? 'No protected services configured' : 'No services match the current filters'}
+        height={560}
+      />
     </section>
   );
 }
