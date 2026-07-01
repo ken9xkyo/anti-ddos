@@ -74,10 +74,6 @@
 - [ ] Multi-attempt delivery queue with deduping.
 - [ ] Feed failure notification alerts.
 
-**ISP Runbook Escalation** - PLANNED
-- [ ] In-process manual evaluation of volumetric rates.
-- [ ] Runbook action logging and ISP payload rendering.
-
 ---
 
 ## Future Considerations
