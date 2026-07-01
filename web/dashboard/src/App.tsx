@@ -39,17 +39,24 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    if (activeTab === 'reputation' && user && (user.role !== 'admin' || user.read_only || user.viewing_user)) {
-      setActiveTab('overview');
+    if (!user) return;
+    const isNormalUser = user.role !== 'admin';
+    const fallbackTab = isNormalUser ? 'services' : 'overview';
+
+    if (isNormalUser && (activeTab === 'overview' || activeTab === 'investigation')) {
+      setActiveTab(fallbackTab);
     }
-    if (activeTab === 'incidents' && user && user.role !== 'admin') {
-      setActiveTab('overview');
+    if (activeTab === 'reputation' && (user.role !== 'admin' || user.read_only || user.viewing_user)) {
+      setActiveTab(fallbackTab);
     }
-    if (activeTab === 'snapshots' && user && user.role !== 'admin') {
-      setActiveTab('overview');
+    if (activeTab === 'incidents' && isNormalUser) {
+      setActiveTab(fallbackTab);
     }
-    if (activeTab === 'fleet' && user && user.role !== 'admin') {
-      setActiveTab('overview');
+    if (activeTab === 'snapshots' && isNormalUser) {
+      setActiveTab(fallbackTab);
+    }
+    if (activeTab === 'fleet' && isNormalUser) {
+      setActiveTab(fallbackTab);
     }
   }, [activeTab, user]);
 

@@ -6,7 +6,12 @@ import (
 )
 
 func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -23,7 +28,12 @@ func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSecurityEventSummary(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -50,6 +60,10 @@ func (s *Server) handleSecurityEventInvestigate(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
+		return
+	}
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
@@ -59,7 +73,12 @@ func (s *Server) handleSecurityEventInvestigate(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleDashboardOverview(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireActor(w, r); !ok {
+	actor, ok := s.requireActor(w, r)
+	if !ok {
+		return
+	}
+	if err := requireAdmin(actor); err != nil {
+		writeError(w, http.StatusForbidden, err)
 		return
 	}
 	if r.Method != http.MethodGet {

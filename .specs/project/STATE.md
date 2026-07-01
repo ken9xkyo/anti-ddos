@@ -1,8 +1,8 @@
 # Project State
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
-Current work: Initialized project requirements (PROJECT.md, ROADMAP.md) and defined the Phase 09 Telegram ISP Runbook specification. Phase 09 implementation remains next.
+Current work: Specified feature to hide Dashboard and Events from normal users under `.specs/features/hide-normal-user-dashboard-events/spec.md`.
 
 ## Decisions
 
@@ -45,6 +45,7 @@ Current work: Initialized project requirements (PROJECT.md, ROADMAP.md) and defi
 - Allocated CIDR Management requires a new database table `allocated_cidrs` and utilizes subnet containment (`<<=`) and overlap checks (`&&`) in Go/PostgreSQL.
 - Admin deletion of a CIDR allocation is strictly blocked if there are active backend services configured within that block.
 - Service validation applies to all configurations, requiring that any configured service's `backend_cidr` is equal to or a subnet of the owner's allocated CIDRs. Both standard users and admins configuring on behalf of users are subject to this check.
+- Specified feature requirements to hide the Dashboard and Events views in the UI from non-admin users, and block their respective backend endpoints (/v1/dashboard/overview, /v1/security-events) with 403 Forbidden.
 
 ## Current Host Facts
 

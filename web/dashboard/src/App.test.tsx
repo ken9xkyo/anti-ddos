@@ -49,13 +49,15 @@ describe('DashboardShell RBAC', () => {
   it('renders the user dashboard without tenant or reputation navigation', () => {
     renderShell(normalUser);
 
-    for (const group of ['Operation', 'Configuration']) {
-      expect(screen.getByText(group)).toBeInTheDocument();
-    }
-    expect(screen.queryByText('Setting')).not.toBeInTheDocument();
+    expect(screen.queryByText('Operation')).toBeNull();
+    expect(screen.getByText('Configuration')).toBeInTheDocument();
+    expect(screen.queryByText('Setting')).toBeNull();
 
-    for (const label of ['Dashboard', 'Events', 'Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports']) {
+    for (const label of ['Services', 'Rules', 'Whitelist', 'Blacklist', 'UDP Ports']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+    for (const label of ['Dashboard', 'Events']) {
+      expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
     }
 
     expect(screen.queryByRole('button', { name: 'Snapshots' })).not.toBeInTheDocument();
@@ -169,8 +171,8 @@ describe('App bootstrap', () => {
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'secret' } });
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
-    expect(await screen.findByText('Packets/s')).toBeInTheDocument();
-    await waitFor(() => expect(seen).toContain('/v1/dashboard/overview'));
+    expect(await screen.findByText('api-https')).toBeInTheDocument();
+    await waitFor(() => expect(seen).not.toContain('/v1/dashboard/overview'));
 
     expect(localStorage.getItem('anti_ddos_token')).toBe('user-token');
     expect(seen.some((path) => path.includes('/v1/tenants'))).toBe(false);

@@ -77,9 +77,14 @@ describe('ApiClient', () => {
     client.setToken('token-user');
     const loaded = await client.dashboard(normalUser);
 
-    expect(loaded.overview.traffic.pps).toBe(1200);
+    expect(loaded.overview.traffic.pps).toBe(0);
     expect(loaded.alerts).toEqual([]);
-    const expectedKeys = Object.keys(responses).filter((path) => path !== '/v1/telegram/config' && path !== '/v1/alerts?limit=30');
+    const expectedKeys = Object.keys(responses).filter((path) =>
+      path !== '/v1/telegram/config' &&
+      path !== '/v1/alerts?limit=30' &&
+      path !== '/v1/dashboard/overview' &&
+      path !== '/v1/security-events?limit=50'
+    );
     expect(seen.sort()).toEqual(expectedKeys.sort());
     expect(seen.some((path) => path.includes('/v1/tenants'))).toBe(false);
     expect(seen.some((path) => path.includes('/v1/feed-'))).toBe(false);

@@ -53,6 +53,8 @@ export function DashboardShell({
   const visibleNavGroups = useMemo(() => navGroups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
+      if (item.id === 'overview') return isAdmin;
+      if (item.id === 'investigation') return isAdmin;
       if (item.id === 'access') return isAdmin;
       if (item.id === 'reputation') return canManageReputation;
       if (item.id === 'incidents') return isAdmin;

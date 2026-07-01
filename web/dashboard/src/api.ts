@@ -72,15 +72,35 @@ export class ApiClient {
   }
 
   async dashboard(user?: User): Promise<DashboardData> {
-    const canLoadFeed = user?.role === 'admin' && !user.read_only && !user.viewing_user;
-    const canLoadAdminOnly = user?.role === 'admin';
-    const canLoadTelegram = user?.role === 'admin' && !user.viewing_user;
+    const isAdmin = user?.role === 'admin';
+    const canLoadFeed = isAdmin && !user.read_only && !user.viewing_user;
+    const canLoadAdminOnly = isAdmin;
+    const canLoadTelegram = isAdmin && !user.viewing_user;
     const baseRequests = Promise.all([
-      this.request<DashboardOverview>('/v1/dashboard/overview'),
+      isAdmin
+        ? this.request<DashboardOverview>('/v1/dashboard/overview')
+        : Promise.resolve<DashboardOverview>({
+            generated_at: new Date().toISOString(),
+            prometheus: { configured: false, healthy: false },
+            traffic: { pps: 0, bps: 0, cps: 0 },
+            decision_rates: {},
+            security_events: {
+              window_seconds: 0,
+              total: 0,
+              top_sources: [],
+              top_ports: [],
+              by_decision: []
+            },
+            agents: { total: 0, stale: 0 },
+            snapshot_version: 0,
+            latest_apply_status: []
+          }),
       this.request<Agent[] | null>('/v1/dashboard/agents'),
       this.request<Service[] | null>('/v1/dashboard/services'),
       this.request<Rule[] | null>('/v1/dashboard/rules'),
-      this.request<SecurityEvent[] | null>('/v1/security-events?limit=50'),
+      isAdmin
+        ? this.request<SecurityEvent[] | null>('/v1/security-events?limit=50')
+        : Promise.resolve<SecurityEvent[]>([]),
       canLoadTelegram
         ? this.request<TelegramConfig>('/v1/telegram/config')
         : Promise.resolve<TelegramConfig>({

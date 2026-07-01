@@ -122,4 +122,20 @@ func TestObservabilityHandlersIntegration(t *testing.T) {
 	if !strings.Contains(text, "anti_ddos_control_security_events_ingested_total") {
 		t.Fatalf("control metrics missing security event counter: %s", text)
 	}
+
+	// Verify normal user role restrictions on observability endpoints
+	normalToken := login(t, server.URL, "user", "user password phrase")
+	forbiddenEndpoints := []string{
+		"/v1/dashboard/overview",
+		"/v1/security-events",
+		"/v1/security-events/summary",
+		"/v1/security-events/investigate?target=203.0.113.10",
+	}
+	for _, ep := range forbiddenEndpoints {
+		r := authedJSON(t, http.MethodGet, server.URL+ep, normalToken, nil)
+		if r.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 Forbidden for endpoint %s for normal user, got %d", ep, r.Code)
+		}
+	}
 }
+
