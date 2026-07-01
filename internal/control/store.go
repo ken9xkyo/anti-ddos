@@ -440,6 +440,11 @@ func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, e
        COALESCE(before, 'null'::jsonb), COALESCE(after, 'null'::jsonb), COALESCE(reason, ''), request_id
 FROM audit_events
 WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+   OR EXISTS (
+       SELECT 1 FROM app_users
+       WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+         AND role = 'admin'
+   )
 ORDER BY created_at DESC
 LIMIT $1`, limit)
 	if err != nil {

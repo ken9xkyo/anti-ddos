@@ -63,8 +63,14 @@ func (s *Store) LatestApplyStatuses(ctx context.Context) ([]DashboardApplyStatus
        pas.agent_id::text, a.hostname, pas.policy_version, pas.status, pas.error_stage, pas.error_reason, pas.reported_at
 FROM policy_apply_status pas
 JOIN agents a ON a.id = pas.agent_id
-WHERE pas.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
-  AND a.owner_user_id = pas.owner_user_id
+WHERE (
+    pas.owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+    OR EXISTS (
+        SELECT 1 FROM app_users
+        WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+          AND role = 'admin'
+    )
+) AND a.owner_user_id = pas.owner_user_id
 ORDER BY pas.agent_id, pas.reported_at DESC`)
 	if err != nil {
 		return nil, err
@@ -94,6 +100,11 @@ func (s *Store) ListDashboardAgents(ctx context.Context, staleAfter time.Duratio
        active_policy_version, last_seen_at, COALESCE(metadata->'map_utilization', '{}'::jsonb)
 FROM agents
 WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+   OR EXISTS (
+       SELECT 1 FROM app_users
+       WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+         AND role = 'admin'
+   )
 ORDER BY hostname`)
 	if err != nil {
 		return nil, err
@@ -220,7 +231,14 @@ func (s *Store) agentInterfaces(ctx context.Context, agentID string) ([]AgentInt
 	}
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx, `SELECT name, ifindex, mac, role, link_speed_bps FROM agent_interfaces
-WHERE agent_id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+WHERE agent_id=$1 AND (
+    owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+    OR EXISTS (
+        SELECT 1 FROM app_users
+        WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+          AND role = 'admin'
+    )
+)
 ORDER BY name`, agentID)
 	if err != nil {
 		return nil, err

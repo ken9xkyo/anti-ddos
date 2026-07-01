@@ -378,6 +378,11 @@ func (s *Store) ListAlerts(ctx context.Context, limit int) ([]Alert, error) {
        vector, evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at
 FROM alerts
 WHERE owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+   OR EXISTS (
+       SELECT 1 FROM app_users
+       WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+         AND role = 'admin'
+   )
 ORDER BY created_at DESC
 LIMIT $1`, limit)
 	if err != nil {
@@ -417,7 +422,14 @@ func (s *Store) ListAlertDeliveries(ctx context.Context, alertID string) ([]Aler
 	rows, err := tx.Query(ctx, `SELECT id::text, alert_id::text, channel, status, attempt, error, response, created_at, sent_at
 FROM alert_deliveries
 WHERE alert_id=$1
-  AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+  AND (
+      owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+      OR EXISTS (
+          SELECT 1 FROM app_users
+          WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+            AND role = 'admin'
+      )
+  )
 ORDER BY created_at`, strings.TrimSpace(alertID))
 	if err != nil {
 		return nil, err
@@ -610,7 +622,14 @@ func (s *Store) setAlertStatus(ctx context.Context, id, status string) (Alert, e
 	}
 	defer tx.Rollback(ctx)
 	alert, err := scanAlert(tx.QueryRow(ctx, `UPDATE alerts SET status=$2, updated_at=now()
-WHERE id=$1 AND owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+WHERE id=$1 AND (
+    owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+    OR EXISTS (
+        SELECT 1 FROM app_users
+        WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid
+          AND role = 'admin'
+    )
+)
 RETURNING id::text, severity, type, dedupe_key, COALESCE(service_id::text, ''), affected_service, vector,
           evidence, recommended_action, status, COALESCE(created_by::text, ''), created_at, updated_at, resolved_at`, id, status))
 	if err != nil {

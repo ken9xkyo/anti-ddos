@@ -236,7 +236,9 @@ func normalizeSecurityEvent(input SecurityEventInput, defaultSampleRate uint32) 
 }
 
 func securityEventWhere(query SecurityEventQuery) (string, []any, error) {
-	clauses := []string{"owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid"}
+	clauses := []string{
+		"(owner_user_id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid OR EXISTS (SELECT 1 FROM app_users WHERE id = NULLIF(current_setting('anti_ddos.owner_user_id', true), '')::uuid AND role = 'admin'))",
+	}
 	var args []any
 	add := func(clause string, value any) {
 		args = append(args, value)
