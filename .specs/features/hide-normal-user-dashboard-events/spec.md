@@ -79,21 +79,21 @@ Each requirement gets a unique ID for tracking across design, tasks, and validat
 
 | Requirement ID | Story | Phase | Status |
 | -------------- | ----- | ----- | ------ |
-| RBAC-DASH-01 | P1: Restrict UI Navigation and Views | Design | Pending |
-| RBAC-DASH-02 | P1: Restrict UI Navigation and Views | Design | Pending |
-| RBAC-DASH-03 | P1: Restrict UI Navigation and Views | Design | Pending |
-| RBAC-DASH-04 | P1: Enforce Backend API Access Protection | Design | Pending |
-| RBAC-DASH-05 | P1: Prevent Frontend Crashes on API Restrictions | Design | Pending |
+| RBAC-DASH-01 | P1: Restrict UI Navigation and Views | Verified | Verified |
+| RBAC-DASH-02 | P1: Restrict UI Navigation and Views | Verified | Verified |
+| RBAC-DASH-03 | P1: Restrict UI Navigation and Views | Verified | Verified |
+| RBAC-DASH-04 | P1: Enforce Backend API Access Protection | Verified | Verified |
+| RBAC-DASH-05 | P1: Prevent Frontend Crashes on API Restrictions | Verified | Verified |
 
 **Status values:** Pending → In Design → In Tasks → Implementing → Verified
 
-**Coverage:** 5 total, 0 mapped to tasks, 5 unmapped ⚠️
+**Coverage:** 5 total, 5 mapped to tasks, 0 unmapped
 
 ---
 
 ## Success Criteria
 
 How we know the feature is successful:
-- [ ] Non-admin users cannot see Dashboard or Events in the UI.
-- [ ] Non-admin user sessions attempting to curl `/v1/dashboard/overview` or `/v1/security-events` receive 403 Forbidden.
-- [ ] Frontend unit tests build and pass successfully.
+- [x] Non-admin users cannot see Dashboard or Events in the UI.
+- [x] Non-admin user sessions attempting to curl `/v1/dashboard/overview` or `/v1/security-events` receive 403 Forbidden.
+- [x] Frontend unit tests build and pass successfully.
